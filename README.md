@@ -516,6 +516,21 @@ All tests mock external dependencies — no PostgreSQL or LLM provider required.
 
 ---
 
+## CI/CD
+
+GitHub Actions pipeline on every push/merge to `main`:
+
+1. **Lint** — `ruff check` + `ruff format --check`
+2. **Test** — `pytest tests/ -v` (278 tests)
+3. **Version bump** — auto-increments patch version in `pyproject.toml`, commits back to `main`, creates `vX.Y.Z` git tag
+4. **Docker build** — builds and pushes to Docker Hub as `arshadansari27/knowledge-service:X.Y.Z` and `:latest`
+
+Version is read from `pyproject.toml` and used as the Docker image tag and git tag. Bump commits include `[skip ci]` to prevent infinite loops.
+
+Pull requests run lint + test only (no version bump or Docker push).
+
+---
+
 ## Project Structure
 
 ```
@@ -588,4 +603,4 @@ The system reuses established vocabularies and keeps the custom `ks:` namespace 
 | LLM gateway | Ollama (local) or LiteLLM (proxy) — any OpenAI-compatible API |
 | Embeddings | nomic-embed-text (768-dim) |
 | Knowledge extraction | qwen3:14b (auto-extracts from raw_text) |
-| Infrastructure | Docker Compose |
+| Infrastructure | Docker Compose, GitHub Actions CI/CD |

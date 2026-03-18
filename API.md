@@ -4,6 +4,7 @@
 **Interactive Docs:** `http://localhost:8000/docs` (auto-generated OpenAPI/Swagger)
 **Authentication:** None (all endpoints are public)
 **Response Format:** JSON (`application/json`)
+**Versioning:** Patch version auto-incremented on every push to `main` (see `pyproject.toml`)
 
 ---
 
