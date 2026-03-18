@@ -1,3 +1,5 @@
+import secrets
+
 from pydantic_settings import BaseSettings
 
 
@@ -14,6 +16,8 @@ class Settings(BaseSettings):
     api_port: int = 8000
     federation_enabled: bool = True
     federation_timeout: float = 3.0
+    admin_password: str  # Required — no default
+    secret_key: str = secrets.token_hex(32)
 
     model_config = {"env_file": ".env"}
 

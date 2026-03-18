@@ -22,6 +22,9 @@ dependencies = [
     "pgvector>=0.3.0",
     "httpx>=0.28.0",
     "pydantic-settings>=2.7.0",
+    "jinja2>=3.1.0",
+    "itsdangerous>=2.1.0",
+    "python-multipart>=0.0.9",
 ]
 
 [project.optional-dependencies]
@@ -35,6 +38,12 @@ dev = [
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/knowledge_service"]
+
+[tool.hatch.build.targets.wheel.force-include]
+"src/knowledge_service/admin/templates" = "knowledge_service/admin/templates"
 
 [project.urls]
 Homepage = "https://hikmahtechnologies.com"

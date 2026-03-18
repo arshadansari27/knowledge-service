@@ -1,0 +1,95 @@
+{% extends "base.html" %}
+{% block title %}Knowledge Explorer{% endblock %}
+{% block content %}
+<h2 class="text-2xl font-bold mb-6">Knowledge Explorer</h2>
+
+<div class="bg-gray-800 rounded-lg overflow-hidden"
+     x-data="{
+        triples: null, total: 0, offset: 0, limit: 50,
+        q: '', knowledge_type: '', min_confidence: 0, max_confidence: 1, sort: 'recency',
+        async load() {
+            const params = new URLSearchParams({limit: this.limit, offset: this.offset});
+            if (this.q) params.set('q', this.q);
+            if (this.knowledge_type) params.set('knowledge_type', this.knowledge_type);
+            params.set('min_confidence', this.min_confidence);
+            params.set('max_confidence', this.max_confidence);
+            params.set('sort', this.sort);
+            const resp = await fetch('/api/admin/knowledge/triples?' + params);
+            const d = await resp.json();
+            this.triples = d.items;
+            this.total = d.total;
+        }
+     }"
+     x-init="load()">
+
+    <div class="p-4 border-b border-gray-700">
+        <div class="grid grid-cols-1 md:grid-cols-5 gap-4">
+            <div>
+                <label class="block text-gray-400 text-sm mb-1">Search</label>
+                <input type="text" x-model.debounce.300ms="q" @input="offset = 0; load()" placeholder="Search triples..."
+                       class="w-full p-2 rounded bg-gray-700 text-white border border-gray-600 focus:border-blue-500 focus:outline-none">
+            </div>
+            <div>
+                <label class="block text-gray-400 text-sm mb-1">Type</label>
+                <select x-model="knowledge_type" @change="offset = 0; load()"
+                        class="w-full p-2 rounded bg-gray-700 text-white border border-gray-600">
+                    <option value="">All Types</option>
+                    <option value="Claim">Claim</option>
+                    <option value="Fact">Fact</option>
+                    <option value="Event">Event</option>
+                    <option value="Entity">Entity</option>
+                    <option value="Relationship">Relationship</option>
+                    <option value="Conclusion">Conclusion</option>
+                    <option value="TemporalState">TemporalState</option>
+                </select>
+            </div>
+            <div>
+                <label class="block text-gray-400 text-sm mb-1">Min Confidence: <span x-text="min_confidence"></span></label>
+                <input type="range" x-model="min_confidence" @change="offset = 0; load()" min="0" max="1" step="0.1" class="w-full">
+            </div>
+            <div>
+                <label class="block text-gray-400 text-sm mb-1">Max Confidence: <span x-text="max_confidence"></span></label>
+                <input type="range" x-model="max_confidence" @change="offset = 0; load()" min="0" max="1" step="0.1" class="w-full">
+            </div>
+            <div>
+                <label class="block text-gray-400 text-sm mb-1">Sort</label>
+                <select x-model="sort" @change="offset = 0; load()"
+                        class="w-full p-2 rounded bg-gray-700 text-white border border-gray-600">
+                    <option value="recency">Recency</option>
+                    <option value="confidence">Confidence</option>
+                </select>
+            </div>
+        </div>
+        <div class="mt-3">
+            <a href="/admin/knowledge/content" class="text-blue-400 hover:underline text-sm">Browse Content Items &rarr;</a>
+        </div>
+    </div>
+
+    <table class="w-full text-sm">
+        <thead><tr class="text-gray-400 border-b border-gray-700"><th class="text-left p-3">Subject</th><th class="text-left p-3">Predicate</th><th class="text-left p-3">Object</th><th class="text-left p-3">Confidence</th><th class="text-left p-3">Type</th></tr></thead>
+        <tbody>
+            <template x-if="triples && triples.length > 0">
+                <template x-for="t in triples" :key="t.subject + t.predicate + t.object">
+                    <tr class="border-b border-gray-700/50 hover:bg-gray-700/30 cursor-pointer" @click="window.location.href = '/admin/knowledge/entity/' + encodeURIComponent(t.subject)">
+                        <td class="p-3 text-blue-400 truncate max-w-xs" x-text="t.subject.split('/').pop()"></td>
+                        <td class="p-3 text-gray-300 truncate max-w-xs" x-text="t.predicate.split('/').pop()"></td>
+                        <td class="p-3 text-gray-300 truncate max-w-xs" x-text="t.object.split('/').pop() || t.object"></td>
+                        <td class="p-3"><span class="px-2 py-1 rounded text-xs" :class="t.confidence >= 0.7 ? 'bg-green-900 text-green-300' : t.confidence >= 0.3 ? 'bg-yellow-900 text-yellow-300' : 'bg-red-900 text-red-300'" x-text="t.confidence.toFixed(2)"></span></td>
+                        <td class="p-3 text-gray-400" x-text="t.knowledge_type"></td>
+                    </tr>
+                </template>
+            </template>
+            <template x-if="triples && triples.length === 0">
+                <tr><td colspan="5" class="p-6 text-center text-gray-500">No triples found.</td></tr>
+            </template>
+        </tbody>
+    </table>
+    <div class="p-3 flex justify-between items-center border-t border-gray-700" x-show="total > limit">
+        <span class="text-gray-400 text-sm" x-text="'Showing ' + (offset + 1) + '-' + Math.min(offset + limit, total) + ' of ' + total"></span>
+        <div class="space-x-2">
+            <button @click="offset = Math.max(0, offset - limit); load()" :disabled="offset === 0" class="px-3 py-1 bg-gray-700 rounded text-sm disabled:opacity-50">Prev</button>
+            <button @click="offset = offset + limit; load()" :disabled="offset + limit >= total" class="px-3 py-1 bg-gray-700 rounded text-sm disabled:opacity-50">Next</button>
+        </div>
+    </div>
+</div>
+{% endblock %}

@@ -1,0 +1,20 @@
+<div class="chat-markdown text-gray-200 prose prose-invert prose-sm max-w-none">{{ answer }}</div>
+{% if confidence is not none %}
+<div class="mt-2 text-xs text-gray-400">Confidence: {{ "%.2f"|format(confidence) }}</div>
+{% endif %}
+{% if sources %}
+<details class="mt-3">
+    <summary class="text-sm text-blue-400 cursor-pointer hover:underline">Sources ({{ sources|length }})</summary>
+    <ul class="mt-2 space-y-1 text-sm">
+        {% for source in sources %}
+        <li class="text-gray-400">
+            <a href="{{ source.url }}" target="_blank" rel="noopener noreferrer" class="text-blue-400 hover:underline">{{ source.title or source.url }}</a>
+            <span class="text-gray-600">({{ source.source_type }})</span>
+        </li>
+        {% endfor %}
+    </ul>
+</details>
+{% endif %}
+{% if knowledge_types %}
+<div class="mt-1 text-xs text-gray-500">Types: {{ knowledge_types | join(', ') }}</div>
+{% endif %}

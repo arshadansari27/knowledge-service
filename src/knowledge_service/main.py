@@ -173,6 +173,26 @@ def create_app(use_lifespan: bool = True) -> FastAPI:
     app.include_router(knowledge.router, prefix="/api")
     app.include_router(contradictions.router, prefix="/api")
     app.include_router(ask.router, prefix="/api")
+
+    # Admin panel — store credentials on app.state so both middleware and login route use the same values
+    from knowledge_service.admin.auth import AuthMiddleware, login_router
+    from knowledge_service.admin.routes import router as admin_router
+
+    app.state.admin_password = settings.admin_password
+    app.state.secret_key = settings.secret_key
+
+    from knowledge_service.admin.stats import router as stats_router
+
+    app.include_router(login_router)
+    app.include_router(admin_router)
+    app.include_router(stats_router, prefix="/api/admin")
+
+    app.add_middleware(
+        AuthMiddleware,
+        admin_password=settings.admin_password,
+        secret_key=settings.secret_key,
+    )
+
     return app
 
 
