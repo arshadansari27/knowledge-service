@@ -362,6 +362,47 @@ Contradiction probability is the product of both claims' confidence scores.
 
 ---
 
+### Ask a Question (RAG)
+
+```http
+POST /api/ask
+Content-Type: application/json
+```
+
+Ask a natural language question against the knowledge base. Retrieves relevant content (semantic search) and knowledge graph triples, checks for contradictions, and generates an LLM-powered answer grounded in your data.
+
+```json
+{
+  "question": "Does cold exposure increase dopamine?",
+  "max_sources": 5,
+  "min_confidence": 0.3
+}
+```
+
+**Parameters:**
+- `question` (required) — natural language question (max 4000 chars)
+- `max_sources` — max content items to retrieve (1–100, default 5)
+- `min_confidence` — filter out knowledge triples below this confidence (0.0–1.0, default 0.0)
+
+**Response:**
+```json
+{
+  "answer": "Based on your knowledge base, cold exposure likely increases dopamine...",
+  "confidence": 0.88,
+  "sources": [
+    {
+      "url": "https://example.com/article",
+      "title": "Cold Exposure and Dopamine",
+      "source_type": "article"
+    }
+  ],
+  "knowledge_types_used": ["Claim"],
+  "contradictions": []
+}
+```
+
+---
+
 ## Running Locally
 
 ### Prerequisites
@@ -455,6 +496,7 @@ All settings via environment variables or `.env` file:
 | `LLM_API_KEY` | *(empty)* | API key (leave empty for Ollama) |
 | `LLM_EMBED_MODEL` | `nomic-embed-text` | Embedding model (768-dim vectors) |
 | `LLM_CHAT_MODEL` | `qwen3:14b` | Chat model for knowledge extraction |
+| `LLM_RAG_MODEL` | *(empty)* | RAG answer model (defaults to `LLM_CHAT_MODEL` if empty) |
 | `OXIGRAPH_DATA_DIR` | `./data/oxigraph` | RDF store data directory |
 | `PROBLOG_RULES_DIR` | `./src/knowledge_service/reasoning/rules` | ProbLog rules |
 | `FEDERATION_ENABLED` | `true` | Enable DBpedia/Wikidata federation |
@@ -487,12 +529,14 @@ src/knowledge_service/
 │   ├── search.py            # GET /api/search
 │   ├── knowledge.py         # GET /api/knowledge/query, POST /api/knowledge/sparql
 │   ├── contradictions.py    # GET /api/knowledge/contradictions
+│   ├── ask.py              # POST /api/ask (RAG question answering)
 │   └── health.py            # GET /health
 ├── stores/
 │   ├── knowledge.py         # pyoxigraph wrapper — RDF-star inserts, SPARQL queries
 │   ├── provenance.py        # PostgreSQL provenance table (asyncpg)
 │   ├── embedding.py         # pgvector content store + cosine similarity search
-│   └── entity_resolver.py   # Embedding-based entity deduplication
+│   ├── entity_resolver.py   # Embedding-based entity deduplication
+│   └── rag.py              # RAGRetriever — hybrid retrieval orchestration
 ├── reasoning/
 │   ├── engine.py            # ProbLog wrapper — Noisy-OR, contradiction detection
 │   └── rules/base.pl        # Core ProbLog rules
@@ -501,6 +545,7 @@ src/knowledge_service/
 │   └── bootstrap.py        # Loads base ontology into pyoxigraph on startup
 └── clients/
     ├── llm.py               # EmbeddingClient + ExtractionClient (httpx → LLM API)
+    ├── rag.py               # RAGClient — LLM-powered answer generation
     └── federation.py        # FederationClient — DBpedia/Wikidata SPARQL federation
 ```
 
@@ -527,6 +572,7 @@ The system reuses established vocabularies and keeps the custom `ks:` namespace 
 |-------|--------|------|
 | **Phase 1** | ✅ Complete | Knowledge model, RDF store, probabilistic reasoning, all 7 types, Docker |
 | **Phase 2** | ✅ Complete | DBpedia/Wikidata federation (ingestion-time + query-time) |
+| **Phase 3** | ✅ Complete | RAG endpoint — hybrid retrieval + LLM answer generation |
 
 ---
 
