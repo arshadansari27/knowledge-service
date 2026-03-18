@@ -32,6 +32,8 @@ jobs:
     needs: [lint, test]
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     outputs:
       new_version: ${{ steps.bump.outputs.new_version }}
       bumped: ${{ steps.bump.outputs.bumped }}
@@ -39,6 +41,7 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 1
+          token: ${{ secrets.GITHUB_TOKEN }}
       - name: Bump patch version
         id: bump
         run: |
