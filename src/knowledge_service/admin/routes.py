@@ -36,7 +36,9 @@ async def entity_detail(request: Request, uri: str):
         if entity_info:
             label = entity_info.get("label", label)
     return templates.TemplateResponse(
-        request, "entity.html", {"active": "knowledge", "uri": uri, "label": label, "entity_info": entity_info}
+        request,
+        "entity.html",
+        {"active": "knowledge", "uri": uri, "label": label, "entity_info": entity_info},
     )
 
 
@@ -65,7 +67,9 @@ async def content_detail(request: Request, content_id: str):
     content = dict(row)
     content["id"] = str(content["id"])
     content["ingested_at"] = content["ingested_at"].isoformat() if content["ingested_at"] else ""
-    return templates.TemplateResponse(request, "content_detail.html", {"active": "knowledge", "content": content})
+    return templates.TemplateResponse(
+        request, "content_detail.html", {"active": "knowledge", "content": content}
+    )
 
 
 @router.get("/admin/chat", response_class=HTMLResponse)
@@ -98,15 +102,21 @@ async def chat_send(request: Request):
         url = row.get("url", "")
         if url and url not in seen_urls:
             seen_urls.add(url)
-            sources.append({
-                "url": url,
-                "title": row.get("title", ""),
-                "source_type": row.get("source_type", ""),
-            })
+            sources.append(
+                {
+                    "url": url,
+                    "title": row.get("title", ""),
+                    "source_type": row.get("source_type", ""),
+                }
+            )
 
-    confidences = [t["confidence"] for t in context.knowledge_triples if t.get("confidence") is not None]
+    confidences = [
+        t["confidence"] for t in context.knowledge_triples if t.get("confidence") is not None
+    ]
     confidence = max(confidences) if confidences else None
-    knowledge_types = sorted({t["knowledge_type"] for t in context.knowledge_triples if t.get("knowledge_type")})
+    knowledge_types = sorted(
+        {t["knowledge_type"] for t in context.knowledge_triples if t.get("knowledge_type")}
+    )
 
     return templates.TemplateResponse(
         request,

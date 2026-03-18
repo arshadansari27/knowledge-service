@@ -82,7 +82,11 @@ async def client():
     app.state.embedding_client = _make_embedding_client_mock()
 
     transport = ASGITransport(app=app)
-    async with AsyncClient(transport=transport, base_url="http://test", cookies={"ks_session": make_test_session_cookie()}) as c:
+    async with AsyncClient(
+        transport=transport,
+        base_url="http://test",
+        cookies={"ks_session": make_test_session_cookie()},
+    ) as c:
         yield c
 
 
@@ -95,7 +99,11 @@ async def empty_client():
     app.state.embedding_client = _make_embedding_client_mock()
 
     transport = ASGITransport(app=app)
-    async with AsyncClient(transport=transport, base_url="http://test", cookies={"ks_session": make_test_session_cookie()}) as c:
+    async with AsyncClient(
+        transport=transport,
+        base_url="http://test",
+        cookies={"ks_session": make_test_session_cookie()},
+    ) as c:
         yield c
 
 
@@ -168,7 +176,11 @@ class TestGetSearchSimilarity:
         app.state.embedding_client = _make_embedding_client_mock()
 
         transport = ASGITransport(app=app)
-        async with AsyncClient(transport=transport, base_url="http://test", cookies={"ks_session": make_test_session_cookie()}) as c:
+        async with AsyncClient(
+            transport=transport,
+            base_url="http://test",
+            cookies={"ks_session": make_test_session_cookie()},
+        ) as c:
             response = await c.get("/api/search", params={"q": "multiple"})
 
         data = response.json()
@@ -212,7 +224,11 @@ class TestGetSearchValidation:
         app.state.embedding_client = mock_ec
 
         transport = ASGITransport(app=app)
-        async with AsyncClient(transport=transport, base_url="http://test", cookies={"ks_session": make_test_session_cookie()}) as c:
+        async with AsyncClient(
+            transport=transport,
+            base_url="http://test",
+            cookies={"ks_session": make_test_session_cookie()},
+        ) as c:
             response = await c.get("/api/search", params={"q": "test"})
 
         assert response.status_code == 200
@@ -246,7 +262,11 @@ class TestGetSearchEmbedding:
         app.state.embedding_client = mock_ec
 
         transport = ASGITransport(app=app)
-        async with AsyncClient(transport=transport, base_url="http://test", cookies={"ks_session": make_test_session_cookie()}) as c:
+        async with AsyncClient(
+            transport=transport,
+            base_url="http://test",
+            cookies={"ks_session": make_test_session_cookie()},
+        ) as c:
             await c.get("/api/search", params={"q": "semantic query"})
 
         mock_ec.embed.assert_called_once_with("semantic query")
@@ -259,7 +279,11 @@ class TestGetSearchEmbedding:
         app.state.embedding_client = mock_ec
 
         transport = ASGITransport(app=app)
-        async with AsyncClient(transport=transport, base_url="http://test", cookies={"ks_session": make_test_session_cookie()}) as c:
+        async with AsyncClient(
+            transport=transport,
+            base_url="http://test",
+            cookies={"ks_session": make_test_session_cookie()},
+        ) as c:
             await c.get("/api/search", params={"q": "first"})
             await c.get("/api/search", params={"q": "second"})
 
@@ -280,7 +304,11 @@ class TestGetSearchNullSummary:
         app.state.embedding_client = _make_embedding_client_mock()
 
         transport = ASGITransport(app=app)
-        async with AsyncClient(transport=transport, base_url="http://test", cookies={"ks_session": make_test_session_cookie()}) as c:
+        async with AsyncClient(
+            transport=transport,
+            base_url="http://test",
+            cookies={"ks_session": make_test_session_cookie()},
+        ) as c:
             response = await c.get("/api/search", params={"q": "test"})
 
         assert response.status_code == 200
@@ -295,7 +323,11 @@ class TestGetSearchNullSummary:
         app.state.embedding_client = _make_embedding_client_mock()
 
         transport = ASGITransport(app=app)
-        async with AsyncClient(transport=transport, base_url="http://test", cookies={"ks_session": make_test_session_cookie()}) as c:
+        async with AsyncClient(
+            transport=transport,
+            base_url="http://test",
+            cookies={"ks_session": make_test_session_cookie()},
+        ) as c:
             response = await c.get("/api/search", params={"q": "test"})
 
         assert response.status_code == 200

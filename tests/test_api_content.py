@@ -102,7 +102,11 @@ async def client():
     app.state.embedding_store = _make_embedding_store_mock()
 
     transport = ASGITransport(app=app)
-    async with AsyncClient(transport=transport, base_url="http://test", cookies={"ks_session": make_test_session_cookie()}) as c:
+    async with AsyncClient(
+        transport=transport,
+        base_url="http://test",
+        cookies={"ks_session": make_test_session_cookie()},
+    ) as c:
         yield c
 
 
@@ -266,7 +270,11 @@ class TestPostContentKnowledgeStore:
         app.state.reasoning_engine = _make_reasoning_engine_mock()
 
         transport = ASGITransport(app=app)
-        async with AsyncClient(transport=transport, base_url="http://test", cookies={"ks_session": make_test_session_cookie()}) as c:
+        async with AsyncClient(
+            transport=transport,
+            base_url="http://test",
+            cookies={"ks_session": make_test_session_cookie()},
+        ) as c:
             await c.post("/api/content", json=CLAIM_PAYLOAD)
 
         # insert_triple should be called once for the single Claim
@@ -288,7 +296,11 @@ class TestPostContentKnowledgeStore:
         app.state.reasoning_engine = _make_reasoning_engine_mock()
 
         transport = ASGITransport(app=app)
-        async with AsyncClient(transport=transport, base_url="http://test", cookies={"ks_session": make_test_session_cookie()}) as c:
+        async with AsyncClient(
+            transport=transport,
+            base_url="http://test",
+            cookies={"ks_session": make_test_session_cookie()},
+        ) as c:
             await c.post("/api/content", json=CLAIM_PAYLOAD)
 
         mock_ks.find_contradictions.assert_called_once()
@@ -303,7 +315,11 @@ class TestPostContentKnowledgeStore:
         app.state.reasoning_engine = _make_reasoning_engine_mock()
 
         transport = ASGITransport(app=app)
-        async with AsyncClient(transport=transport, base_url="http://test", cookies={"ks_session": make_test_session_cookie()}) as c:
+        async with AsyncClient(
+            transport=transport,
+            base_url="http://test",
+            cookies={"ks_session": make_test_session_cookie()},
+        ) as c:
             await c.post("/api/content", json=MULTI_TRIPLE_PAYLOAD)
 
         assert mock_ks.insert_triple.call_count == 2
@@ -333,7 +349,11 @@ class TestPostContentContradictions:
         app.state.reasoning_engine = _make_reasoning_engine_mock()
 
         transport = ASGITransport(app=app)
-        async with AsyncClient(transport=transport, base_url="http://test", cookies={"ks_session": make_test_session_cookie()}) as c:
+        async with AsyncClient(
+            transport=transport,
+            base_url="http://test",
+            cookies={"ks_session": make_test_session_cookie()},
+        ) as c:
             response = await c.post("/api/content", json=CLAIM_PAYLOAD)
 
         data = response.json()
@@ -360,7 +380,11 @@ class TestPostContentEmbedding:
         app.state.reasoning_engine = _make_reasoning_engine_mock()
 
         transport = ASGITransport(app=app)
-        async with AsyncClient(transport=transport, base_url="http://test", cookies={"ks_session": make_test_session_cookie()}) as c:
+        async with AsyncClient(
+            transport=transport,
+            base_url="http://test",
+            cookies={"ks_session": make_test_session_cookie()},
+        ) as c:
             await c.post("/api/content", json=MINIMAL_PAYLOAD)
 
         mock_ec.embed.assert_called_once()
@@ -376,7 +400,11 @@ class TestPostContentEmbedding:
         app.state.reasoning_engine = _make_reasoning_engine_mock()
 
         transport = ASGITransport(app=app)
-        async with AsyncClient(transport=transport, base_url="http://test", cookies={"ks_session": make_test_session_cookie()}) as c:
+        async with AsyncClient(
+            transport=transport,
+            base_url="http://test",
+            cookies={"ks_session": make_test_session_cookie()},
+        ) as c:
             response = await c.post("/api/content", json=MINIMAL_PAYLOAD)
 
         # The content_id should come from the fetchrow call
@@ -401,7 +429,11 @@ class TestPostContentProvenance:
         app.state.reasoning_engine = _make_reasoning_engine_mock()
 
         transport = ASGITransport(app=app)
-        async with AsyncClient(transport=transport, base_url="http://test", cookies={"ks_session": make_test_session_cookie()}) as c:
+        async with AsyncClient(
+            transport=transport,
+            base_url="http://test",
+            cookies={"ks_session": make_test_session_cookie()},
+        ) as c:
             await c.post("/api/content", json=CLAIM_PAYLOAD)
 
         # The pg pool conn.execute should be called at least once (for provenance insert)
@@ -494,7 +526,11 @@ class TestPostContentExtraction:
         app.state.reasoning_engine = _make_reasoning_engine_mock()
 
         transport = ASGITransport(app=app)
-        async with AsyncClient(transport=transport, base_url="http://test", cookies={"ks_session": make_test_session_cookie()}) as c:
+        async with AsyncClient(
+            transport=transport,
+            base_url="http://test",
+            cookies={"ks_session": make_test_session_cookie()},
+        ) as c:
             await c.post("/api/content", json=RAW_TEXT_PAYLOAD)
 
         mock_xc.extract.assert_called_once()
@@ -510,7 +546,11 @@ class TestPostContentExtraction:
         app.state.reasoning_engine = _make_reasoning_engine_mock()
 
         transport = ASGITransport(app=app)
-        async with AsyncClient(transport=transport, base_url="http://test", cookies={"ks_session": make_test_session_cookie()}) as c:
+        async with AsyncClient(
+            transport=transport,
+            base_url="http://test",
+            cookies={"ks_session": make_test_session_cookie()},
+        ) as c:
             await c.post("/api/content", json=CLAIM_PAYLOAD)
 
         mock_xc.extract.assert_not_called()
@@ -526,7 +566,11 @@ class TestPostContentExtraction:
         app.state.reasoning_engine = _make_reasoning_engine_mock()
 
         transport = ASGITransport(app=app)
-        async with AsyncClient(transport=transport, base_url="http://test", cookies={"ks_session": make_test_session_cookie()}) as c:
+        async with AsyncClient(
+            transport=transport,
+            base_url="http://test",
+            cookies={"ks_session": make_test_session_cookie()},
+        ) as c:
             await c.post("/api/content", json=MINIMAL_PAYLOAD)
 
         mock_xc.extract.assert_not_called()
@@ -555,7 +599,11 @@ class TestPostContentExtraction:
         app.state.reasoning_engine = _make_reasoning_engine_mock()
 
         transport = ASGITransport(app=app)
-        async with AsyncClient(transport=transport, base_url="http://test", cookies={"ks_session": make_test_session_cookie()}) as c:
+        async with AsyncClient(
+            transport=transport,
+            base_url="http://test",
+            cookies={"ks_session": make_test_session_cookie()},
+        ) as c:
             response = await c.post("/api/content", json=RAW_TEXT_PAYLOAD)
 
         assert response.json()["triples_created"] == 1
@@ -572,7 +620,11 @@ class TestPostContentExtraction:
         app.state.reasoning_engine = _make_reasoning_engine_mock()
 
         transport = ASGITransport(app=app)
-        async with AsyncClient(transport=transport, base_url="http://test", cookies={"ks_session": make_test_session_cookie()}) as c:
+        async with AsyncClient(
+            transport=transport,
+            base_url="http://test",
+            cookies={"ks_session": make_test_session_cookie()},
+        ) as c:
             response = await c.post("/api/content", json=RAW_TEXT_PAYLOAD)
 
         assert response.status_code == 200
@@ -611,7 +663,11 @@ class TestPostContentEntityResolution:
         app.state.embedding_store = _make_embedding_store_mock()
 
         transport = ASGITransport(app=app)
-        async with AsyncClient(transport=transport, base_url="http://test", cookies={"ks_session": make_test_session_cookie()}) as c:
+        async with AsyncClient(
+            transport=transport,
+            base_url="http://test",
+            cookies={"ks_session": make_test_session_cookie()},
+        ) as c:
             response = await c.post("/api/content", json=RAW_TEXT_PAYLOAD)
 
         # subject "cold_exposure" and object "dopamine" are non-URI labels → 2 resolved

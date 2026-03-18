@@ -123,7 +123,11 @@ async def client():
     app.state.pg_pool = _make_pg_pool_mock()
 
     transport = ASGITransport(app=app)
-    async with AsyncClient(transport=transport, base_url="http://test", cookies={"ks_session": make_test_session_cookie()}) as c:
+    async with AsyncClient(
+        transport=transport,
+        base_url="http://test",
+        cookies={"ks_session": make_test_session_cookie()},
+    ) as c:
         yield c
 
 
@@ -135,7 +139,11 @@ async def empty_client():
     app.state.pg_pool = _make_pg_pool_mock(provenance_rows=[])
 
     transport = ASGITransport(app=app)
-    async with AsyncClient(transport=transport, base_url="http://test", cookies={"ks_session": make_test_session_cookie()}) as c:
+    async with AsyncClient(
+        transport=transport,
+        base_url="http://test",
+        cookies={"ks_session": make_test_session_cookie()},
+    ) as c:
         yield c
 
 
@@ -235,7 +243,11 @@ class TestGetContradictionsProbability:
         app.state.pg_pool = _make_pg_pool_mock(provenance_rows=[])
 
         transport = ASGITransport(app=app)
-        async with AsyncClient(transport=transport, base_url="http://test", cookies={"ks_session": make_test_session_cookie()}) as c:
+        async with AsyncClient(
+            transport=transport,
+            base_url="http://test",
+            cookies={"ks_session": make_test_session_cookie()},
+        ) as c:
             # 0.8 * 0.6 = 0.48, request min_confidence=0.5 → nothing returned
             response = await c.get("/api/knowledge/contradictions", params={"min_confidence": 0.5})
 
@@ -249,7 +261,11 @@ class TestGetContradictionsProbability:
         app.state.pg_pool = _make_pg_pool_mock(provenance_rows=[])
 
         transport = ASGITransport(app=app)
-        async with AsyncClient(transport=transport, base_url="http://test", cookies={"ks_session": make_test_session_cookie()}) as c:
+        async with AsyncClient(
+            transport=transport,
+            base_url="http://test",
+            cookies={"ks_session": make_test_session_cookie()},
+        ) as c:
             # 0.48 >= 0.4 → included
             response = await c.get("/api/knowledge/contradictions", params={"min_confidence": 0.4})
 
@@ -263,7 +279,11 @@ class TestGetContradictionsProbability:
         app.state.pg_pool = _make_pg_pool_mock(provenance_rows=[])
 
         transport = ASGITransport(app=app)
-        async with AsyncClient(transport=transport, base_url="http://test", cookies={"ks_session": make_test_session_cookie()}) as c:
+        async with AsyncClient(
+            transport=transport,
+            base_url="http://test",
+            cookies={"ks_session": make_test_session_cookie()},
+        ) as c:
             response = await c.get("/api/knowledge/contradictions")
 
         assert len(response.json()) == 1
@@ -294,7 +314,11 @@ class TestGetContradictionsProvenance:
         app.state.pg_pool = _make_pg_pool_mock(provenance_rows=[])
 
         transport = ASGITransport(app=app)
-        async with AsyncClient(transport=transport, base_url="http://test", cookies={"ks_session": make_test_session_cookie()}) as c:
+        async with AsyncClient(
+            transport=transport,
+            base_url="http://test",
+            cookies={"ks_session": make_test_session_cookie()},
+        ) as c:
             response = await c.get("/api/knowledge/contradictions")
 
         item = response.json()[0]
@@ -311,7 +335,11 @@ class TestGetContradictionsProvenance:
         app.state.pg_pool = _make_pg_pool_mock(provenance_rows=prov_rows)
 
         transport = ASGITransport(app=app)
-        async with AsyncClient(transport=transport, base_url="http://test", cookies={"ks_session": make_test_session_cookie()}) as c:
+        async with AsyncClient(
+            transport=transport,
+            base_url="http://test",
+            cookies={"ks_session": make_test_session_cookie()},
+        ) as c:
             response = await c.get("/api/knowledge/contradictions")
 
         item = response.json()[0]
@@ -332,7 +360,11 @@ class TestGetContradictionsSparqlQuery:
         app.state.pg_pool = _make_pg_pool_mock(provenance_rows=[])
 
         transport = ASGITransport(app=app)
-        async with AsyncClient(transport=transport, base_url="http://test", cookies={"ks_session": make_test_session_cookie()}) as c:
+        async with AsyncClient(
+            transport=transport,
+            base_url="http://test",
+            cookies={"ks_session": make_test_session_cookie()},
+        ) as c:
             await c.get("/api/knowledge/contradictions")
 
         # Two queries: same-predicate contradictions + opposite-predicate contradictions
@@ -347,7 +379,11 @@ class TestGetContradictionsSparqlQuery:
         app.state.pg_pool = _make_pg_pool_mock(provenance_rows=[])
 
         transport = ASGITransport(app=app)
-        async with AsyncClient(transport=transport, base_url="http://test", cookies={"ks_session": make_test_session_cookie()}) as c:
+        async with AsyncClient(
+            transport=transport,
+            base_url="http://test",
+            cookies={"ks_session": make_test_session_cookie()},
+        ) as c:
             await c.get("/api/knowledge/contradictions")
 
         sparql_arg = mock_ks.query.call_args_list[0][0][0]
@@ -360,7 +396,11 @@ class TestGetContradictionsSparqlQuery:
         app.state.pg_pool = _make_pg_pool_mock(provenance_rows=[])
 
         transport = ASGITransport(app=app)
-        async with AsyncClient(transport=transport, base_url="http://test", cookies={"ks_session": make_test_session_cookie()}) as c:
+        async with AsyncClient(
+            transport=transport,
+            base_url="http://test",
+            cookies={"ks_session": make_test_session_cookie()},
+        ) as c:
             await c.get("/api/knowledge/contradictions")
 
         sparql_arg = mock_ks.query.call_args_list[0][0][0]
@@ -398,7 +438,11 @@ class TestGetContradictionsMultiple:
         app.state.pg_pool = _make_pg_pool_mock(provenance_rows=[])
 
         transport = ASGITransport(app=app)
-        async with AsyncClient(transport=transport, base_url="http://test", cookies={"ks_session": make_test_session_cookie()}) as c:
+        async with AsyncClient(
+            transport=transport,
+            base_url="http://test",
+            cookies={"ks_session": make_test_session_cookie()},
+        ) as c:
             response = await c.get("/api/knowledge/contradictions")
 
         data = response.json()
@@ -433,7 +477,11 @@ class TestGetContradictionsMultiple:
         app.state.pg_pool = _make_pg_pool_mock(provenance_rows=[])
 
         transport = ASGITransport(app=app)
-        async with AsyncClient(transport=transport, base_url="http://test", cookies={"ks_session": make_test_session_cookie()}) as c:
+        async with AsyncClient(
+            transport=transport,
+            base_url="http://test",
+            cookies={"ks_session": make_test_session_cookie()},
+        ) as c:
             # threshold = 0.5: first passes (0.63), second filtered out (0.25)
             response = await c.get("/api/knowledge/contradictions", params={"min_confidence": 0.5})
 

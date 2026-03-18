@@ -7,7 +7,13 @@ import re
 
 from fastapi import APIRouter, HTTPException, Query, Request
 
-from knowledge_service.ontology.namespaces import KS, KS_CONFIDENCE, KS_KNOWLEDGE_TYPE, KS_VALID_FROM, KS_VALID_UNTIL
+from knowledge_service.ontology.namespaces import (
+    KS,
+    KS_CONFIDENCE,
+    KS_KNOWLEDGE_TYPE,
+    KS_VALID_FROM,
+    KS_VALID_UNTIL,
+)
 
 router = APIRouter()
 
@@ -22,7 +28,7 @@ def _rdf_value_to_str(value: object) -> str:
 
 def _sanitize_sparql_string(value: str) -> str:
     """Sanitize a string for safe inclusion in SPARQL queries."""
-    return re.sub(r'["\\\n\r]', '', value)
+    return re.sub(r'["\\\n\r]', "", value)
 
 
 @router.get("/stats/counts")
@@ -44,7 +50,12 @@ async def get_counts(request: Request) -> dict:
         content_count = await conn.fetchval("SELECT COUNT(*) FROM content")
         event_count = await conn.fetchval("SELECT COUNT(*) FROM ingestion_events")
 
-    return {"triples": triple_count, "entities": entity_count, "content": content_count, "events": event_count}
+    return {
+        "triples": triple_count,
+        "entities": entity_count,
+        "content": content_count,
+        "events": event_count,
+    }
 
 
 @router.get("/stats/confidence")
@@ -89,7 +100,7 @@ async def get_type_breakdown(request: Request) -> dict:
     for row in rows:
         ktype = _rdf_value_to_str(row["ktype"])
         if ktype.startswith(KS):
-            ktype = ktype[len(KS):]
+            ktype = ktype[len(KS) :]
         result[ktype] = int(_rdf_value_to_str(row["cnt"]))
 
     return result
@@ -159,9 +170,19 @@ async def browse_triples(
 ) -> dict:
     knowledge_store = request.app.state.knowledge_store
 
-    valid_types = {"Claim", "Fact", "Event", "Entity", "Relationship", "Conclusion", "TemporalState"}
+    valid_types = {
+        "Claim",
+        "Fact",
+        "Event",
+        "Entity",
+        "Relationship",
+        "Conclusion",
+        "TemporalState",
+    }
     if knowledge_type and knowledge_type not in valid_types:
-        raise HTTPException(status_code=422, detail=f"Invalid knowledge_type. Must be one of: {valid_types}")
+        raise HTTPException(
+            status_code=422, detail=f"Invalid knowledge_type. Must be one of: {valid_types}"
+        )
 
     filters = []
     if q:
@@ -172,14 +193,16 @@ async def browse_triples(
             f'CONTAINS(LCASE(STR(?o)), LCASE("{safe_q}")))'
         )
     if knowledge_type:
-        filters.append(f'FILTER(?ktype = <{KS}{knowledge_type}>)')
+        filters.append(f"FILTER(?ktype = <{KS}{knowledge_type}>)")
 
     filters.append(
         f"FILTER(xsd:float(?conf) >= {min_confidence} && xsd:float(?conf) <= {max_confidence})"
     )
 
     filter_clause = "\n            ".join(filters)
-    order_clause = "ORDER BY DESC(xsd:float(?conf))" if sort == "confidence" else "ORDER BY DESC(?s)"
+    order_clause = (
+        "ORDER BY DESC(xsd:float(?conf))" if sort == "confidence" else "ORDER BY DESC(?s)"
+    )
 
     count_sparql = f"""
         PREFIX xsd: <http://www.w3.org/2001/XMLSchema#>
@@ -217,16 +240,18 @@ async def browse_triples(
     for row in data_rows:
         ktype = _rdf_value_to_str(row.get("ktype"))
         if ktype.startswith(KS):
-            ktype = ktype[len(KS):]
+            ktype = ktype[len(KS) :]
 
-        items.append({
-            "subject": _rdf_value_to_str(row.get("s")),
-            "predicate": _rdf_value_to_str(row.get("p")),
-            "object": _rdf_value_to_str(row.get("o")),
-            "confidence": float(_rdf_value_to_str(row.get("conf"))) if row.get("conf") else 0.0,
-            "knowledge_type": ktype,
-            "valid_from": _rdf_value_to_str(row.get("vfrom")) if row.get("vfrom") else None,
-            "valid_until": _rdf_value_to_str(row.get("vuntil")) if row.get("vuntil") else None,
-        })
+        items.append(
+            {
+                "subject": _rdf_value_to_str(row.get("s")),
+                "predicate": _rdf_value_to_str(row.get("p")),
+                "object": _rdf_value_to_str(row.get("o")),
+                "confidence": float(_rdf_value_to_str(row.get("conf"))) if row.get("conf") else 0.0,
+                "knowledge_type": ktype,
+                "valid_from": _rdf_value_to_str(row.get("vfrom")) if row.get("vfrom") else None,
+                "valid_until": _rdf_value_to_str(row.get("vuntil")) if row.get("vuntil") else None,
+            }
+        )
 
     return {"items": items, "total": total, "limit": limit, "offset": offset}

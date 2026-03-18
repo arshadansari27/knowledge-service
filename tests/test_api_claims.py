@@ -64,7 +64,11 @@ async def client():
     app.state.reasoning_engine = _make_reasoning_engine_mock()
 
     transport = ASGITransport(app=app)
-    async with AsyncClient(transport=transport, base_url="http://test", cookies={"ks_session": make_test_session_cookie()}) as c:
+    async with AsyncClient(
+        transport=transport,
+        base_url="http://test",
+        cookies={"ks_session": make_test_session_cookie()},
+    ) as c:
         yield c
 
 
@@ -221,7 +225,11 @@ class TestPostClaimsKnowledgeStore:
         app.state.reasoning_engine = _make_reasoning_engine_mock()
 
         transport = ASGITransport(app=app)
-        async with AsyncClient(transport=transport, base_url="http://test", cookies={"ks_session": make_test_session_cookie()}) as c:
+        async with AsyncClient(
+            transport=transport,
+            base_url="http://test",
+            cookies={"ks_session": make_test_session_cookie()},
+        ) as c:
             await c.post("/api/claims", json=CLAIM_PAYLOAD)
 
         mock_ks.insert_triple.assert_called_once()
@@ -237,7 +245,11 @@ class TestPostClaimsKnowledgeStore:
         app.state.reasoning_engine = _make_reasoning_engine_mock()
 
         transport = ASGITransport(app=app)
-        async with AsyncClient(transport=transport, base_url="http://test", cookies={"ks_session": make_test_session_cookie()}) as c:
+        async with AsyncClient(
+            transport=transport,
+            base_url="http://test",
+            cookies={"ks_session": make_test_session_cookie()},
+        ) as c:
             await c.post("/api/claims", json=CLAIM_PAYLOAD)
 
         mock_ks.find_contradictions.assert_called_once()
@@ -250,7 +262,11 @@ class TestPostClaimsKnowledgeStore:
         app.state.reasoning_engine = _make_reasoning_engine_mock()
 
         transport = ASGITransport(app=app)
-        async with AsyncClient(transport=transport, base_url="http://test", cookies={"ks_session": make_test_session_cookie()}) as c:
+        async with AsyncClient(
+            transport=transport,
+            base_url="http://test",
+            cookies={"ks_session": make_test_session_cookie()},
+        ) as c:
             await c.post("/api/claims", json=MULTI_TRIPLE_PAYLOAD)
 
         assert mock_ks.insert_triple.call_count == 2
@@ -278,7 +294,11 @@ class TestPostClaimsContradictions:
         app.state.reasoning_engine = _make_reasoning_engine_mock()
 
         transport = ASGITransport(app=app)
-        async with AsyncClient(transport=transport, base_url="http://test", cookies={"ks_session": make_test_session_cookie()}) as c:
+        async with AsyncClient(
+            transport=transport,
+            base_url="http://test",
+            cookies={"ks_session": make_test_session_cookie()},
+        ) as c:
             response = await c.post("/api/claims", json=CLAIM_PAYLOAD)
 
         data = response.json()
@@ -301,7 +321,11 @@ class TestPostClaimsContradictions:
         app.state.reasoning_engine = _make_reasoning_engine_mock()
 
         transport = ASGITransport(app=app)
-        async with AsyncClient(transport=transport, base_url="http://test", cookies={"ks_session": make_test_session_cookie()}) as c:
+        async with AsyncClient(
+            transport=transport,
+            base_url="http://test",
+            cookies={"ks_session": make_test_session_cookie()},
+        ) as c:
             response = await c.post("/api/claims", json=CLAIM_PAYLOAD)
 
         contradiction = response.json()["contradictions_detected"][0]
@@ -346,7 +370,11 @@ class TestPostClaimsProvenance:
         app.state.pg_pool = mock_pool
 
         transport = ASGITransport(app=app)
-        async with AsyncClient(transport=transport, base_url="http://test", cookies={"ks_session": make_test_session_cookie()}) as c:
+        async with AsyncClient(
+            transport=transport,
+            base_url="http://test",
+            cookies={"ks_session": make_test_session_cookie()},
+        ) as c:
             await c.post("/api/claims", json=CLAIM_PAYLOAD)
 
         # Verify provenance was inserted with the correct source_url
@@ -380,7 +408,11 @@ class TestPostClaimsProvenance:
         app.state.reasoning_engine = _make_reasoning_engine_mock()
 
         transport = ASGITransport(app=app)
-        async with AsyncClient(transport=transport, base_url="http://test", cookies={"ks_session": make_test_session_cookie()}) as c:
+        async with AsyncClient(
+            transport=transport,
+            base_url="http://test",
+            cookies={"ks_session": make_test_session_cookie()},
+        ) as c:
             await c.post("/api/claims", json=CLAIM_PAYLOAD)
 
         provenance_calls = [c for c in captured_calls if "INSERT INTO provenance" in c["sql"]]

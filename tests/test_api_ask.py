@@ -63,7 +63,11 @@ async def client():
     app.state.rag_client = _make_rag_client()
 
     transport = ASGITransport(app=app)
-    async with AsyncClient(transport=transport, base_url="http://test", cookies={"ks_session": make_test_session_cookie()}) as c:
+    async with AsyncClient(
+        transport=transport,
+        base_url="http://test",
+        cookies={"ks_session": make_test_session_cookie()},
+    ) as c:
         yield c
 
 
@@ -127,7 +131,11 @@ class TestPostAskLLMFailure:
         app.state.rag_client = failing_client
 
         transport = ASGITransport(app=app)
-        async with AsyncClient(transport=transport, base_url="http://test", cookies={"ks_session": make_test_session_cookie()}) as c:
+        async with AsyncClient(
+            transport=transport,
+            base_url="http://test",
+            cookies={"ks_session": make_test_session_cookie()},
+        ) as c:
             response = await c.post("/api/ask", json={"question": "test?"})
 
         assert response.status_code == 502
@@ -155,7 +163,11 @@ class TestPostAskNullConfidence:
         app.state.rag_client = _make_rag_client()
 
         transport = ASGITransport(app=app)
-        async with AsyncClient(transport=transport, base_url="http://test", cookies={"ks_session": make_test_session_cookie()}) as c:
+        async with AsyncClient(
+            transport=transport,
+            base_url="http://test",
+            cookies={"ks_session": make_test_session_cookie()},
+        ) as c:
             response = await c.post("/api/ask", json={"question": "q"})
 
         data = response.json()
@@ -193,7 +205,11 @@ class TestPostAskContradictions:
         app.state.rag_client = _make_rag_client()
 
         transport = ASGITransport(app=app)
-        async with AsyncClient(transport=transport, base_url="http://test", cookies={"ks_session": make_test_session_cookie()}) as c:
+        async with AsyncClient(
+            transport=transport,
+            base_url="http://test",
+            cookies={"ks_session": make_test_session_cookie()},
+        ) as c:
             response = await c.post("/api/ask", json={"question": "q"})
 
         data = response.json()

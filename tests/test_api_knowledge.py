@@ -111,7 +111,11 @@ async def client():
     app.state.pg_pool = _make_pg_pool_mock()
 
     transport = ASGITransport(app=app)
-    async with AsyncClient(transport=transport, base_url="http://test", cookies={"ks_session": make_test_session_cookie()}) as c:
+    async with AsyncClient(
+        transport=transport,
+        base_url="http://test",
+        cookies={"ks_session": make_test_session_cookie()},
+    ) as c:
         yield c
 
 
@@ -123,7 +127,11 @@ async def empty_client():
     app.state.pg_pool = _make_pg_pool_mock(provenance_rows=[])
 
     transport = ASGITransport(app=app)
-    async with AsyncClient(transport=transport, base_url="http://test", cookies={"ks_session": make_test_session_cookie()}) as c:
+    async with AsyncClient(
+        transport=transport,
+        base_url="http://test",
+        cookies={"ks_session": make_test_session_cookie()},
+    ) as c:
         yield c
 
 
@@ -228,7 +236,11 @@ class TestGetKnowledgeQueryFilters:
         app.state.pg_pool = _make_pg_pool_mock(provenance_rows=[])
 
         transport = ASGITransport(app=app)
-        async with AsyncClient(transport=transport, base_url="http://test", cookies={"ks_session": make_test_session_cookie()}) as c:
+        async with AsyncClient(
+            transport=transport,
+            base_url="http://test",
+            cookies={"ks_session": make_test_session_cookie()},
+        ) as c:
             await c.get(
                 "/api/knowledge/query",
                 params={"subject": "http://example.com/thing"},
@@ -245,7 +257,11 @@ class TestGetKnowledgeQueryFilters:
         app.state.pg_pool = _make_pg_pool_mock(provenance_rows=[])
 
         transport = ASGITransport(app=app)
-        async with AsyncClient(transport=transport, base_url="http://test", cookies={"ks_session": make_test_session_cookie()}) as c:
+        async with AsyncClient(
+            transport=transport,
+            base_url="http://test",
+            cookies={"ks_session": make_test_session_cookie()},
+        ) as c:
             await c.get(
                 "/api/knowledge/query",
                 params={"predicate": "http://example.com/pred"},
@@ -261,7 +277,11 @@ class TestGetKnowledgeQueryFilters:
         app.state.pg_pool = _make_pg_pool_mock(provenance_rows=[])
 
         transport = ASGITransport(app=app)
-        async with AsyncClient(transport=transport, base_url="http://test", cookies={"ks_session": make_test_session_cookie()}) as c:
+        async with AsyncClient(
+            transport=transport,
+            base_url="http://test",
+            cookies={"ks_session": make_test_session_cookie()},
+        ) as c:
             await c.get(
                 "/api/knowledge/query",
                 params={"object": "http://example.com/obj"},
@@ -277,7 +297,11 @@ class TestGetKnowledgeQueryFilters:
         app.state.pg_pool = _make_pg_pool_mock(provenance_rows=[])
 
         transport = ASGITransport(app=app)
-        async with AsyncClient(transport=transport, base_url="http://test", cookies={"ks_session": make_test_session_cookie()}) as c:
+        async with AsyncClient(
+            transport=transport,
+            base_url="http://test",
+            cookies={"ks_session": make_test_session_cookie()},
+        ) as c:
             await c.get(
                 "/api/knowledge/query",
                 params={"object": "plain literal"},
@@ -305,7 +329,11 @@ class TestGetKnowledgeQueryProvenance:
         app.state.pg_pool = _make_pg_pool_mock(provenance_rows=[])
 
         transport = ASGITransport(app=app)
-        async with AsyncClient(transport=transport, base_url="http://test", cookies={"ks_session": make_test_session_cookie()}) as c:
+        async with AsyncClient(
+            transport=transport,
+            base_url="http://test",
+            cookies={"ks_session": make_test_session_cookie()},
+        ) as c:
             response = await c.get("/api/knowledge/query", params={"subject": _SAMPLE_SUBJECT})
 
         data = response.json()
@@ -321,7 +349,11 @@ class TestGetKnowledgeQueryProvenance:
         app.state.pg_pool = _make_pg_pool_mock(provenance_rows=prov_rows)
 
         transport = ASGITransport(app=app)
-        async with AsyncClient(transport=transport, base_url="http://test", cookies={"ks_session": make_test_session_cookie()}) as c:
+        async with AsyncClient(
+            transport=transport,
+            base_url="http://test",
+            cookies={"ks_session": make_test_session_cookie()},
+        ) as c:
             response = await c.get("/api/knowledge/query", params={"subject": _SAMPLE_SUBJECT})
 
         data = response.json()
@@ -389,7 +421,11 @@ class TestPostKnowledgeSparql:
         app.state.pg_pool = _make_pg_pool_mock(provenance_rows=[])
 
         transport = ASGITransport(app=app)
-        async with AsyncClient(transport=transport, base_url="http://test", cookies={"ks_session": make_test_session_cookie()}) as c:
+        async with AsyncClient(
+            transport=transport,
+            base_url="http://test",
+            cookies={"ks_session": make_test_session_cookie()},
+        ) as c:
             await c.post(
                 "/api/knowledge/sparql",
                 json={"query": "SELECT ?x WHERE { ?x ?y ?z }"},
@@ -419,7 +455,11 @@ class TestPostKnowledgeSparql:
         app.state.pg_pool = _make_pg_pool_mock(provenance_rows=[])
 
         transport = ASGITransport(app=app)
-        async with AsyncClient(transport=transport, base_url="http://test", cookies={"ks_session": make_test_session_cookie()}) as c:
+        async with AsyncClient(
+            transport=transport,
+            base_url="http://test",
+            cookies={"ks_session": make_test_session_cookie()},
+        ) as c:
             response = await c.post(
                 "/api/knowledge/sparql",
                 json={"query": "SELECT ?s ?p ?o WHERE { ?s ?p ?o }"},
@@ -466,7 +506,11 @@ class TestGetKnowledgeQueryFederation:
         app.state.embedding_store = mock_embedding_store
 
         transport = ASGITransport(app=app)
-        async with AsyncClient(transport=transport, base_url="http://test", cookies={"ks_session": make_test_session_cookie()}) as c:
+        async with AsyncClient(
+            transport=transport,
+            base_url="http://test",
+            cookies={"ks_session": make_test_session_cookie()},
+        ) as c:
             response = await c.get("/api/knowledge/query", params={"subject": _SAMPLE_SUBJECT})
 
         data = response.json()
@@ -494,7 +538,11 @@ class TestGetKnowledgeQueryFederation:
         app.state.embedding_store = mock_embedding_store
 
         transport = ASGITransport(app=app)
-        async with AsyncClient(transport=transport, base_url="http://test", cookies={"ks_session": make_test_session_cookie()}) as c:
+        async with AsyncClient(
+            transport=transport,
+            base_url="http://test",
+            cookies={"ks_session": make_test_session_cookie()},
+        ) as c:
             response = await c.get("/api/knowledge/query", params={"subject": _SAMPLE_SUBJECT})
 
         assert response.status_code == 200
@@ -512,7 +560,11 @@ class TestGetKnowledgeQueryFederation:
         app.state.embedding_store = None
 
         transport = ASGITransport(app=app)
-        async with AsyncClient(transport=transport, base_url="http://test", cookies={"ks_session": make_test_session_cookie()}) as c:
+        async with AsyncClient(
+            transport=transport,
+            base_url="http://test",
+            cookies={"ks_session": make_test_session_cookie()},
+        ) as c:
             response = await c.get("/api/knowledge/query", params={"subject": _SAMPLE_SUBJECT})
 
         assert response.status_code == 200

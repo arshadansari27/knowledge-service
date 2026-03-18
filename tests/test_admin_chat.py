@@ -53,7 +53,9 @@ async def test_chat_page_renders(chat_client):
 
 
 async def test_chat_send_returns_html(chat_client):
-    resp = await chat_client.post("/admin/chat/send", data={"question": "What do I know about Python?"})
+    resp = await chat_client.post(
+        "/admin/chat/send", data={"question": "What do I know about Python?"}
+    )
     assert resp.status_code == 200
     assert "Test answer about knowledge" in resp.text
     assert "text/html" in resp.headers["content-type"]
