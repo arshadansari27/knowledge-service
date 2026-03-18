@@ -3,6 +3,7 @@ from contextlib import asynccontextmanager
 from unittest.mock import AsyncMock, MagicMock
 from httpx import AsyncClient, ASGITransport
 from knowledge_service.main import create_app
+from tests.conftest import make_test_session_cookie
 
 
 def _make_pg_pool_mock():
@@ -40,7 +41,7 @@ async def client():
     app.state.reasoning_engine = MagicMock()
 
     transport = ASGITransport(app=app)
-    async with AsyncClient(transport=transport, base_url="http://test") as c:
+    async with AsyncClient(transport=transport, base_url="http://test", cookies={"ks_session": make_test_session_cookie()}) as c:
         yield c
 
 
@@ -85,7 +86,7 @@ class TestHealth:
         app.state.reasoning_engine = MagicMock()
 
         transport = ASGITransport(app=app)
-        async with AsyncClient(transport=transport, base_url="http://test") as c:
+        async with AsyncClient(transport=transport, base_url="http://test", cookies={"ks_session": make_test_session_cookie()}) as c:
             response = await c.get("/health")
             data = response.json()
             assert data["status"] == "degraded"

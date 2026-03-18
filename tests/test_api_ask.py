@@ -10,6 +10,7 @@ from httpx import ASGITransport, AsyncClient
 from knowledge_service.clients.rag import RAGAnswer
 from knowledge_service.main import create_app
 from knowledge_service.stores.rag import RetrievalContext
+from tests.conftest import make_test_session_cookie
 
 
 def _make_rag_retriever(context=None):
@@ -62,7 +63,7 @@ async def client():
     app.state.rag_client = _make_rag_client()
 
     transport = ASGITransport(app=app)
-    async with AsyncClient(transport=transport, base_url="http://test") as c:
+    async with AsyncClient(transport=transport, base_url="http://test", cookies={"ks_session": make_test_session_cookie()}) as c:
         yield c
 
 
@@ -126,7 +127,7 @@ class TestPostAskLLMFailure:
         app.state.rag_client = failing_client
 
         transport = ASGITransport(app=app)
-        async with AsyncClient(transport=transport, base_url="http://test") as c:
+        async with AsyncClient(transport=transport, base_url="http://test", cookies={"ks_session": make_test_session_cookie()}) as c:
             response = await c.post("/api/ask", json={"question": "test?"})
 
         assert response.status_code == 502
@@ -154,7 +155,7 @@ class TestPostAskNullConfidence:
         app.state.rag_client = _make_rag_client()
 
         transport = ASGITransport(app=app)
-        async with AsyncClient(transport=transport, base_url="http://test") as c:
+        async with AsyncClient(transport=transport, base_url="http://test", cookies={"ks_session": make_test_session_cookie()}) as c:
             response = await c.post("/api/ask", json={"question": "q"})
 
         data = response.json()
@@ -192,7 +193,7 @@ class TestPostAskContradictions:
         app.state.rag_client = _make_rag_client()
 
         transport = ASGITransport(app=app)
-        async with AsyncClient(transport=transport, base_url="http://test") as c:
+        async with AsyncClient(transport=transport, base_url="http://test", cookies={"ks_session": make_test_session_cookie()}) as c:
             response = await c.post("/api/ask", json={"question": "q"})
 
         data = response.json()
