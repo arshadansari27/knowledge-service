@@ -7,6 +7,7 @@ class Settings(BaseSettings):
     llm_api_key: str = ""
     llm_embed_model: str = "nomic-embed-text"
     llm_chat_model: str = "qwen3:14b"
+    llm_rag_model: str = ""
     oxigraph_data_dir: str = "./data/oxigraph"
     problog_rules_dir: str = "./src/knowledge_service/reasoning/rules"
     api_host: str = "0.0.0.0"
