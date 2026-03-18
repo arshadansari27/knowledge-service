@@ -403,6 +403,35 @@ Ask a natural language question against the knowledge base. Retrieves relevant c
 
 ---
 
+## Admin Panel
+
+A built-in web UI for monitoring and querying your knowledge base. Accessible at `/admin` after logging in.
+
+### Features
+
+- **Dashboard** — stats cards (triples, entities, content, events), confidence distribution chart, knowledge type breakdown, recent ingestion activity
+- **Knowledge Explorer** — searchable, filterable, paginated triple browser with entity detail views and content inspection
+- **Chat** — ask natural language questions against your knowledge base (uses the RAG pipeline), with source citations and confidence scores
+- **Contradictions** — visual side-by-side comparison of conflicting claims with confidence bars
+
+### Authentication
+
+All routes (UI and API) are protected behind a password. Set `ADMIN_PASSWORD` in your `.env` file or environment:
+
+```bash
+ADMIN_PASSWORD=your-password-here
+```
+
+The service will not start without this variable. Visit `/login` to sign in — no username needed, just the password.
+
+Sessions last 24 hours (signed cookie). Set `SECRET_KEY` for persistent sessions across restarts; if omitted, a random key is generated at startup (sessions lost on restart).
+
+### Tech
+
+Server-rendered Jinja2 templates with Alpine.js and TailwindCSS (CDN). No JS build pipeline — everything ships inside the Python package.
+
+---
+
 ## Running Locally
 
 ### Prerequisites
@@ -476,6 +505,9 @@ uvicorn knowledge_service.main:app --reload
 A pre-built image is available on Docker Hub: [`arshadansari27/knowledge-service`](https://hub.docker.com/r/arshadansari27/knowledge-service)
 
 ```bash
+# Set admin password (required)
+export ADMIN_PASSWORD=changeme
+
 # Using docker-compose (builds locally)
 docker compose up -d
 
@@ -483,7 +515,7 @@ docker compose up -d
 docker pull arshadansari27/knowledge-service:latest
 ```
 
-Service available at `http://localhost:8000`. Ollama must be running on the host machine.
+Service available at `http://localhost:8000`. Admin panel at `http://localhost:8000/login`. Ollama must be running on the host machine.
 
 ### Configuration
 
@@ -503,6 +535,8 @@ All settings via environment variables or `.env` file:
 | `FEDERATION_TIMEOUT` | `3.0` | Federation query timeout (seconds) |
 | `API_HOST` | `0.0.0.0` | Bind address |
 | `API_PORT` | `8000` | Port |
+| `ADMIN_PASSWORD` | *(required)* | Password for admin panel login |
+| `SECRET_KEY` | *(auto-generated)* | Session signing key (set for persistent sessions across restarts) |
 
 ---
 
@@ -521,7 +555,7 @@ All tests mock external dependencies — no PostgreSQL or LLM provider required.
 GitHub Actions pipeline on every push/merge to `main`:
 
 1. **Lint** — `ruff check` + `ruff format --check`
-2. **Test** — `pytest tests/ -v` (278 tests)
+2. **Test** — `pytest tests/ -v` (304 tests)
 3. **Version bump** — auto-increments patch version in `pyproject.toml`, commits back to `main`, creates `vX.Y.Z` git tag
 4. **Docker build** — builds and pushes to Docker Hub as `arshadansari27/knowledge-service:X.Y.Z` and `:latest`
 
@@ -538,26 +572,31 @@ src/knowledge_service/
 ├── main.py                  # FastAPI app factory + lifespan
 ├── config.py                # Settings (pydantic-settings, .env)
 ├── models.py                # Pydantic models for all 7 knowledge types + API contracts
+├── admin/
+│   ├── auth.py              # AuthMiddleware, login/logout, rate limiter, session cookies
+│   ├── routes.py            # Admin page routes (dashboard, knowledge, chat, contradictions)
+│   ├── stats.py             # /api/admin/stats/* and /api/admin/knowledge/triples endpoints
+│   └── templates/           # Jinja2 templates (base, dashboard, knowledge, chat, etc.)
 ├── api/
 │   ├── content.py           # POST /api/content
 │   ├── claims.py            # POST /api/claims
 │   ├── search.py            # GET /api/search
 │   ├── knowledge.py         # GET /api/knowledge/query, POST /api/knowledge/sparql
 │   ├── contradictions.py    # GET /api/knowledge/contradictions
-│   ├── ask.py              # POST /api/ask (RAG question answering)
+│   ├── ask.py               # POST /api/ask (RAG question answering)
 │   └── health.py            # GET /health
 ├── stores/
 │   ├── knowledge.py         # pyoxigraph wrapper — RDF-star inserts, SPARQL queries
 │   ├── provenance.py        # PostgreSQL provenance table (asyncpg)
 │   ├── embedding.py         # pgvector content store + cosine similarity search
 │   ├── entity_resolver.py   # Embedding-based entity deduplication
-│   └── rag.py              # RAGRetriever — hybrid retrieval orchestration
+│   └── rag.py               # RAGRetriever — hybrid retrieval orchestration
 ├── reasoning/
 │   ├── engine.py            # ProbLog wrapper — Noisy-OR, contradiction detection
 │   └── rules/base.pl        # Core ProbLog rules
 ├── ontology/
 │   ├── namespaces.py        # ks:, schema:, dc:, skos:, prov: namespace constants
-│   └── bootstrap.py        # Loads base ontology into pyoxigraph on startup
+│   └── bootstrap.py         # Loads base ontology into pyoxigraph on startup
 └── clients/
     ├── llm.py               # EmbeddingClient + ExtractionClient (httpx → LLM API)
     ├── rag.py               # RAGClient — LLM-powered answer generation
@@ -588,6 +627,7 @@ The system reuses established vocabularies and keeps the custom `ks:` namespace 
 | **Phase 1** | ✅ Complete | Knowledge model, RDF store, probabilistic reasoning, all 7 types, Docker |
 | **Phase 2** | ✅ Complete | DBpedia/Wikidata federation (ingestion-time + query-time) |
 | **Phase 3** | ✅ Complete | RAG endpoint — hybrid retrieval + LLM answer generation |
+| **Phase 4** | ✅ Complete | Admin panel — dashboard, knowledge explorer, chat, contradictions view, password auth |
 
 ---
 
