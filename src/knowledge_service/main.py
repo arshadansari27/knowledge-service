@@ -8,13 +8,15 @@ from fastapi import FastAPI
 
 from knowledge_service.clients.federation import FederationClient
 from knowledge_service.clients.llm import EmbeddingClient, ExtractionClient
+from knowledge_service.clients.rag import RAGClient
 from knowledge_service.config import settings
 from knowledge_service.ontology.bootstrap import bootstrap_ontology
 from knowledge_service.reasoning.engine import ReasoningEngine
 from knowledge_service.stores.embedding import EmbeddingStore
 from knowledge_service.stores.entity_resolver import EntityResolver
 from knowledge_service.stores.knowledge import KnowledgeStore
-from knowledge_service.api import health, content, claims, search, knowledge, contradictions
+from knowledge_service.stores.rag import RAGRetriever
+from knowledge_service.api import health, content, claims, search, knowledge, contradictions, ask
 
 
 @asynccontextmanager
@@ -70,6 +72,19 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         federation_client=federation_client,
     )
 
+    # RAG components
+    rag_model = settings.llm_rag_model or settings.llm_chat_model
+    app.state.rag_client = RAGClient(
+        base_url=settings.llm_base_url,
+        model=rag_model,
+        api_key=settings.llm_api_key,
+    )
+    app.state.rag_retriever = RAGRetriever(
+        embedding_client=app.state.embedding_client,
+        embedding_store=embedding_store,
+        knowledge_store=app.state.knowledge_store,
+    )
+
     yield
 
     # --- Shutdown ---
@@ -77,6 +92,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     await app.state.pg_pool.close()
     if app.state.federation_client is not None:
         await app.state.federation_client.close()
+    await app.state.rag_client.close()
     await app.state.embedding_client.close()
     await app.state.extraction_client.close()
 
@@ -105,6 +121,7 @@ def create_app(use_lifespan: bool = True) -> FastAPI:
     app.include_router(search.router, prefix="/api")
     app.include_router(knowledge.router, prefix="/api")
     app.include_router(contradictions.router, prefix="/api")
+    app.include_router(ask.router, prefix="/api")
     return app
 
 
