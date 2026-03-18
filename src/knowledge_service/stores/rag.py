@@ -56,16 +56,15 @@ class RAGRetriever:
         # Step 4: Knowledge graph lookup (synchronous — use asyncio.to_thread)
         all_triples: list[dict] = []
         for uri in entities_found:
-            triples = await asyncio.to_thread(
-                self._knowledge_store.get_triples_by_subject, uri
-            )
+            triples = await asyncio.to_thread(self._knowledge_store.get_triples_by_subject, uri)
             for t in triples:
                 t["subject"] = uri
             all_triples.extend(triples)
 
         # Step 5: Filter by min_confidence
         filtered_triples = [
-            t for t in all_triples
+            t
+            for t in all_triples
             if t.get("confidence") is not None and t["confidence"] >= min_confidence
         ]
 
@@ -83,16 +82,16 @@ class RAGRetriever:
             if key in seen:
                 continue
             seen.add(key)
-            contras = await asyncio.to_thread(
-                self._knowledge_store.find_contradictions, s, p, o
-            )
+            contras = await asyncio.to_thread(self._knowledge_store.find_contradictions, s, p, o)
             for c in contras:
-                contradictions.append({
-                    "subject": s,
-                    "predicate": p,
-                    "object": str(c["object"]),
-                    "confidence": c.get("confidence"),
-                })
+                contradictions.append(
+                    {
+                        "subject": s,
+                        "predicate": p,
+                        "object": str(c["object"]),
+                        "confidence": c.get("confidence"),
+                    }
+                )
 
         return RetrievalContext(
             content_results=content_results,

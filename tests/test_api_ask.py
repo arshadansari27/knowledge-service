@@ -137,11 +137,18 @@ class TestPostAskNullConfidence:
         app = create_app(use_lifespan=False)
         app.state.rag_retriever = _make_rag_retriever(
             context=RetrievalContext(
-                content_results=[{
-                    "id": "uuid-1", "url": "https://example.com", "title": "T",
-                    "summary": "S", "source_type": "article", "tags": [],
-                    "ingested_at": "2026-03-18T10:00:00Z", "similarity": 0.9,
-                }],
+                content_results=[
+                    {
+                        "id": "uuid-1",
+                        "url": "https://example.com",
+                        "title": "T",
+                        "summary": "S",
+                        "source_type": "article",
+                        "tags": [],
+                        "ingested_at": "2026-03-18T10:00:00Z",
+                        "similarity": 0.9,
+                    }
+                ],
             )
         )
         app.state.rag_client = _make_rag_client()
@@ -159,15 +166,25 @@ class TestPostAskContradictions:
     async def test_contradictions_in_response(self):
         ctx = RetrievalContext(
             content_results=[],
-            knowledge_triples=[{
-                "subject": "http://ks/s", "predicate": "http://ks/p",
-                "object": "http://ks/o", "confidence": 0.8,
-                "knowledge_type": "Claim", "valid_from": None, "valid_until": None,
-            }],
-            contradictions=[{
-                "subject": "http://ks/s", "predicate": "http://ks/p2",
-                "object": "http://ks/o2", "confidence": 0.3,
-            }],
+            knowledge_triples=[
+                {
+                    "subject": "http://ks/s",
+                    "predicate": "http://ks/p",
+                    "object": "http://ks/o",
+                    "confidence": 0.8,
+                    "knowledge_type": "Claim",
+                    "valid_from": None,
+                    "valid_until": None,
+                }
+            ],
+            contradictions=[
+                {
+                    "subject": "http://ks/s",
+                    "predicate": "http://ks/p2",
+                    "object": "http://ks/o2",
+                    "confidence": 0.3,
+                }
+            ],
             entities_found=[],
         )
         app = create_app(use_lifespan=False)

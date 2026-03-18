@@ -39,9 +39,7 @@ def build_rag_prompt(question: str, context: RetrievalContext) -> str:
             source_type = row.get("source_type", "unknown")
             similarity = row.get("similarity", 0.0)
             summary = row.get("summary") or "No summary"
-            sections.append(
-                f'- "{title}" ({source_type}, similarity: {similarity:.2f}): {summary}'
-            )
+            sections.append(f'- "{title}" ({source_type}, similarity: {similarity:.2f}): {summary}')
         sections.append("")
 
     # Knowledge triples section

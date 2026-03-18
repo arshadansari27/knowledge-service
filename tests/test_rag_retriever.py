@@ -121,12 +121,20 @@ class TestRetrieveEntityDiscovery:
 class TestRetrieveConfidenceFilter:
     async def test_filters_below_min_confidence(self):
         low = {
-            "predicate": "p", "object": "o", "confidence": 0.2,
-            "knowledge_type": "Claim", "valid_from": None, "valid_until": None,
+            "predicate": "p",
+            "object": "o",
+            "confidence": 0.2,
+            "knowledge_type": "Claim",
+            "valid_from": None,
+            "valid_until": None,
         }
         high = {
-            "predicate": "p2", "object": "o2", "confidence": 0.9,
-            "knowledge_type": "Fact", "valid_from": None, "valid_until": None,
+            "predicate": "p2",
+            "object": "o2",
+            "confidence": 0.9,
+            "knowledge_type": "Fact",
+            "valid_from": None,
+            "valid_until": None,
         }
         retriever = RAGRetriever(
             embedding_client=_make_embedding_client(),

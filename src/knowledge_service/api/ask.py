@@ -56,8 +56,7 @@ async def post_ask(body: AskRequest, request: Request) -> AskResponse:
 
     # Confidence: max from knowledge triples, null if none
     confidences = [
-        t["confidence"] for t in context.knowledge_triples
-        if t.get("confidence") is not None
+        t["confidence"] for t in context.knowledge_triples if t.get("confidence") is not None
     ]
     confidence = max(confidences) if confidences else None
 
@@ -68,17 +67,18 @@ async def post_ask(body: AskRequest, request: Request) -> AskResponse:
         url = row.get("url", "")
         if url not in seen_urls:
             seen_urls.add(url)
-            sources.append(SourceInfo(
-                url=url,
-                title=row.get("title", ""),
-                source_type=row.get("source_type", ""),
-            ))
+            sources.append(
+                SourceInfo(
+                    url=url,
+                    title=row.get("title", ""),
+                    source_type=row.get("source_type", ""),
+                )
+            )
 
     # Knowledge types: computed from retrieval context
-    knowledge_types_used = sorted({
-        t["knowledge_type"] for t in context.knowledge_triples
-        if t.get("knowledge_type")
-    })
+    knowledge_types_used = sorted(
+        {t["knowledge_type"] for t in context.knowledge_triples if t.get("knowledge_type")}
+    )
 
     # Contradictions
     contradictions = [
