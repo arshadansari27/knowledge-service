@@ -1,5 +1,9 @@
 # Knowledge Service
 
+[![CI](https://github.com/arshadansari27/knowledge-service/actions/workflows/ci.yml/badge.svg)](https://github.com/arshadansari27/knowledge-service/actions/workflows/ci.yml)
+[![Docker](https://img.shields.io/docker/v/arshadansari27/knowledge-service?label=docker&sort=semver)](https://hub.docker.com/r/arshadansari27/knowledge-service)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+
 A personal knowledge graph with Bayesian epistemics. Ingests content you encounter, structures it using established ontologies, reasons over it with probabilistic logic, and makes the resulting knowledge queryable via SPARQL and semantic search — without requiring deliberate organisation from the user.
 
 Built by [Hikmah Technologies](https://hikmahtechnologies.com) | [@hikmahtech](https://x.com/hikmahtech) | [@arshadansari27](https://x.com/arshadansari27)
@@ -428,9 +432,14 @@ uvicorn knowledge_service.main:app --reload
 
 ### With Docker (full stack)
 
+A pre-built image is available on Docker Hub: [`arshadansari27/knowledge-service`](https://hub.docker.com/r/arshadansari27/knowledge-service)
+
 ```bash
-# Start the service + PostgreSQL (Ollama runs on host)
+# Using docker-compose (builds locally)
 docker compose up -d
+
+# Or pull the pre-built image directly
+docker pull arshadansari27/knowledge-service:latest
 ```
 
 Service available at `http://localhost:8000`. Ollama must be running on the host machine.
