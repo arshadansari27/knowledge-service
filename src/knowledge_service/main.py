@@ -19,6 +19,55 @@ from knowledge_service.stores.rag import RAGRetriever
 from knowledge_service.api import health, content, claims, search, knowledge, contradictions, ask
 
 
+async def run_migrations(pool: "asyncpg.Pool", migrations_dir: str | Path = "migrations") -> None:
+    """Run pending SQL migrations, tracked by schema_migrations table.
+
+    Uses advisory lock to prevent concurrent runs.
+    """
+    import logging  # noqa: PLC0415
+
+    log = logging.getLogger(__name__)
+    migrations_path = Path(migrations_dir)
+    if not migrations_path.exists():
+        log.warning("Migrations dir not found: %s", migrations_path)
+        return
+
+    sql_files = sorted(migrations_path.glob("*.sql"))
+    if not sql_files:
+        log.info("No migrations found")
+        return
+
+    async with pool.acquire() as conn:
+        await conn.execute("SELECT pg_advisory_lock(hashtext('knowledge_migrations'))")
+        try:
+            await conn.execute("""
+                CREATE TABLE IF NOT EXISTS schema_migrations (
+                    filename TEXT PRIMARY KEY,
+                    applied_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+                )
+            """)
+            applied = {
+                row["filename"]
+                for row in await conn.fetch("SELECT filename FROM schema_migrations")
+            }
+            pending = [f for f in sql_files if f.name not in applied]
+            if not pending:
+                log.info("Migrations up to date (%d total)", len(sql_files))
+                return
+
+            for sql_file in pending:
+                sql = sql_file.read_text()
+                await conn.execute(sql)
+                await conn.execute(
+                    "INSERT INTO schema_migrations (filename) VALUES ($1)", sql_file.name
+                )
+                log.info("Migration applied: %s", sql_file.name)
+
+            log.info("Migrations complete: %d applied, %d total", len(pending), len(sql_files))
+        finally:
+            await conn.execute("SELECT pg_advisory_unlock(hashtext('knowledge_migrations'))")
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     """Manage application startup and shutdown.
@@ -26,6 +75,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     Startup:
     - Initialises the pyoxigraph KnowledgeStore and loads the base ontology.
     - Creates an asyncpg connection pool for PostgreSQL.
+    - Runs pending database migrations.
     - Creates LLM API clients for embeddings and knowledge extraction.
 
     Shutdown:
@@ -41,6 +91,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     import asyncpg  # noqa: PLC0415 — deferred to avoid import cost in tests
 
     app.state.pg_pool = await asyncpg.create_pool(settings.database_url)
+    await run_migrations(app.state.pg_pool)
 
     app.state.embedding_client = EmbeddingClient(
         base_url=settings.llm_base_url,
