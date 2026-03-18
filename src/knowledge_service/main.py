@@ -19,7 +19,7 @@ from knowledge_service.stores.rag import RAGRetriever
 from knowledge_service.api import health, content, claims, search, knowledge, contradictions, ask
 
 
-async def run_migrations(pool: "asyncpg.Pool", migrations_dir: str | Path = "migrations") -> None:
+async def run_migrations(pool: object, migrations_dir: str | Path = "migrations") -> None:
     """Run pending SQL migrations, tracked by schema_migrations table.
 
     Uses advisory lock to prevent concurrent runs.
