@@ -80,3 +80,45 @@ async def chat_page(request: Request):
 @router.get("/admin/contradictions", response_class=HTMLResponse)
 async def contradictions_page(request: Request):
     return templates.TemplateResponse("contradictions.html", {"request": request, "active": "contradictions"})
+
+
+@router.post("/admin/chat/send", response_class=HTMLResponse)
+async def chat_send(request: Request):
+    """Process a chat question and return an HTML partial with the answer."""
+    form = await request.form()
+    question = str(form.get("question", "")).strip()
+    if not question:
+        return HTMLResponse('<div class="text-red-400 p-2">Please enter a question.</div>')
+
+    retriever = request.app.state.rag_retriever
+    rag_client = request.app.state.rag_client
+
+    context = await retriever.retrieve(question, max_sources=5, min_confidence=0.0)
+    raw_answer = await rag_client.answer(question, context)
+
+    seen_urls: set[str] = set()
+    sources = []
+    for row in context.content_results:
+        url = row.get("url", "")
+        if url and url not in seen_urls:
+            seen_urls.add(url)
+            sources.append({
+                "url": url,
+                "title": row.get("title", ""),
+                "source_type": row.get("source_type", ""),
+            })
+
+    confidences = [t["confidence"] for t in context.knowledge_triples if t.get("confidence") is not None]
+    confidence = max(confidences) if confidences else None
+    knowledge_types = sorted({t["knowledge_type"] for t in context.knowledge_triples if t.get("knowledge_type")})
+
+    return templates.TemplateResponse(
+        "partials/chat_message.html",
+        {
+            "request": request,
+            "answer": raw_answer.answer,
+            "confidence": confidence,
+            "sources": sources,
+            "knowledge_types": knowledge_types,
+        },
+    )
