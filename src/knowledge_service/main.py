@@ -14,7 +14,7 @@ from knowledge_service.reasoning.engine import ReasoningEngine
 from knowledge_service.stores.embedding import EmbeddingStore
 from knowledge_service.stores.entity_resolver import EntityResolver
 from knowledge_service.stores.knowledge import KnowledgeStore
-from knowledge_service.api import health, content, claims, search, knowledge, contradictions
+from knowledge_service.api import health, content, claims, search, knowledge, contradictions, ask
 
 
 @asynccontextmanager
@@ -105,6 +105,7 @@ def create_app(use_lifespan: bool = True) -> FastAPI:
     app.include_router(search.router, prefix="/api")
     app.include_router(knowledge.router, prefix="/api")
     app.include_router(contradictions.router, prefix="/api")
+    app.include_router(ask.router, prefix="/api")
     return app
 
 
