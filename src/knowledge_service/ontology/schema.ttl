@@ -1,0 +1,27 @@
+@prefix ks:    <http://knowledge.local/schema/> .
+@prefix rdf:   <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
+@prefix rdfs:  <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix xsd:   <http://www.w3.org/2001/XMLSchema#> .
+
+# Knowledge type classes
+ks:KnowledgeType   rdf:type rdfs:Class ; rdfs:label "Knowledge Type" .
+ks:Claim           rdf:type rdfs:Class ; rdfs:subClassOf ks:KnowledgeType ; rdfs:label "Claim" .
+ks:Fact            rdf:type rdfs:Class ; rdfs:subClassOf ks:KnowledgeType ; rdfs:label "Fact" .
+ks:Event           rdf:type rdfs:Class ; rdfs:subClassOf ks:KnowledgeType ; rdfs:label "Event" .
+ks:Entity          rdf:type rdfs:Class ; rdfs:subClassOf ks:KnowledgeType ; rdfs:label "Entity" .
+ks:Relationship    rdf:type rdfs:Class ; rdfs:subClassOf ks:KnowledgeType ; rdfs:label "Relationship" .
+ks:Conclusion      rdf:type rdfs:Class ; rdfs:subClassOf ks:KnowledgeType ; rdfs:label "Conclusion" .
+ks:TemporalState   rdf:type rdfs:Class ; rdfs:subClassOf ks:KnowledgeType ; rdfs:label "Temporal State" .
+
+# Properties
+ks:confidence          rdf:type rdf:Property ; rdfs:label "confidence" .
+ks:knowledgeType       rdf:type rdf:Property ; rdfs:label "knowledge type" .
+ks:validFrom           rdf:type rdf:Property ; rdfs:label "valid from" .
+ks:validUntil          rdf:type rdf:Property ; rdfs:label "valid until" .
+ks:concludes           rdf:type rdf:Property ; rdfs:label "concludes" .
+ks:derivedFrom         rdf:type rdf:Property ; rdfs:label "derived from" .
+ks:inferenceMethod     rdf:type rdf:Property ; rdfs:label "inference method" .
+ks:occurredAt          rdf:type rdf:Property ; rdfs:label "occurred at" .
+ks:amount              rdf:type rdf:Property ; rdfs:label "amount" .
+ks:currency            rdf:type rdf:Property ; rdfs:label "currency" .
+ks:oppositePredicate   rdf:type rdf:Property ; rdfs:label "opposite predicate" .

@@ -1,0 +1,12 @@
+__pycache__/
+*.pyc
+.env*
+!.env.example
+data/oxigraph/
+docs/
+.venv/
+*.egg-info/
+dist/
+.pytest_cache/
+.ruff_cache/
+.firecrawl/
