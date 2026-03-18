@@ -18,6 +18,7 @@
 | GET | `/api/knowledge/query` | Structured knowledge graph query |
 | POST | `/api/knowledge/sparql` | Raw SPARQL query |
 | GET | `/api/knowledge/contradictions` | Detect contradictions |
+| POST | `/api/ask` | RAG-powered question answering |
 
 ---
 
@@ -337,6 +338,75 @@ curl "http://localhost:8000/api/knowledge/contradictions?min_confidence=0.5"
 
 ---
 
+## POST /api/ask
+
+Ask a natural language question against the knowledge base. Retrieves relevant content (semantic search) and knowledge graph triples, checks for contradictions, and generates an LLM-powered answer grounded in your data.
+
+**Request Body:**
+
+```json
+{
+  "question": "string (required, max 4000 chars)",
+  "max_sources": 5,
+  "min_confidence": 0.0
+}
+```
+
+| Parameter | Type | Required | Default | Description |
+|-----------|------|----------|---------|-------------|
+| `question` | string | yes | — | Natural language question (max 4000 chars) |
+| `max_sources` | int | no | 5 | Max content items to retrieve (1–100) |
+| `min_confidence` | float | no | 0.0 | Filter out knowledge triples below this confidence (0.0–1.0) |
+
+**Response:**
+
+```json
+{
+  "answer": "Based on your knowledge base, cold exposure likely increases dopamine...",
+  "confidence": 0.88,
+  "sources": [
+    {
+      "url": "https://example.com/article",
+      "title": "Cold Exposure and Dopamine",
+      "source_type": "article"
+    }
+  ],
+  "knowledge_types_used": ["Claim"],
+  "contradictions": [
+    {
+      "subject": "http://dbpedia.org/resource/Cold_shock_response",
+      "predicate": "http://knowledge.local/schema/decreases",
+      "object": "http://dbpedia.org/resource/Dopamine",
+      "confidence": 0.3
+    }
+  ]
+}
+```
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `answer` | string | LLM-generated natural language response |
+| `confidence` | float \| null | Highest confidence among supporting knowledge triples. `null` if no triples found. |
+| `sources` | array | Deduplicated content sources used in retrieval |
+| `knowledge_types_used` | string[] | Which of the 7 knowledge types contributed to the answer |
+| `contradictions` | array | Conflicting claims with subject, predicate, object, and confidence |
+
+**Status Codes:** `200` OK, `422` Validation Error, `502` LLM Service Error
+
+### Example
+
+```bash
+curl -X POST http://localhost:8000/api/ask \
+  -H "Content-Type: application/json" \
+  -d '{
+    "question": "Does cold exposure increase dopamine?",
+    "max_sources": 5,
+    "min_confidence": 0.3
+  }'
+```
+
+---
+
 ## Knowledge Types Reference
 
 Knowledge items are sent in the `knowledge` array of `/api/content` and `/api/claims`. Each item has a `knowledge_type` discriminator field.
@@ -462,6 +532,7 @@ The service is configured via environment variables (or `.env` file):
 | `LLM_API_KEY` | `""` | API key for LLM (empty for Ollama) |
 | `LLM_EMBED_MODEL` | `nomic-embed-text` | Embedding model name |
 | `LLM_CHAT_MODEL` | `qwen3:14b` | Chat/extraction model name |
+| `LLM_RAG_MODEL` | `""` | RAG answer model (defaults to `LLM_CHAT_MODEL` if empty) |
 | `OXIGRAPH_DATA_DIR` | `./data/oxigraph` | RDF store data directory |
 | `PROBLOG_RULES_DIR` | `./src/knowledge_service/reasoning/rules` | ProbLog rules directory |
 | `API_HOST` | `0.0.0.0` | API bind address |
