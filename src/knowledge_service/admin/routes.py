@@ -17,12 +17,12 @@ templates = Jinja2Templates(directory=str(_TEMPLATE_DIR))
 
 @router.get("/admin", response_class=HTMLResponse)
 async def dashboard(request: Request):
-    return templates.TemplateResponse("dashboard.html", {"request": request, "active": "dashboard"})
+    return templates.TemplateResponse(request, "dashboard.html", {"active": "dashboard"})
 
 
 @router.get("/admin/knowledge", response_class=HTMLResponse)
 async def knowledge_explorer(request: Request):
-    return templates.TemplateResponse("knowledge.html", {"request": request, "active": "knowledge"})
+    return templates.TemplateResponse(request, "knowledge.html", {"active": "knowledge"})
 
 
 @router.get("/admin/knowledge/entity/{uri:path}", response_class=HTMLResponse)
@@ -36,14 +36,13 @@ async def entity_detail(request: Request, uri: str):
         if entity_info:
             label = entity_info.get("label", label)
     return templates.TemplateResponse(
-        "entity.html",
-        {"request": request, "active": "knowledge", "uri": uri, "label": label, "entity_info": entity_info},
+        request, "entity.html", {"active": "knowledge", "uri": uri, "label": label, "entity_info": entity_info}
     )
 
 
 @router.get("/admin/knowledge/content", response_class=HTMLResponse)
 async def content_list(request: Request):
-    return templates.TemplateResponse("content_list.html", {"request": request, "active": "knowledge"})
+    return templates.TemplateResponse(request, "content_list.html", {"active": "knowledge"})
 
 
 @router.get("/admin/knowledge/content/{content_id}", response_class=HTMLResponse)
@@ -66,20 +65,17 @@ async def content_detail(request: Request, content_id: str):
     content = dict(row)
     content["id"] = str(content["id"])
     content["ingested_at"] = content["ingested_at"].isoformat() if content["ingested_at"] else ""
-    return templates.TemplateResponse(
-        "content_detail.html",
-        {"request": request, "active": "knowledge", "content": content},
-    )
+    return templates.TemplateResponse(request, "content_detail.html", {"active": "knowledge", "content": content})
 
 
 @router.get("/admin/chat", response_class=HTMLResponse)
 async def chat_page(request: Request):
-    return templates.TemplateResponse("chat.html", {"request": request, "active": "chat"})
+    return templates.TemplateResponse(request, "chat.html", {"active": "chat"})
 
 
 @router.get("/admin/contradictions", response_class=HTMLResponse)
 async def contradictions_page(request: Request):
-    return templates.TemplateResponse("contradictions.html", {"request": request, "active": "contradictions"})
+    return templates.TemplateResponse(request, "contradictions.html", {"active": "contradictions"})
 
 
 @router.post("/admin/chat/send", response_class=HTMLResponse)
@@ -113,9 +109,9 @@ async def chat_send(request: Request):
     knowledge_types = sorted({t["knowledge_type"] for t in context.knowledge_triples if t.get("knowledge_type")})
 
     return templates.TemplateResponse(
+        request,
         "partials/chat_message.html",
         {
-            "request": request,
             "answer": raw_answer.answer,
             "confidence": confidence,
             "sources": sources,
