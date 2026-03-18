@@ -28,9 +28,29 @@ jobs:
       - run: uv sync --dev
       - run: uv run pytest tests/ -v
 
-  docker:
+  changes:
     needs: [lint, test]
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    outputs:
+      docker: ${{ steps.filter.outputs.docker }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+      - uses: dorny/paths-filter@v3
+        id: filter
+        with:
+          filters: |
+            docker:
+              - 'src/**'
+              - 'migrations/**'
+              - 'Dockerfile'
+              - 'pyproject.toml'
+
+  docker:
+    needs: [changes]
+    if: needs.changes.outputs.docker == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
