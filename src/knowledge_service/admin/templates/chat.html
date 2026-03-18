@@ -1,0 +1,85 @@
+{% extends "base.html" %}
+{% block title %}Chat{% endblock %}
+{% block head %}
+<script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/dompurify@3.2.4/dist/purify.min.js"></script>
+{% endblock %}
+{% block content %}
+<div class="flex flex-col h-[calc(100vh-4rem)]">
+    <h2 class="text-2xl font-bold mb-4">Chat with Knowledge Base</h2>
+    <div id="chat-messages" class="flex-1 overflow-auto space-y-4 mb-4 pr-2">
+        <div class="text-gray-500 text-center py-8">Ask a question about your knowledge base.</div>
+    </div>
+    <form id="chat-form" class="flex gap-2">
+        <input type="text" name="question" id="chat-input" placeholder="Ask a question..."
+               class="flex-1 p-3 rounded-lg bg-gray-800 text-white border border-gray-600 focus:border-blue-500 focus:outline-none" autocomplete="off">
+        <button type="submit" class="px-6 py-3 bg-blue-600 hover:bg-blue-700 text-white rounded-lg font-medium transition">Send</button>
+    </form>
+</div>
+<script>
+document.getElementById('chat-form').addEventListener('submit', async function(e) {
+    e.preventDefault();
+    const input = document.getElementById('chat-input');
+    const question = input.value.trim();
+    if (!question) return;
+    const messages = document.getElementById('chat-messages');
+
+    const userDiv = document.createElement('div');
+    userDiv.className = 'flex justify-end';
+    const userBubble = document.createElement('div');
+    userBubble.className = 'bg-blue-600 rounded-lg px-4 py-2 max-w-2xl';
+    const userText = document.createElement('p');
+    userText.className = 'text-white';
+    userText.textContent = question;
+    userBubble.appendChild(userText);
+    userDiv.appendChild(userBubble);
+    messages.appendChild(userDiv);
+
+    const loader = document.createElement('div');
+    loader.id = 'chat-loader';
+    loader.className = 'flex justify-start';
+    const loaderBubble = document.createElement('div');
+    loaderBubble.className = 'bg-gray-700 rounded-lg px-4 py-2';
+    const loaderText = document.createElement('p');
+    loaderText.className = 'text-gray-400 animate-pulse';
+    loaderText.textContent = 'Thinking...';
+    loaderBubble.appendChild(loaderText);
+    loader.appendChild(loaderBubble);
+    messages.appendChild(loader);
+    messages.scrollTop = messages.scrollHeight;
+    input.value = '';
+
+    const formData = new FormData();
+    formData.append('question', question);
+    try {
+        const resp = await fetch('/admin/chat/send', { method: 'POST', body: formData });
+        const html = await resp.text();
+        const existingLoader = document.getElementById('chat-loader');
+        if (existingLoader) existingLoader.remove();
+
+        const wrapper = document.createElement('div');
+        wrapper.className = 'flex justify-start';
+        const bubble = document.createElement('div');
+        bubble.className = 'bg-gray-800 rounded-lg px-4 py-3 max-w-3xl w-full';
+        const parser = new DOMParser();
+        const doc = parser.parseFromString(html, 'text/html');
+        while (doc.body.firstChild) { bubble.appendChild(doc.body.firstChild); }
+        wrapper.appendChild(bubble);
+        messages.appendChild(wrapper);
+
+        bubble.querySelectorAll('.chat-markdown').forEach(function(el) {
+            const raw = el.textContent;
+            el.innerHTML = DOMPurify.sanitize(marked.parse(raw));
+        });
+    } catch (err) {
+        const existingLoader = document.getElementById('chat-loader');
+        if (existingLoader) existingLoader.remove();
+        const errDiv = document.createElement('div');
+        errDiv.className = 'text-red-400 p-2';
+        errDiv.textContent = 'Error: Could not get a response. Please try again.';
+        messages.appendChild(errDiv);
+    }
+    messages.scrollTop = messages.scrollHeight;
+});
+</script>
+{% endblock %}
