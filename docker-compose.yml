@@ -7,6 +7,7 @@ services:
       DATABASE_URL: postgresql://knowledge:knowledge@postgres:5432/knowledge
       LLM_BASE_URL: http://host.docker.internal:11434
       OXIGRAPH_DATA_DIR: /app/data/oxigraph
+      ADMIN_PASSWORD: changeme
     depends_on:
       postgres:
         condition: service_healthy
