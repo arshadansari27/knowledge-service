@@ -59,6 +59,11 @@ class RAGRetriever:
             triples = await asyncio.to_thread(self._knowledge_store.get_triples_by_subject, uri)
             for t in triples:
                 t["subject"] = uri
+                # Stringify pyoxigraph RDF terms so downstream consumers get plain strings
+                p = t.get("predicate")
+                o = t.get("object")
+                t["predicate"] = p.value if hasattr(p, "value") else str(p) if p else ""
+                t["object"] = o.value if hasattr(o, "value") else str(o) if o else ""
             all_triples.extend(triples)
 
         # Step 5: Filter by min_confidence
@@ -73,11 +78,8 @@ class RAGRetriever:
         seen = set()
         for t in filtered_triples:
             s = t["subject"]
-            # pyoxigraph returns NamedNode/Literal objects — use .value for raw URI strings
-            p_raw = t["predicate"]
-            o_raw = t["object"]
-            p = p_raw.value if hasattr(p_raw, "value") else str(p_raw)
-            o = o_raw.value if hasattr(o_raw, "value") else str(o_raw)
+            p = t["predicate"]  # already a str
+            o = t["object"]     # already a str
             key = (s, p)
             if key in seen:
                 continue

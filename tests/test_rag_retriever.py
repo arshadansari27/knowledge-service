@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from unittest.mock import AsyncMock, MagicMock
 
+from pyoxigraph import Literal, NamedNode
+
 from knowledge_service.stores.rag import RAGRetriever, RetrievalContext
 
 
@@ -179,3 +181,29 @@ class TestRetrieveEmpty:
         assert ctx.knowledge_triples == []
         assert ctx.contradictions == []
         assert ctx.entities_found == []
+
+
+class TestRetrieveTripleSerialization:
+    async def test_knowledge_triples_predicate_is_string(self):
+        """Predicates in retrieval context must be plain strings, not NamedNode objects."""
+        entity_row = {"uri": "http://ks/dopamine", "label": "Dopamine", "similarity": 0.9}
+        triple = {
+            "predicate": NamedNode("http://ks/increases"),
+            "object": Literal("serotonin"),
+            "confidence": 0.8,
+            "knowledge_type": "Claim",
+            "valid_from": None,
+            "valid_until": None,
+        }
+        retriever = RAGRetriever(
+            embedding_client=_make_embedding_client(),
+            embedding_store=_make_embedding_store(entity_rows=[entity_row]),
+            knowledge_store=_make_knowledge_store(triples=[triple]),
+        )
+        ctx = await retriever.retrieve("test", max_sources=5, min_confidence=0.0)
+        assert len(ctx.knowledge_triples) == 1
+        t = ctx.knowledge_triples[0]
+        assert isinstance(t["predicate"], str), f"Expected str, got {type(t['predicate'])}"
+        assert isinstance(t["object"], str), f"Expected str, got {type(t['object'])}"
+        assert t["predicate"] == "http://ks/increases"
+        assert t["object"] == "serotonin"
