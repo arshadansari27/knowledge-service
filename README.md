@@ -116,6 +116,10 @@ Content-Type: application/json
 
 Ingest a piece of content with its associated knowledge. Generates an embedding for semantic search, stores the content in PostgreSQL, and writes all knowledge items to the RDF graph with provenance.
 
+Accepts a **single object** or a **JSON array** for batch processing. When an array is sent, a matching array of responses is returned.
+
+**Single request:**
+
 ```json
 {
   "url": "https://example.com/article",
@@ -154,6 +158,15 @@ Ingest a piece of content with its associated knowledge. Generates an embedding 
 }
 ```
 
+**Batch request** — send an array, get an array:
+
+```json
+[
+  { "url": "https://a.com", "title": "Article A", "source_type": "article" },
+  { "url": "https://b.com", "title": "Article B", "source_type": "article" }
+]
+```
+
 ---
 
 ### Ingest Claims Directly
@@ -164,6 +177,10 @@ Content-Type: application/json
 ```
 
 Ingest knowledge items without storing raw content. Useful for programmatic ingestion where content storage is not needed.
+
+Accepts a **single object** or a **JSON array** for batch processing. When an array is sent, a matching array of responses is returned.
+
+**Single request:**
 
 ```json
 {
@@ -180,6 +197,25 @@ Ingest knowledge items without storing raw content. Useful for programmatic inge
     }
   ]
 }
+```
+
+**Batch request** — send an array, get an array:
+
+```json
+[
+  {
+    "source_url": "https://example.com/a",
+    "source_type": "bookmark",
+    "extractor": "n8n",
+    "knowledge": [{ "knowledge_type": "Claim", "subject": "...", "predicate": "...", "object": "...", "confidence": 0.85 }]
+  },
+  {
+    "source_url": "https://example.com/b",
+    "source_type": "bookmark",
+    "extractor": "n8n",
+    "knowledge": [{ "knowledge_type": "Claim", "subject": "...", "predicate": "...", "object": "...", "confidence": 0.9 }]
+  }
+]
 ```
 
 All 7 knowledge types are accepted. Examples for each:
