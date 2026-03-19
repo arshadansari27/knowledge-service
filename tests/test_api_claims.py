@@ -482,3 +482,51 @@ class TestPostClaimsValidation:
         }
         response = await client.post("/api/claims", json=payload)
         assert response.status_code == 422
+
+
+# ---------------------------------------------------------------------------
+# Tests: Batch (list) input
+# ---------------------------------------------------------------------------
+
+
+class TestPostClaimsBatch:
+    async def test_batch_returns_list(self, client):
+        """Sending a list of ClaimsRequests returns a list of ClaimsResponses."""
+        batch = [CLAIM_PAYLOAD, FACT_PAYLOAD]
+        response = await client.post("/api/claims", json=batch)
+        assert response.status_code == 200
+        data = response.json()
+        assert isinstance(data, list)
+        assert len(data) == 2
+
+    async def test_batch_each_item_has_triples_created(self, client):
+        batch = [CLAIM_PAYLOAD, FACT_PAYLOAD]
+        response = await client.post("/api/claims", json=batch)
+        data = response.json()
+        for item in data:
+            assert "triples_created" in item
+            assert item["triples_created"] == 1
+
+    async def test_batch_each_item_has_contradictions(self, client):
+        batch = [CLAIM_PAYLOAD, MINIMAL_PAYLOAD]
+        response = await client.post("/api/claims", json=batch)
+        data = response.json()
+        for item in data:
+            assert "contradictions_detected" in item
+            assert isinstance(item["contradictions_detected"], list)
+
+    async def test_single_request_still_returns_object(self, client):
+        """Single (non-list) input still returns a single object, not a list."""
+        response = await client.post("/api/claims", json=CLAIM_PAYLOAD)
+        data = response.json()
+        assert isinstance(data, dict)
+        assert "triples_created" in data
+
+    async def test_batch_validation_error_returns_422(self, client):
+        """A batch with an invalid item returns 422."""
+        batch = [
+            CLAIM_PAYLOAD,
+            {"source_type": "article", "extractor": "manual"},  # missing source_url
+        ]
+        response = await client.post("/api/claims", json=batch)
+        assert response.status_code == 422

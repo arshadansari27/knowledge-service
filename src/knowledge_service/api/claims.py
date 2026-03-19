@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 from fastapi import APIRouter, Request
+from fastapi.responses import JSONResponse
+from pydantic import ValidationError
 
 from knowledge_service.api._ingest import process_triple
 from knowledge_service.models import ClaimsRequest, ClaimsResponse, expand_to_triples
@@ -10,9 +12,8 @@ from knowledge_service.models import ClaimsRequest, ClaimsResponse, expand_to_tr
 router = APIRouter()
 
 
-@router.post("/claims", response_model=ClaimsResponse)
-async def post_claims(body: ClaimsRequest, request: Request) -> ClaimsResponse:
-    """Ingest knowledge items directly without associated content."""
+async def _process_one_claims_request(body: ClaimsRequest, request: Request) -> ClaimsResponse:
+    """Process a single ClaimsRequest and return its response."""
     knowledge_store = request.app.state.knowledge_store
     pg_pool = request.app.state.pg_pool
     reasoning_engine = request.app.state.reasoning_engine
@@ -39,3 +40,24 @@ async def post_claims(body: ClaimsRequest, request: Request) -> ClaimsResponse:
         triples_created=triples_created,
         contradictions_detected=contradictions_all,
     )
+
+
+@router.post("/claims")
+async def post_claims(request: Request):
+    """Ingest knowledge items directly without associated content.
+
+    Accepts a single ClaimsRequest or a list for batch processing.
+    Returns a single ClaimsResponse or a list, matching the input shape.
+    """
+    raw = await request.json()
+
+    try:
+        if isinstance(raw, list):
+            items = [ClaimsRequest(**item) for item in raw]
+            results = [await _process_one_claims_request(item, request) for item in items]
+            return JSONResponse([r.model_dump() for r in results])
+
+        body = ClaimsRequest(**raw)
+        return await _process_one_claims_request(body, request)
+    except ValidationError as exc:
+        return JSONResponse(status_code=422, content={"detail": exc.errors()})

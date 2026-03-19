@@ -5,6 +5,8 @@ from __future__ import annotations
 import json
 
 from fastapi import APIRouter, Request
+from fastapi.responses import JSONResponse
+from pydantic import ValidationError
 
 from knowledge_service._utils import _is_uri
 from knowledge_service.api._ingest import process_triple
@@ -38,9 +40,8 @@ async def _resolve_labels(item, entity_resolver) -> tuple[int, object]:
     return resolved, item
 
 
-@router.post("/content", response_model=ContentResponse)
-async def post_content(body: ContentRequest, request: Request) -> ContentResponse:
-    """Ingest a piece of content and its associated knowledge items."""
+async def _process_one_content_request(body: ContentRequest, request: Request) -> ContentResponse:
+    """Process a single ContentRequest and return its response."""
     knowledge_store = request.app.state.knowledge_store
     pg_pool = request.app.state.pg_pool
     embedding_client = request.app.state.embedding_client
@@ -126,3 +127,24 @@ async def post_content(body: ContentRequest, request: Request) -> ContentRespons
         contradictions_detected=contradictions_all,
         entities_resolved=entities_resolved,
     )
+
+
+@router.post("/content")
+async def post_content(request: Request):
+    """Ingest a piece of content and its associated knowledge items.
+
+    Accepts a single ContentRequest or a list for batch processing.
+    Returns a single ContentResponse or a list, matching the input shape.
+    """
+    raw = await request.json()
+
+    try:
+        if isinstance(raw, list):
+            items = [ContentRequest(**item) for item in raw]
+            results = [await _process_one_content_request(item, request) for item in items]
+            return JSONResponse([r.model_dump() for r in results])
+
+        body = ContentRequest(**raw)
+        return await _process_one_content_request(body, request)
+    except ValidationError as exc:
+        return JSONResponse(status_code=422, content={"detail": exc.errors()})
