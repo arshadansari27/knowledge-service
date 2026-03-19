@@ -16,7 +16,7 @@ class Settings(BaseSettings):
     api_port: int = 8000
     federation_enabled: bool = True
     federation_timeout: float = 3.0
-    admin_password: str  # Required — no default
+    admin_password: str  # Required — no default; also accepted as X-API-Key for m2m calls
     secret_key: str = secrets.token_hex(32)
 
     model_config = {"env_file": ".env"}

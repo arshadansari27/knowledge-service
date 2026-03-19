@@ -55,6 +55,11 @@ class AuthMiddleware(BaseHTTPMiddleware):
         if path in _PUBLIC_PATHS:
             return await call_next(request)
 
+        # Allow admin_password as X-API-Key for machine-to-machine calls (e.g. n8n)
+        header_key = request.headers.get("X-API-Key", "")
+        if header_key and hmac.compare_digest(header_key, self.admin_password):
+            return await call_next(request)
+
         # Check session cookie
         session_cookie = request.cookies.get("ks_session")
         if session_cookie:
