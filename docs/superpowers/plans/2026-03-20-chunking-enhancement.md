@@ -2,9 +2,9 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Enhance `/api/content` to chunk long text into individually-embedded segments, and update `/api/search` + `/api/ask` to retrieve chunk-level results for more precise RAG.
+**Goal:** Restructure content storage so every piece of content is stored as chunks (short = 1 chunk, long = N chunks). Search and RAG always operate at chunk level via a single JOIN query.
 
-**Architecture:** Text arriving via `/api/content` is split into ~4000-char chunks with 200-char overlap using `langchain-text-splitters`. Each chunk gets its own embedding in a new `content_chunks` table (pgvector HNSW + halfvec, same pattern as `content`). Search queries `content_chunks` first, falling back to `content` for un-chunked documents. The RAG retriever uses the same chunk-level search.
+**Architecture:** `content_metadata` stores document metadata (url, title, tags, etc.). `content` table is repurposed to store chunks — each row has chunk text + embedding. Every content item has >= 1 chunk. Search is a single `content JOIN content_metadata` query. No fallback, no UNION ALL.
 
 **Tech Stack:** Python 3.12, FastAPI, asyncpg, pgvector, langchain-text-splitters, pytest
 
@@ -16,21 +16,21 @@
 
 | Action | File | Responsibility |
 |--------|------|----------------|
-| Create | `migrations/002_content_chunks.sql` | DDL for `content_chunks` table + indexes |
+| Create | `migrations/002_content_chunks.sql` | Drop old content, create content_metadata + new content |
 | Modify | `pyproject.toml` | Add `langchain-text-splitters` dependency |
-| Modify | `src/knowledge_service/stores/embedding.py` | Add `insert_chunks()`, `search_chunks()`, `delete_chunks_by_content_id()` |
-| Modify | `src/knowledge_service/api/content.py` | Add chunking + chunk embedding after content upsert |
-| Modify | `src/knowledge_service/api/search.py` | Query chunks first, fall back to content |
-| Modify | `src/knowledge_service/models.py` | Add `chunk_text` and `chunk_index` to `SearchResult` |
-| Modify | `src/knowledge_service/stores/rag.py` | Use `search_chunks()` instead of `search()` |
-| Modify | `tests/test_embedding_store.py` | Tests for new EmbeddingStore methods |
-| Create | `tests/test_chunking.py` | Tests for chunking logic in content ingestion |
-| Modify | `tests/test_api_search.py` | Tests for chunk-level search results |
-| Modify | `tests/test_rag_retriever.py` | Tests for chunk-aware RAG retrieval |
+| Modify | `src/knowledge_service/stores/embedding.py` | Rewrite for new schema: `insert_content_metadata()`, `delete_chunks()`, `insert_chunks()`, updated `search()` |
+| Modify | `src/knowledge_service/api/content.py` | Always-chunk ingestion flow |
+| Modify | `src/knowledge_service/api/search.py` | Simplified single-query search |
+| Modify | `src/knowledge_service/models.py` | `SearchResult` with required `chunk_text`, `chunk_index` |
+| Modify | `src/knowledge_service/stores/rag.py` | Minor update — `search()` already returns chunks |
+| Modify | `tests/test_embedding_store.py` | Tests for rewritten EmbeddingStore |
+| Modify | `tests/test_api_content.py` | Tests for always-chunk ingestion |
+| Modify | `tests/test_api_search.py` | Tests for chunk-level search |
+| Modify | `tests/test_rag_retriever.py` | Tests for chunk-aware RAG |
 
 ---
 
-## Task 1: Migration — `content_chunks` table
+## Task 1: Migration — `content_metadata` + restructured `content`
 
 **Files:**
 - Create: `migrations/002_content_chunks.sql`
@@ -39,14 +39,28 @@
 
 ```sql
 -- 002_content_chunks.sql
--- Chunk-level storage for content documents.
--- Each chunk gets its own embedding for fine-grained RAG retrieval.
+-- Restructure content storage: metadata in content_metadata, chunks in content.
+-- Existing content data is dropped (acceptable at v0.1.x).
 
-CREATE TABLE IF NOT EXISTS content_chunks (
-    chunk_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    content_id UUID NOT NULL REFERENCES content(id) ON DELETE CASCADE,
+DROP TABLE IF EXISTS content;
+
+CREATE TABLE content_metadata (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    url TEXT UNIQUE NOT NULL,
+    title TEXT,
+    summary TEXT,
+    raw_text TEXT,
+    source_type TEXT NOT NULL,
+    tags TEXT[] DEFAULT '{}',
+    metadata JSONB DEFAULT '{}',
+    ingested_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE TABLE content (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    content_id UUID NOT NULL REFERENCES content_metadata(id) ON DELETE CASCADE,
     chunk_index INTEGER NOT NULL,
-    text TEXT NOT NULL,
+    chunk_text TEXT NOT NULL,
     embedding vector(768),
     char_start INTEGER,
     char_end INTEGER,
@@ -54,22 +68,16 @@ CREATE TABLE IF NOT EXISTS content_chunks (
     UNIQUE(content_id, chunk_index)
 );
 
-CREATE INDEX IF NOT EXISTS idx_chunks_embedding ON content_chunks
+CREATE INDEX idx_content_embedding ON content
     USING hnsw ((embedding::halfvec(768)) halfvec_cosine_ops);
-
-CREATE INDEX IF NOT EXISTS idx_chunks_content_id ON content_chunks (content_id);
+CREATE INDEX idx_content_content_id ON content (content_id);
 ```
 
-- [ ] **Step 2: Verify migration file is valid SQL**
-
-Run: `cat migrations/002_content_chunks.sql`
-Expected: The SQL above, no syntax errors.
-
-- [ ] **Step 3: Commit**
+- [ ] **Step 2: Commit**
 
 ```bash
 git add migrations/002_content_chunks.sql
-git commit -m "feat: add content_chunks migration (002)"
+git commit -m "feat: migration 002 — content_metadata + content as chunks"
 ```
 
 ---
@@ -102,105 +110,184 @@ git commit -m "feat: add langchain-text-splitters dependency"
 
 ---
 
-## Task 3: EmbeddingStore — chunk methods (TDD)
+## Task 3: EmbeddingStore — rewrite for new schema (TDD)
 
 **Files:**
 - Modify: `src/knowledge_service/stores/embedding.py`
 - Modify: `tests/test_embedding_store.py`
 
-### 3a: `delete_chunks_by_content_id()`
+### 3a: `insert_content_metadata()`
 
 - [ ] **Step 1: Write the failing test**
 
-Append to `tests/test_embedding_store.py`:
+Replace the `TestInsertContent` class in `tests/test_embedding_store.py` with:
 
 ```python
-class TestDeleteChunksByContentId:
-    async def test_calls_execute_with_delete(self, store, mock_pool):
+class TestInsertContentMetadata:
+    async def test_returns_content_id(self, store, mock_pool):
         _, conn = mock_pool
-        conn.execute.return_value = "DELETE 3"
-        await store.delete_chunks_by_content_id("content-uuid-123")
-        conn.execute.assert_called_once()
-        sql = conn.execute.call_args[0][0]
-        assert "DELETE FROM content_chunks" in sql
-        assert "content_id" in sql
+        conn.fetchrow.return_value = {"id": "metadata-uuid-123"}
+        result = await store.insert_content_metadata(
+            url="https://example.com/article",
+            title="Test Article",
+            summary="A test summary",
+            raw_text="Full text content",
+            source_type="article",
+            tags=["test", "example"],
+            metadata={},
+        )
+        conn.fetchrow.assert_called_once()
+        assert result == "metadata-uuid-123"
 
-    async def test_passes_content_id_param(self, store, mock_pool):
+    async def test_sql_targets_content_metadata(self, store, mock_pool):
         _, conn = mock_pool
-        conn.execute.return_value = "DELETE 0"
-        await store.delete_chunks_by_content_id("my-uuid")
-        args = conn.execute.call_args[0]
-        assert "my-uuid" in args
+        conn.fetchrow.return_value = {"id": "some-uuid"}
+        await store.insert_content_metadata(
+            url="https://example.com/article",
+            title="Test",
+            summary="Sum",
+            raw_text="Text",
+            source_type="article",
+            tags=[],
+            metadata={},
+        )
+        sql = conn.fetchrow.call_args[0][0]
+        assert "INSERT INTO content_metadata" in sql
+        assert "ON CONFLICT" in sql
+
+    async def test_passes_url_param(self, store, mock_pool):
+        _, conn = mock_pool
+        conn.fetchrow.return_value = {"id": "uuid-abc"}
+        await store.insert_content_metadata(
+            url="https://example.com/unique",
+            title="Title",
+            summary="Sum",
+            raw_text="Text",
+            source_type="article",
+            tags=[],
+            metadata={},
+        )
+        args = conn.fetchrow.call_args[0]
+        assert "https://example.com/unique" in args
 ```
 
 - [ ] **Step 2: Run test to verify it fails**
 
-Run: `uv run pytest tests/test_embedding_store.py::TestDeleteChunksByContentId -v`
-Expected: FAIL — `AttributeError: 'EmbeddingStore' object has no attribute 'delete_chunks_by_content_id'`
+Run: `uv run pytest tests/test_embedding_store.py::TestInsertContentMetadata -v`
+Expected: FAIL — `AttributeError: 'EmbeddingStore' object has no attribute 'insert_content_metadata'`
 
 - [ ] **Step 3: Write minimal implementation**
 
-Add to `EmbeddingStore` in `src/knowledge_service/stores/embedding.py`, after the `search()` method (around line 153), in a new section:
+In `src/knowledge_service/stores/embedding.py`, replace the `insert_content()` method with:
 
 ```python
     # ------------------------------------------------------------------
-    # Content chunks table operations
+    # Content metadata table operations
     # ------------------------------------------------------------------
 
-    async def delete_chunks_by_content_id(self, content_id: str) -> None:
-        """Delete all chunks for a given content_id."""
-        async with self._pool.acquire() as conn:
-            await conn.execute(
-                "DELETE FROM content_chunks WHERE content_id = $1",
-                content_id,
+    async def insert_content_metadata(
+        self,
+        url: str,
+        title: str,
+        summary: str,
+        raw_text: str,
+        source_type: str,
+        tags: list[str],
+        metadata: dict,
+    ) -> str:
+        """Upsert a content_metadata row and return its UUID.
+
+        On conflict (url) the existing row is updated with fresh values,
+        leaving id and ingested_at unchanged.
+        """
+        metadata_json = json.dumps(metadata)
+
+        sql = """
+            INSERT INTO content_metadata (
+                url, title, summary, raw_text, source_type, tags, metadata
             )
+            VALUES ($1, $2, $3, $4, $5, $6, $7)
+            ON CONFLICT (url) DO UPDATE SET
+                title       = EXCLUDED.title,
+                summary     = EXCLUDED.summary,
+                raw_text    = EXCLUDED.raw_text,
+                source_type = EXCLUDED.source_type,
+                tags        = EXCLUDED.tags,
+                metadata    = EXCLUDED.metadata
+            RETURNING id
+        """
+
+        async with self._pool.acquire() as conn:
+            row = await conn.fetchrow(
+                sql, url, title, summary, raw_text,
+                source_type, tags, metadata_json,
+            )
+        return str(row["id"])
 ```
 
 - [ ] **Step 4: Run test to verify it passes**
 
-Run: `uv run pytest tests/test_embedding_store.py::TestDeleteChunksByContentId -v`
+Run: `uv run pytest tests/test_embedding_store.py::TestInsertContentMetadata -v`
 Expected: PASS
 
 - [ ] **Step 5: Commit**
 
 ```bash
 git add src/knowledge_service/stores/embedding.py tests/test_embedding_store.py
-git commit -m "feat: add EmbeddingStore.delete_chunks_by_content_id()"
+git commit -m "feat: add EmbeddingStore.insert_content_metadata()"
 ```
 
-### 3b: `insert_chunks()`
+### 3b: `delete_chunks()` and `insert_chunks()`
 
-- [ ] **Step 6: Write the failing test**
+- [ ] **Step 6: Write the failing tests**
 
-Append to `tests/test_embedding_store.py`:
+Add to `tests/test_embedding_store.py`:
 
 ```python
+class TestDeleteChunks:
+    async def test_calls_execute_with_delete(self, store, mock_pool):
+        _, conn = mock_pool
+        conn.execute.return_value = "DELETE 3"
+        await store.delete_chunks("content-uuid-123")
+        conn.execute.assert_called_once()
+        sql = conn.execute.call_args[0][0]
+        assert "DELETE FROM content" in sql
+        assert "content_id" in sql
+
+    async def test_passes_content_id_param(self, store, mock_pool):
+        _, conn = mock_pool
+        conn.execute.return_value = "DELETE 0"
+        await store.delete_chunks("my-uuid")
+        args = conn.execute.call_args[0]
+        assert "my-uuid" in args
+
+
 class TestInsertChunks:
     async def test_inserts_multiple_chunks(self, store, mock_pool):
         _, conn = mock_pool
         conn.execute.return_value = "INSERT 0 1"
         chunks = [
-            {"chunk_index": 0, "text": "First chunk", "embedding": [0.1] * 768, "char_start": 0, "char_end": 100},
-            {"chunk_index": 1, "text": "Second chunk", "embedding": [0.2] * 768, "char_start": 80, "char_end": 200},
+            {"chunk_index": 0, "chunk_text": "First chunk", "embedding": [0.1] * 768, "char_start": 0, "char_end": 100},
+            {"chunk_index": 1, "chunk_text": "Second chunk", "embedding": [0.2] * 768, "char_start": 80, "char_end": 200},
         ]
         await store.insert_chunks("content-uuid-123", chunks)
         assert conn.execute.call_count == 2
 
-    async def test_sql_targets_content_chunks(self, store, mock_pool):
+    async def test_sql_targets_content_table(self, store, mock_pool):
         _, conn = mock_pool
         conn.execute.return_value = "INSERT 0 1"
         chunks = [
-            {"chunk_index": 0, "text": "chunk", "embedding": [0.1] * 768, "char_start": 0, "char_end": 50},
+            {"chunk_index": 0, "chunk_text": "chunk", "embedding": [0.1] * 768, "char_start": 0, "char_end": 50},
         ]
         await store.insert_chunks("uuid-1", chunks)
         sql = conn.execute.call_args[0][0]
-        assert "INSERT INTO content_chunks" in sql
+        assert "INSERT INTO content" in sql
 
     async def test_passes_content_id(self, store, mock_pool):
         _, conn = mock_pool
         conn.execute.return_value = "INSERT 0 1"
         chunks = [
-            {"chunk_index": 0, "text": "chunk", "embedding": [0.1] * 768, "char_start": 0, "char_end": 50},
+            {"chunk_index": 0, "chunk_text": "chunk", "embedding": [0.1] * 768, "char_start": 0, "char_end": 50},
         ]
         await store.insert_chunks("my-content-id", chunks)
         args = conn.execute.call_args[0]
@@ -212,31 +299,42 @@ class TestInsertChunks:
         conn.execute.assert_not_called()
 ```
 
-- [ ] **Step 7: Run test to verify it fails**
+- [ ] **Step 7: Run test to verify they fail**
 
-Run: `uv run pytest tests/test_embedding_store.py::TestInsertChunks -v`
-Expected: FAIL — `AttributeError: 'EmbeddingStore' object has no attribute 'insert_chunks'`
+Run: `uv run pytest tests/test_embedding_store.py::TestDeleteChunks tests/test_embedding_store.py::TestInsertChunks -v`
+Expected: FAIL
 
 - [ ] **Step 8: Write minimal implementation**
 
-Add to `EmbeddingStore`, after `delete_chunks_by_content_id()`:
+Add to `EmbeddingStore` after `insert_content_metadata()`:
 
 ```python
+    # ------------------------------------------------------------------
+    # Content (chunks) table operations
+    # ------------------------------------------------------------------
+
+    async def delete_chunks(self, content_id: str) -> None:
+        """Delete all chunks for a given content_id."""
+        async with self._pool.acquire() as conn:
+            await conn.execute(
+                "DELETE FROM content WHERE content_id = $1", content_id,
+            )
+
     async def insert_chunks(
         self,
         content_id: str,
         chunks: list[dict],
     ) -> None:
-        """Insert chunk rows for a content document.
+        """Insert chunk rows into the content table.
 
-        Each dict in chunks must have: chunk_index, text, embedding, char_start, char_end.
+        Each dict must have: chunk_index, chunk_text, embedding, char_start, char_end.
         """
         if not chunks:
             return
 
         sql = """
-            INSERT INTO content_chunks (
-                content_id, chunk_index, text, embedding, char_start, char_end
+            INSERT INTO content (
+                content_id, chunk_index, chunk_text, embedding, char_start, char_end
             )
             VALUES ($1, $2, $3, $4::vector(768), $5, $6)
         """
@@ -248,125 +346,127 @@ Add to `EmbeddingStore`, after `delete_chunks_by_content_id()`:
                     sql,
                     content_id,
                     chunk["chunk_index"],
-                    chunk["text"],
+                    chunk["chunk_text"],
                     embedding_str,
                     chunk["char_start"],
                     chunk["char_end"],
                 )
 ```
 
-- [ ] **Step 9: Run test to verify it passes**
+- [ ] **Step 9: Run test to verify they pass**
 
-Run: `uv run pytest tests/test_embedding_store.py::TestInsertChunks -v`
+Run: `uv run pytest tests/test_embedding_store.py::TestDeleteChunks tests/test_embedding_store.py::TestInsertChunks -v`
 Expected: PASS
 
 - [ ] **Step 10: Commit**
 
 ```bash
 git add src/knowledge_service/stores/embedding.py tests/test_embedding_store.py
-git commit -m "feat: add EmbeddingStore.insert_chunks()"
+git commit -m "feat: add EmbeddingStore.delete_chunks() and insert_chunks()"
 ```
 
-### 3c: `search_chunks()`
+### 3c: Rewrite `search()` with JOIN
 
-- [ ] **Step 11: Write the failing test**
+- [ ] **Step 11: Write the failing tests**
 
-Append to `tests/test_embedding_store.py`:
+Replace the `TestSearch` class in `tests/test_embedding_store.py`:
 
 ```python
-class TestSearchChunks:
-    async def test_returns_chunk_results(self, store, mock_pool):
+class TestSearch:
+    async def test_search_returns_chunk_results(self, store, mock_pool):
         _, conn = mock_pool
         conn.fetch.return_value = [
             {
-                "chunk_id": "chunk-uuid-1",
-                "text": "relevant chunk text",
-                "chunk_index": 2,
-                "content_id": "content-uuid-1",
-                "url": "https://example.com/article",
-                "title": "Test Article",
+                "id": "chunk-uuid-1",
+                "chunk_text": "relevant chunk text",
+                "chunk_index": 0,
+                "content_id": "metadata-uuid-1",
+                "url": "https://a.com",
+                "title": "A",
+                "summary": "S",
                 "source_type": "article",
-                "tags": ["test"],
+                "tags": ["t"],
                 "ingested_at": "2025-01-01",
-                "similarity": 0.93,
+                "similarity": 0.95,
             }
         ]
-        results = await store.search_chunks(
-            query_embedding=[0.1] * 768,
-            limit=10,
-        )
+        results = await store.search(query_embedding=[0.1] * 768, limit=10)
         assert len(results) == 1
-        assert results[0]["chunk_id"] == "chunk-uuid-1"
-        assert results[0]["text"] == "relevant chunk text"
-        assert results[0]["chunk_index"] == 2
-        assert results[0]["content_id"] == "content-uuid-1"
+        assert results[0]["chunk_text"] == "relevant chunk text"
+        assert results[0]["content_id"] == "metadata-uuid-1"
+        assert results[0]["similarity"] == 0.95
 
-    async def test_sql_joins_content_table(self, store, mock_pool):
+    async def test_search_calls_fetch(self, store, mock_pool):
         _, conn = mock_pool
         conn.fetch.return_value = []
-        await store.search_chunks(query_embedding=[0.1] * 768, limit=5)
+        await store.search(query_embedding=[0.1] * 768, limit=5)
+        conn.fetch.assert_called_once()
+
+    async def test_search_sql_joins_content_metadata(self, store, mock_pool):
+        _, conn = mock_pool
+        conn.fetch.return_value = []
+        await store.search(query_embedding=[0.1] * 768, limit=5)
         sql = conn.fetch.call_args[0][0]
-        assert "content_chunks" in sql
-        assert "JOIN content" in sql or "join content" in sql.lower()
+        assert "content_metadata" in sql
+        assert "JOIN" in sql.upper()
         assert "<=>" in sql
         assert "halfvec" in sql
 
-    async def test_with_source_type_filter(self, store, mock_pool):
+    async def test_search_with_source_type_filter(self, store, mock_pool):
         _, conn = mock_pool
         conn.fetch.return_value = []
-        await store.search_chunks(
-            query_embedding=[0.1] * 768,
-            limit=5,
-            source_type="article",
+        await store.search(
+            query_embedding=[0.1] * 768, limit=5, source_type="article",
         )
         sql = conn.fetch.call_args[0][0]
         assert "source_type" in sql
 
-    async def test_with_tags_filter(self, store, mock_pool):
+    async def test_search_with_tags_filter(self, store, mock_pool):
         _, conn = mock_pool
         conn.fetch.return_value = []
-        await store.search_chunks(
-            query_embedding=[0.1] * 768,
-            limit=5,
-            tags=["python"],
+        await store.search(
+            query_embedding=[0.1] * 768, limit=5, tags=["python", "database"],
         )
         sql = conn.fetch.call_args[0][0]
         assert "tags" in sql
 
-    async def test_returns_empty_list(self, store, mock_pool):
+    async def test_search_returns_empty_list(self, store, mock_pool):
         _, conn = mock_pool
         conn.fetch.return_value = []
-        results = await store.search_chunks(query_embedding=[0.1] * 768, limit=10)
+        results = await store.search(query_embedding=[0.1] * 768, limit=10)
         assert results == []
 
-    async def test_passes_limit_param(self, store, mock_pool):
+    async def test_search_passes_limit_param(self, store, mock_pool):
         _, conn = mock_pool
         conn.fetch.return_value = []
-        await store.search_chunks(query_embedding=[0.1] * 768, limit=42)
+        await store.search(query_embedding=[0.1] * 768, limit=42)
         args = conn.fetch.call_args[0]
         assert 42 in args
 ```
 
-- [ ] **Step 12: Run test to verify it fails**
+- [ ] **Step 12: Run test to verify they fail**
 
-Run: `uv run pytest tests/test_embedding_store.py::TestSearchChunks -v`
-Expected: FAIL — `AttributeError: 'EmbeddingStore' object has no attribute 'search_chunks'`
+Run: `uv run pytest tests/test_embedding_store.py::TestSearch -v`
+Expected: FAIL — `search()` still uses old SQL without JOIN.
 
-- [ ] **Step 13: Write minimal implementation**
+- [ ] **Step 13: Rewrite `search()` implementation**
 
-Add to `EmbeddingStore`, after `insert_chunks()`:
+Replace the existing `search()` method in `EmbeddingStore`:
 
 ```python
-    async def search_chunks(
+    async def search(
         self,
         query_embedding: list[float],
         limit: int,
         source_type: str | None = None,
         tags: list[str] | None = None,
+        min_date: Any | None = None,
     ) -> list[dict]:
-        """Return chunk rows ranked by cosine similarity, joined with parent content metadata.
+        """Return chunk rows ranked by cosine similarity, joined with content metadata.
 
-        Same filter interface as search() but queries content_chunks table.
+        Optional filters:
+          source_type — restrict to a single source type
+          tags        — restrict to rows that contain ALL given tags
         """
         embedding_str = self._vector_to_str(query_embedding)
 
@@ -375,11 +475,15 @@ Add to `EmbeddingStore`, after `insert_chunks()`:
 
         if source_type is not None:
             params.append(source_type)
-            conditions.append(f"p.source_type = ${len(params)}")
+            conditions.append(f"m.source_type = ${len(params)}")
 
         if tags is not None:
             params.append(tags)
-            conditions.append(f"p.tags @> ${len(params)}")
+            conditions.append(f"m.tags @> ${len(params)}")
+
+        if min_date is not None:
+            params.append(min_date)
+            conditions.append(f"m.ingested_at >= ${len(params)}")
 
         params.append(limit)
         limit_placeholder = f"${len(params)}"
@@ -388,11 +492,12 @@ Add to `EmbeddingStore`, after `insert_chunks()`:
 
         sql = f"""
             SELECT
-                c.chunk_id, c.text, c.chunk_index,
-                p.id AS content_id, p.url, p.title, p.source_type, p.tags, p.ingested_at,
+                c.id, c.chunk_text, c.chunk_index,
+                m.id AS content_id, m.url, m.title, m.summary,
+                m.source_type, m.tags, m.ingested_at,
                 1 - (c.embedding::halfvec(768) <=> $1::halfvec(768)) AS similarity
-            FROM content_chunks c
-            JOIN content p ON c.content_id = p.id
+            FROM content c
+            JOIN content_metadata m ON c.content_id = m.id
             {where_clause}
             ORDER BY c.embedding::halfvec(768) <=> $1::halfvec(768)
             LIMIT {limit_placeholder}
@@ -403,16 +508,18 @@ Add to `EmbeddingStore`, after `insert_chunks()`:
         return [dict(row) for row in rows]
 ```
 
-- [ ] **Step 14: Run test to verify it passes**
+Also remove the old `insert_content()` method (replaced by `insert_content_metadata()`).
 
-Run: `uv run pytest tests/test_embedding_store.py::TestSearchChunks -v`
+- [ ] **Step 14: Run test to verify they pass**
+
+Run: `uv run pytest tests/test_embedding_store.py::TestSearch -v`
 Expected: PASS
 
 - [ ] **Step 15: Commit**
 
 ```bash
 git add src/knowledge_service/stores/embedding.py tests/test_embedding_store.py
-git commit -m "feat: add EmbeddingStore.search_chunks()"
+git commit -m "feat: rewrite EmbeddingStore.search() with content_metadata JOIN"
 ```
 
 ---
@@ -422,9 +529,9 @@ git commit -m "feat: add EmbeddingStore.search_chunks()"
 **Files:**
 - Modify: `src/knowledge_service/models.py:316-324`
 
-- [ ] **Step 1: Add optional chunk fields to SearchResult**
+- [ ] **Step 1: Update SearchResult**
 
-In `src/knowledge_service/models.py`, modify the `SearchResult` class (line 316-324) to add two optional fields:
+In `src/knowledge_service/models.py`, replace the `SearchResult` class:
 
 ```python
 class SearchResult(BaseModel):
@@ -436,104 +543,62 @@ class SearchResult(BaseModel):
     source_type: str
     tags: list[str]
     ingested_at: datetime
-    chunk_text: str | None = None
-    chunk_index: int | None = None
+    chunk_text: str
+    chunk_index: int
 ```
 
-- [ ] **Step 2: Run existing search tests to ensure backward compat**
+Both `chunk_text` and `chunk_index` are **required** (not optional) since every search result is a chunk.
 
-Run: `uv run pytest tests/test_api_search.py -v`
-Expected: All existing tests PASS (new fields have defaults, so no breakage).
-
-- [ ] **Step 3: Commit**
+- [ ] **Step 2: Commit**
 
 ```bash
 git add src/knowledge_service/models.py
-git commit -m "feat: add chunk_text, chunk_index to SearchResult model"
+git commit -m "feat: add required chunk_text, chunk_index to SearchResult"
 ```
 
 ---
 
-## Task 5: Content ingestion — chunking step (TDD)
+## Task 5: Content ingestion — always-chunk flow (TDD)
 
 **Files:**
 - Modify: `src/knowledge_service/api/content.py`
-- Create: `tests/test_chunking.py`
+- Modify: `tests/test_api_content.py`
 
-### 5a: Tests for chunking during content ingestion
+### 5a: Tests for always-chunk ingestion
 
 - [ ] **Step 1: Write the failing tests**
 
-Create `tests/test_chunking.py`:
+Update `tests/test_api_content.py`. First, update the mock helpers:
 
+**Replace `_make_embedding_client_mock()`** so `embed_batch` scales dynamically:
 ```python
-"""Tests for content chunking during ingestion."""
-
-from __future__ import annotations
-
-from contextlib import asynccontextmanager
-from unittest.mock import AsyncMock, MagicMock
-
-import pytest
-from httpx import ASGITransport, AsyncClient
-
-from knowledge_service.main import create_app
-from tests.conftest import make_test_session_cookie
-
-
-def _make_pg_pool_mock():
-    mock_conn = AsyncMock()
-    mock_conn.execute.return_value = "INSERT 0 1"
-    mock_conn.fetchrow.return_value = {"id": "content-uuid-1234"}
-    mock_conn.fetch.return_value = []
-
-    @asynccontextmanager
-    async def _acquire():
-        yield mock_conn
-
-    mock_pool = MagicMock()
-    mock_pool.acquire = _acquire
-    return mock_pool
-
-
 def _make_embedding_client_mock():
+    """Build a mock EmbeddingClient."""
     mock = AsyncMock()
     mock.embed.return_value = [0.1] * 768
-    mock.embed_batch.return_value = [[0.1] * 768, [0.2] * 768]
+    mock.embed_batch.side_effect = lambda texts: [[0.1] * 768 for _ in texts]
     return mock
+```
 
-
+**Replace `_make_embedding_store_mock()`:**
+```python
 def _make_embedding_store_mock():
+    """Build a mock EmbeddingStore with new schema methods."""
     mock = AsyncMock()
-    mock.insert_content.return_value = "content-uuid-1234"
-    mock.delete_chunks_by_content_id.return_value = None
+    mock.insert_content_metadata.return_value = "content-uuid-1234"
+    mock.delete_chunks.return_value = None
     mock.insert_chunks.return_value = None
     return mock
+```
 
+**Update the `client` fixture** to use the new mock (it currently sets `mock.insert_content`).
 
-def _make_knowledge_store_mock():
-    mock = MagicMock()
-    mock.insert_triple.return_value = ("abc123", True)
-    mock.find_contradictions.return_value = []
-    return mock
-
-
-def _make_extraction_client_mock():
-    mock = AsyncMock()
-    mock.extract.return_value = []
-    return mock
-
-
-def _make_reasoning_engine_mock():
-    mock = MagicMock()
-    mock.combine_evidence.return_value = 0.88
-    return mock
-
-
+**Add new test class at the end:**
+```python
 SHORT_TEXT_PAYLOAD = {
     "url": "https://example.com/short",
     "title": "Short Article",
-    "raw_text": "This is a short article under 4000 characters.",
+    "raw_text": "This is a short article.",
     "source_type": "article",
 }
 
@@ -545,10 +610,8 @@ LONG_TEXT_PAYLOAD = {
 }
 
 
-class TestChunkingShortContent:
-    """Short content (< 4000 chars) should NOT be chunked."""
-
-    async def test_no_chunks_inserted_for_short_text(self):
+class TestContentChunking:
+    async def test_short_content_creates_one_chunk(self):
         app = create_app(use_lifespan=False)
         mock_es = _make_embedding_store_mock()
         app.state.knowledge_store = _make_knowledge_store_mock()
@@ -567,39 +630,21 @@ class TestChunkingShortContent:
             response = await c.post("/api/content", json=SHORT_TEXT_PAYLOAD)
 
         assert response.status_code == 200
-        mock_es.insert_chunks.assert_not_called()
+        mock_es.insert_content_metadata.assert_called_once()
+        mock_es.delete_chunks.assert_called_once_with("content-uuid-1234")
+        mock_es.insert_chunks.assert_called_once()
+        chunks = mock_es.insert_chunks.call_args[0][1]
+        assert len(chunks) == 1
+        assert chunks[0]["chunk_index"] == 0
+        assert chunks[0]["chunk_text"] == "This is a short article."
 
-    async def test_no_batch_embed_for_short_text(self):
+    async def test_long_content_creates_multiple_chunks(self):
         app = create_app(use_lifespan=False)
         mock_ec = _make_embedding_client_mock()
         mock_es = _make_embedding_store_mock()
         app.state.knowledge_store = _make_knowledge_store_mock()
         app.state.pg_pool = _make_pg_pool_mock()
         app.state.embedding_client = mock_ec
-        app.state.extraction_client = _make_extraction_client_mock()
-        app.state.reasoning_engine = _make_reasoning_engine_mock()
-        app.state.embedding_store = mock_es
-
-        transport = ASGITransport(app=app)
-        async with AsyncClient(
-            transport=transport,
-            base_url="http://test",
-            cookies={"ks_session": make_test_session_cookie()},
-        ) as c:
-            await c.post("/api/content", json=SHORT_TEXT_PAYLOAD)
-
-        mock_ec.embed_batch.assert_not_called()
-
-
-class TestChunkingLongContent:
-    """Long content (>= 4000 chars) should be chunked."""
-
-    async def test_chunks_inserted_for_long_text(self):
-        app = create_app(use_lifespan=False)
-        mock_es = _make_embedding_store_mock()
-        app.state.knowledge_store = _make_knowledge_store_mock()
-        app.state.pg_pool = _make_pg_pool_mock()
-        app.state.embedding_client = _make_embedding_client_mock()
         app.state.extraction_client = _make_extraction_client_mock()
         app.state.reasoning_engine = _make_reasoning_engine_mock()
         app.state.embedding_store = mock_es
@@ -613,47 +658,12 @@ class TestChunkingLongContent:
             response = await c.post("/api/content", json=LONG_TEXT_PAYLOAD)
 
         assert response.status_code == 200
-        mock_es.delete_chunks_by_content_id.assert_called_once_with("content-uuid-1234")
         mock_es.insert_chunks.assert_called_once()
-        call_args = mock_es.insert_chunks.call_args
-        assert call_args[0][0] == "content-uuid-1234"
-        chunks = call_args[0][1]
+        chunks = mock_es.insert_chunks.call_args[0][1]
         assert len(chunks) >= 2
-        for chunk in chunks:
-            assert "chunk_index" in chunk
-            assert "text" in chunk
-            assert "embedding" in chunk
-            assert "char_start" in chunk
-            assert "char_end" in chunk
-
-    async def test_embed_batch_called_for_chunks(self):
-        app = create_app(use_lifespan=False)
-        mock_ec = _make_embedding_client_mock()
-        mock_es = _make_embedding_store_mock()
-        app.state.knowledge_store = _make_knowledge_store_mock()
-        app.state.pg_pool = _make_pg_pool_mock()
-        app.state.embedding_client = mock_ec
-        app.state.extraction_client = _make_extraction_client_mock()
-        app.state.reasoning_engine = _make_reasoning_engine_mock()
-        app.state.embedding_store = mock_es
-
-        transport = ASGITransport(app=app)
-        async with AsyncClient(
-            transport=transport,
-            base_url="http://test",
-            cookies={"ks_session": make_test_session_cookie()},
-        ) as c:
-            await c.post("/api/content", json=LONG_TEXT_PAYLOAD)
-
         mock_ec.embed_batch.assert_called_once()
-        batch_texts = mock_ec.embed_batch.call_args[0][0]
-        assert len(batch_texts) >= 2
 
-
-class TestChunkingNoRawText:
-    """Content with no raw_text should not attempt chunking."""
-
-    async def test_no_chunks_when_no_raw_text(self):
+    async def test_no_raw_text_creates_one_chunk_from_title(self):
         app = create_app(use_lifespan=False)
         mock_es = _make_embedding_store_mock()
         app.state.knowledge_store = _make_knowledge_store_mock()
@@ -663,28 +673,20 @@ class TestChunkingNoRawText:
         app.state.reasoning_engine = _make_reasoning_engine_mock()
         app.state.embedding_store = mock_es
 
-        payload = {
-            "url": "https://example.com/no-text",
-            "title": "No Text",
-            "source_type": "article",
-        }
-
         transport = ASGITransport(app=app)
         async with AsyncClient(
             transport=transport,
             base_url="http://test",
             cookies={"ks_session": make_test_session_cookie()},
         ) as c:
-            response = await c.post("/api/content", json=payload)
+            response = await c.post("/api/content", json=MINIMAL_PAYLOAD)
 
         assert response.status_code == 200
-        mock_es.insert_chunks.assert_not_called()
+        mock_es.insert_chunks.assert_called_once()
+        chunks = mock_es.insert_chunks.call_args[0][1]
+        assert len(chunks) == 1
 
-
-class TestChunkingReIngestion:
-    """Re-ingesting content (URL conflict) should delete old chunks first."""
-
-    async def test_old_chunks_deleted_on_reingestion(self):
+    async def test_reingestion_deletes_old_chunks(self):
         app = create_app(use_lifespan=False)
         mock_es = _make_embedding_store_mock()
         app.state.knowledge_store = _make_knowledge_store_mock()
@@ -700,25 +702,25 @@ class TestChunkingReIngestion:
             base_url="http://test",
             cookies={"ks_session": make_test_session_cookie()},
         ) as c:
-            await c.post("/api/content", json=LONG_TEXT_PAYLOAD)
+            await c.post("/api/content", json=SHORT_TEXT_PAYLOAD)
 
-        mock_es.delete_chunks_by_content_id.assert_called_once_with("content-uuid-1234")
+        mock_es.delete_chunks.assert_called_once_with("content-uuid-1234")
 ```
 
 - [ ] **Step 2: Run tests to verify they fail**
 
-Run: `uv run pytest tests/test_chunking.py -v`
-Expected: FAIL — chunking logic doesn't exist yet, so `insert_chunks` is never called.
+Run: `uv run pytest tests/test_api_content.py::TestContentChunking -v`
+Expected: FAIL — content.py still calls `insert_content()` not the new methods.
 
-- [ ] **Step 3: Implement chunking in content.py**
+- [ ] **Step 3: Rewrite content ingestion**
 
-Modify `src/knowledge_service/api/content.py`. Add the import at the top (after existing imports):
+In `src/knowledge_service/api/content.py`, add the import at the top:
 
 ```python
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 ```
 
-Add a module-level constant after the `router = APIRouter()` line:
+Add module-level constants after `router = APIRouter()`:
 
 ```python
 _CHUNK_SIZE = 4000
@@ -730,187 +732,170 @@ _splitter = RecursiveCharacterTextSplitter(
 )
 ```
 
-In `_process_one_content_request()`, insert the chunking step **after** step 2 (content upsert, line 74) and **before** step 2.5 (auto-extraction, line 77). The new code:
+Replace steps 1-2 in `_process_one_content_request()` (lines 60-74) with the new flow:
 
 ```python
-    # Step 2.1: Chunk long text and embed chunks
-    if body.raw_text and len(body.raw_text) >= _CHUNK_SIZE:
-        chunks_text = _splitter.split_text(body.raw_text)
+    # Step 1: Upsert content metadata
+    content_id = await embedding_store.insert_content_metadata(
+        url=body.url,
+        title=body.title,
+        summary=body.summary or "",
+        raw_text=body.raw_text or "",
+        source_type=body.source_type,
+        tags=body.tags,
+        metadata=body.metadata,
+    )
 
-        # Track char offsets for each chunk
-        chunk_records = []
-        search_start = 0
-        for i, chunk_text in enumerate(chunks_text):
-            char_start = body.raw_text.find(chunk_text[:100], search_start)
-            if char_start == -1:
-                char_start = search_start
-            char_end = char_start + len(chunk_text)
-            search_start = max(search_start, char_start + 1)
-            chunk_records.append({
-                "chunk_index": i,
-                "text": chunk_text,
-                "char_start": char_start,
-                "char_end": char_end,
-            })
+    # Step 2: Always chunk and embed
+    text = body.raw_text or body.summary or body.title
+    if len(text) >= _CHUNK_SIZE:
+        chunks_text = _splitter.split_text(text)
+    else:
+        chunks_text = [text]
 
-        # Batch embed all chunks
-        chunk_embeddings = await embedding_client.embed_batch(
-            [c["text"] for c in chunk_records]
+    # Track char offsets
+    chunk_records = []
+    search_start = 0
+    for i, ct in enumerate(chunks_text):
+        char_start = text.find(ct[:100], search_start)
+        if char_start == -1:
+            char_start = search_start
+        char_end = char_start + len(ct)
+        search_start = max(search_start, char_start + 1)
+        chunk_records.append({
+            "chunk_index": i,
+            "chunk_text": ct,
+            "char_start": char_start,
+            "char_end": char_end,
+        })
+
+    # Embed chunks (batch for multiple, single for one)
+    if len(chunk_records) == 1:
+        embeddings = [await embedding_client.embed(chunk_records[0]["chunk_text"])]
+    else:
+        embeddings = await embedding_client.embed_batch(
+            [c["chunk_text"] for c in chunk_records]
         )
-        for rec, emb in zip(chunk_records, chunk_embeddings):
-            rec["embedding"] = emb
+    for rec, emb in zip(chunk_records, embeddings):
+        rec["embedding"] = emb
 
-        # Delete old chunks (re-ingestion) and insert new
-        await embedding_store.delete_chunks_by_content_id(content_id)
-        await embedding_store.insert_chunks(content_id, chunk_records)
+    # Delete old chunks (re-ingestion) and insert new
+    await embedding_store.delete_chunks(content_id)
+    await embedding_store.insert_chunks(content_id, chunk_records)
 ```
 
-- [ ] **Step 4: Run tests to verify they pass**
+Remove the old `embedding = await embedding_client.embed(embed_text)` and `embedding_store.insert_content(...)` calls.
 
-Run: `uv run pytest tests/test_chunking.py -v`
+- [ ] **Step 4: Run chunking tests**
+
+Run: `uv run pytest tests/test_api_content.py::TestContentChunking -v`
 Expected: All PASS
 
-- [ ] **Step 5: Run existing content tests to ensure no regression**
+- [ ] **Step 5: Update remaining content tests for new mock API**
+
+The other test classes in `test_api_content.py` still reference `mock.insert_content` (old API). Update:
+
+- **`_make_embedding_store_mock()`** already updated in Step 1
+- **Tests that assert `content_id`**: `insert_content_metadata` returns `"content-uuid-1234"`, same as before — assertions on `data["content_id"]` still pass
+- **`TestPostContentEmbedding.test_pg_pool_used_to_insert_content`**: rename/rewrite to test that `insert_content_metadata` is called
+- **`TestPostContentKnowledgeStore` tests**: these don't set `embedding_store` on `app.state` — add `app.state.embedding_store = _make_embedding_store_mock()` to each
 
 Run: `uv run pytest tests/test_api_content.py -v`
-Expected: All PASS
+Fix any remaining failures.
 
 - [ ] **Step 6: Commit**
 
 ```bash
-git add src/knowledge_service/api/content.py tests/test_chunking.py
-git commit -m "feat: chunk long content and embed chunks during ingestion"
+git add src/knowledge_service/api/content.py tests/test_api_content.py
+git commit -m "feat: always-chunk content ingestion with content_metadata"
 ```
 
 ---
 
-## Task 6: Search endpoint — chunk-level results (TDD)
+## Task 6: Search endpoint — simplified chunk search (TDD)
 
 **Files:**
 - Modify: `src/knowledge_service/api/search.py`
 - Modify: `tests/test_api_search.py`
 
-### 6a: Tests for chunk-aware search
+- [ ] **Step 1: Update test fixtures and add chunk search tests**
 
-- [ ] **Step 1: Write the failing tests**
+Rewrite `tests/test_api_search.py` fixtures and sample data:
 
-Append to `tests/test_api_search.py`:
-
+**Update `_SAMPLE_ROW`** to match the new `search()` return shape:
 ```python
-# ---------------------------------------------------------------------------
-# Tests: chunk-level search results
-# ---------------------------------------------------------------------------
-
-_CHUNK_ROW = {
-    "chunk_id": "chunk-uuid-1",
-    "text": "The relevant chunk text",
-    "chunk_index": 2,
+_SAMPLE_ROW = {
+    "id": "chunk-uuid-1",
+    "chunk_text": "The relevant text from this article",
+    "chunk_index": 0,
     "content_id": "content-uuid-1234",
     "url": "https://example.com/article",
     "title": "Test Article",
+    "summary": "A test article summary",
     "source_type": "article",
-    "tags": ["python"],
+    "tags": ["python", "testing"],
     "ingested_at": _NOW,
-    "similarity": 0.95,
+    "similarity": 0.92,
 }
-
-_UNCHUNKED_ROW = {
-    "id": "content-uuid-5678",
-    "url": "https://example.com/short",
-    "title": "Short Article",
-    "summary": "A short summary",
-    "source_type": "article",
-    "tags": ["test"],
-    "ingested_at": _NOW,
-    "similarity": 0.80,
-}
-
-
-class TestGetSearchChunks:
-    async def test_chunk_result_has_chunk_fields(self):
-        """When chunks exist, results should include chunk_text and chunk_index."""
-        app = create_app(use_lifespan=False)
-        app.state.knowledge_store = _make_knowledge_store_mock()
-        app.state.embedding_client = _make_embedding_client_mock()
-        mock_es = AsyncMock()
-        mock_es.search_chunks.return_value = [_CHUNK_ROW]
-        mock_es.search.return_value = []
-        app.state.embedding_store = mock_es
-
-        transport = ASGITransport(app=app)
-        async with AsyncClient(
-            transport=transport,
-            base_url="http://test",
-            cookies={"ks_session": make_test_session_cookie()},
-        ) as c:
-            response = await c.get("/api/search", params={"q": "relevant query"})
-
-        assert response.status_code == 200
-        data = response.json()
-        assert len(data) >= 1
-        chunk_result = data[0]
-        assert chunk_result["chunk_text"] == "The relevant chunk text"
-        assert chunk_result["chunk_index"] == 2
-        assert chunk_result["content_id"] == "content-uuid-1234"
-
-    async def test_unchunked_result_has_null_chunk_fields(self):
-        """Un-chunked content results should have null chunk_text and chunk_index."""
-        app = create_app(use_lifespan=False)
-        app.state.knowledge_store = _make_knowledge_store_mock()
-        app.state.embedding_client = _make_embedding_client_mock()
-        mock_es = AsyncMock()
-        mock_es.search_chunks.return_value = []
-        mock_es.search.return_value = [_UNCHUNKED_ROW]
-        app.state.embedding_store = mock_es
-
-        transport = ASGITransport(app=app)
-        async with AsyncClient(
-            transport=transport,
-            base_url="http://test",
-            cookies={"ks_session": make_test_session_cookie()},
-        ) as c:
-            response = await c.get("/api/search", params={"q": "short query"})
-
-        assert response.status_code == 200
-        data = response.json()
-        assert len(data) >= 1
-        result = data[0]
-        assert result["chunk_text"] is None
-        assert result["chunk_index"] is None
-
-    async def test_mixed_chunk_and_content_results(self):
-        """Both chunk-level and content-level results can appear together."""
-        app = create_app(use_lifespan=False)
-        app.state.knowledge_store = _make_knowledge_store_mock()
-        app.state.embedding_client = _make_embedding_client_mock()
-        mock_es = AsyncMock()
-        mock_es.search_chunks.return_value = [_CHUNK_ROW]
-        mock_es.search.return_value = [_UNCHUNKED_ROW]
-        app.state.embedding_store = mock_es
-
-        transport = ASGITransport(app=app)
-        async with AsyncClient(
-            transport=transport,
-            base_url="http://test",
-            cookies={"ks_session": make_test_session_cookie()},
-        ) as c:
-            response = await c.get("/api/search", params={"q": "mixed query", "limit": "10"})
-
-        assert response.status_code == 200
-        data = response.json()
-        assert len(data) == 2
 ```
 
-Note: You'll also need to add `from unittest.mock import AsyncMock` to the imports at the top of the test file (if not already imported).
+**Add `_make_embedding_store_mock` helper:**
+```python
+def _make_embedding_store_mock(search_rows=None):
+    mock = AsyncMock()
+    mock.search.return_value = search_rows or []
+    return mock
+```
 
-- [ ] **Step 2: Run tests to verify they fail**
+**Update `client` fixture** to use `embedding_store` mock:
+```python
+@pytest.fixture
+async def client():
+    app = create_app(use_lifespan=False)
+    app.state.knowledge_store = _make_knowledge_store_mock()
+    app.state.pg_pool = _make_pg_pool_mock()
+    app.state.embedding_client = _make_embedding_client_mock()
+    app.state.embedding_store = _make_embedding_store_mock(search_rows=[_SAMPLE_ROW])
 
-Run: `uv run pytest tests/test_api_search.py::TestGetSearchChunks -v`
-Expected: FAIL — search endpoint doesn't call `search_chunks()` yet.
+    transport = ASGITransport(app=app)
+    async with AsyncClient(
+        transport=transport,
+        base_url="http://test",
+        cookies={"ks_session": make_test_session_cookie()},
+    ) as c:
+        yield c
+```
 
-- [ ] **Step 3: Rewrite search endpoint to use chunks**
+**Update `empty_client` fixture** similarly with `_make_embedding_store_mock()` (empty).
 
-Replace the body of `get_search()` in `src/knowledge_service/api/search.py`:
+**Add `AsyncMock` to imports** if not already present.
+
+**Update `TestGetSearchBasic.test_result_has_required_fields`** to also check `chunk_text` and `chunk_index`.
+
+**Update `TestGetSearchBasic.test_result_values_match_row`** to assert:
+```python
+assert result["chunk_text"] == "The relevant text from this article"
+assert result["chunk_index"] == 0
+```
+
+**Update ALL tests that create their own app instances** (there are 6 — see list below) to include `app.state.embedding_store = _make_embedding_store_mock(...)`:
+- `TestGetSearchSimilarity.test_multiple_results_have_similarity`
+- `TestGetSearchValidation.test_default_limit_is_ten`
+- `TestGetSearchEmbedding.test_embedding_client_called_with_query`
+- `TestGetSearchEmbedding.test_embedding_client_called_once_per_request`
+- `TestGetSearchNullSummary.test_null_summary_allowed`
+- `TestGetSearchNullSummary.test_empty_tags_list`
+
+Each needs:
+```python
+app.state.embedding_store = _make_embedding_store_mock(search_rows=<rows_for_this_test>)
+```
+
+Where `<rows_for_this_test>` uses `_SAMPLE_ROW` variants matching what the test expects.
+
+- [ ] **Step 2: Rewrite search endpoint**
+
+Replace `src/knowledge_service/api/search.py`:
 
 ```python
 """GET /api/search endpoint — semantic similarity search over ingested content."""
@@ -935,8 +920,8 @@ async def get_search(
 ) -> list[SearchResult]:
     """Search ingested content by semantic similarity.
 
-    Queries chunk-level embeddings first, then falls back to content-level
-    for documents that were not chunked.
+    Queries chunk embeddings in the content table, joined with content_metadata
+    for filtering and metadata. Every result is a chunk.
     """
     embedding_client = request.app.state.embedding_client
     embedding_store = getattr(request.app.state, "embedding_store", None)
@@ -947,274 +932,42 @@ async def get_search(
 
     embedding = await embedding_client.embed(q)
 
-    # Chunk-level search
-    chunk_rows = await embedding_store.search_chunks(
+    rows = await embedding_store.search(
         query_embedding=embedding,
         limit=limit,
         source_type=source_type,
         tags=tags,
     )
 
-    results: list[SearchResult] = [
+    return [
         SearchResult(
             content_id=str(row["content_id"]),
             url=row["url"],
             title=row["title"],
-            summary=None,
+            summary=row.get("summary"),
             similarity=float(row["similarity"]),
             source_type=row["source_type"],
             tags=list(row["tags"]) if row["tags"] else [],
             ingested_at=row["ingested_at"],
-            chunk_text=row["text"],
+            chunk_text=row["chunk_text"],
             chunk_index=row["chunk_index"],
         )
-        for row in chunk_rows
+        for row in rows
     ]
-
-    # Fallback: content-level search for un-chunked documents
-    remaining = limit - len(results)
-    if remaining > 0:
-        content_rows = await embedding_store.search(
-            query_embedding=embedding,
-            limit=remaining,
-            source_type=source_type,
-            tags=tags,
-        )
-
-        # Exclude content IDs already covered by chunks
-        seen_content_ids = {r.content_id for r in results}
-        for row in content_rows:
-            cid = str(row["id"])
-            if cid not in seen_content_ids:
-                results.append(
-                    SearchResult(
-                        content_id=cid,
-                        url=row["url"],
-                        title=row["title"],
-                        summary=row.get("summary"),
-                        similarity=float(row["similarity"]),
-                        source_type=row["source_type"],
-                        tags=list(row["tags"]) if row["tags"] else [],
-                        ingested_at=row["ingested_at"],
-                    )
-                )
-
-    # Sort combined results by similarity descending
-    results.sort(key=lambda r: r.similarity, reverse=True)
-
-    return results[:limit]
 ```
 
-- [ ] **Step 4: Run chunk search tests**
+No fallback. No deduplication. No sorting. One call.
 
-Run: `uv run pytest tests/test_api_search.py::TestGetSearchChunks -v`
-Expected: All PASS
-
-- [ ] **Step 5: Fix existing search tests for new flow**
-
-The existing tests use `app.state.pg_pool` directly, but the new search endpoint uses `app.state.embedding_store`. The search endpoint now calls `embedding_store.search_chunks()` then `embedding_store.search()` instead of going through the raw pool. Every test that creates its own app instance must set `app.state.embedding_store` with a mock that has both `search_chunks` and `search` methods.
-
-**Add `AsyncMock` to imports** at the top of `tests/test_api_search.py`:
-```python
-from unittest.mock import AsyncMock, MagicMock
-```
-
-**Add a helper** after the existing helpers:
-```python
-def _make_embedding_store_mock(search_rows=None, chunk_rows=None):
-    """Build a mock EmbeddingStore for search tests."""
-    mock = AsyncMock()
-    mock.search_chunks.return_value = chunk_rows or []
-    mock.search.return_value = search_rows or []
-    return mock
-```
-
-**Replace `client` fixture:**
-```python
-@pytest.fixture
-async def client():
-    app = create_app(use_lifespan=False)
-    app.state.knowledge_store = _make_knowledge_store_mock()
-    app.state.pg_pool = _make_pg_pool_mock()
-    app.state.embedding_client = _make_embedding_client_mock()
-    app.state.embedding_store = _make_embedding_store_mock(search_rows=[_SAMPLE_ROW])
-
-    transport = ASGITransport(app=app)
-    async with AsyncClient(
-        transport=transport,
-        base_url="http://test",
-        cookies={"ks_session": make_test_session_cookie()},
-    ) as c:
-        yield c
-```
-
-**Replace `empty_client` fixture:**
-```python
-@pytest.fixture
-async def empty_client():
-    app = create_app(use_lifespan=False)
-    app.state.knowledge_store = _make_knowledge_store_mock()
-    app.state.pg_pool = _make_pg_pool_mock(rows=[])
-    app.state.embedding_client = _make_embedding_client_mock()
-    app.state.embedding_store = _make_embedding_store_mock()
-
-    transport = ASGITransport(app=app)
-    async with AsyncClient(
-        transport=transport,
-        base_url="http://test",
-        cookies={"ks_session": make_test_session_cookie()},
-    ) as c:
-        yield c
-```
-
-**Update `TestGetSearchSimilarity.test_multiple_results_have_similarity`** — replace the test body:
-```python
-    async def test_multiple_results_have_similarity(self):
-        rows = [
-            {**_SAMPLE_ROW, "id": "uuid-1", "url": "https://example.com/1", "similarity": 0.95},
-            {**_SAMPLE_ROW, "id": "uuid-2", "url": "https://example.com/2", "similarity": 0.80},
-        ]
-        app = create_app(use_lifespan=False)
-        app.state.knowledge_store = _make_knowledge_store_mock()
-        app.state.pg_pool = _make_pg_pool_mock(rows=rows)
-        app.state.embedding_client = _make_embedding_client_mock()
-        app.state.embedding_store = _make_embedding_store_mock(search_rows=rows)
-
-        transport = ASGITransport(app=app)
-        async with AsyncClient(
-            transport=transport,
-            base_url="http://test",
-            cookies={"ks_session": make_test_session_cookie()},
-        ) as c:
-            response = await c.get("/api/search", params={"q": "multiple"})
-
-        data = response.json()
-        assert len(data) == 2
-        assert data[0]["similarity"] == pytest.approx(0.95, abs=1e-6)
-        assert data[1]["similarity"] == pytest.approx(0.80, abs=1e-6)
-```
-
-**Update `TestGetSearchValidation.test_default_limit_is_ten`** — add `embedding_store`:
-```python
-    async def test_default_limit_is_ten(self):
-        app = create_app(use_lifespan=False)
-        mock_ec = _make_embedding_client_mock()
-        app.state.knowledge_store = _make_knowledge_store_mock()
-        app.state.pg_pool = _make_pg_pool_mock(rows=[])
-        app.state.embedding_client = mock_ec
-        app.state.embedding_store = _make_embedding_store_mock()
-
-        transport = ASGITransport(app=app)
-        async with AsyncClient(
-            transport=transport,
-            base_url="http://test",
-            cookies={"ks_session": make_test_session_cookie()},
-        ) as c:
-            response = await c.get("/api/search", params={"q": "test"})
-
-        assert response.status_code == 200
-        mock_ec.embed.assert_called_once()
-```
-
-**Update `TestGetSearchEmbedding.test_embedding_client_called_with_query`** — add `embedding_store`:
-```python
-    async def test_embedding_client_called_with_query(self):
-        app = create_app(use_lifespan=False)
-        mock_ec = _make_embedding_client_mock()
-        app.state.knowledge_store = _make_knowledge_store_mock()
-        app.state.pg_pool = _make_pg_pool_mock(rows=[])
-        app.state.embedding_client = mock_ec
-        app.state.embedding_store = _make_embedding_store_mock()
-
-        transport = ASGITransport(app=app)
-        async with AsyncClient(
-            transport=transport,
-            base_url="http://test",
-            cookies={"ks_session": make_test_session_cookie()},
-        ) as c:
-            await c.get("/api/search", params={"q": "semantic query"})
-
-        mock_ec.embed.assert_called_once_with("semantic query")
-```
-
-**Update `TestGetSearchEmbedding.test_embedding_client_called_once_per_request`** — add `embedding_store`:
-```python
-    async def test_embedding_client_called_once_per_request(self):
-        app = create_app(use_lifespan=False)
-        mock_ec = _make_embedding_client_mock()
-        app.state.knowledge_store = _make_knowledge_store_mock()
-        app.state.pg_pool = _make_pg_pool_mock(rows=[])
-        app.state.embedding_client = mock_ec
-        app.state.embedding_store = _make_embedding_store_mock()
-
-        transport = ASGITransport(app=app)
-        async with AsyncClient(
-            transport=transport,
-            base_url="http://test",
-            cookies={"ks_session": make_test_session_cookie()},
-        ) as c:
-            await c.get("/api/search", params={"q": "first"})
-            await c.get("/api/search", params={"q": "second"})
-
-        assert mock_ec.embed.call_count == 2
-```
-
-**Update `TestGetSearchNullSummary.test_null_summary_allowed`** — add `embedding_store`:
-```python
-    async def test_null_summary_allowed(self):
-        rows = [{**_SAMPLE_ROW, "summary": None}]
-        app = create_app(use_lifespan=False)
-        app.state.knowledge_store = _make_knowledge_store_mock()
-        app.state.pg_pool = _make_pg_pool_mock(rows=rows)
-        app.state.embedding_client = _make_embedding_client_mock()
-        app.state.embedding_store = _make_embedding_store_mock(search_rows=rows)
-
-        transport = ASGITransport(app=app)
-        async with AsyncClient(
-            transport=transport,
-            base_url="http://test",
-            cookies={"ks_session": make_test_session_cookie()},
-        ) as c:
-            response = await c.get("/api/search", params={"q": "test"})
-
-        assert response.status_code == 200
-        data = response.json()
-        assert data[0]["summary"] is None
-```
-
-**Update `TestGetSearchNullSummary.test_empty_tags_list`** — add `embedding_store`:
-```python
-    async def test_empty_tags_list(self):
-        rows = [{**_SAMPLE_ROW, "tags": []}]
-        app = create_app(use_lifespan=False)
-        app.state.knowledge_store = _make_knowledge_store_mock()
-        app.state.pg_pool = _make_pg_pool_mock(rows=rows)
-        app.state.embedding_client = _make_embedding_client_mock()
-        app.state.embedding_store = _make_embedding_store_mock(search_rows=rows)
-
-        transport = ASGITransport(app=app)
-        async with AsyncClient(
-            transport=transport,
-            base_url="http://test",
-            cookies={"ks_session": make_test_session_cookie()},
-        ) as c:
-            response = await c.get("/api/search", params={"q": "test"})
-
-        assert response.status_code == 200
-        data = response.json()
-        assert data[0]["tags"] == []
-```
-
-- [ ] **Step 6: Run all search tests**
+- [ ] **Step 3: Run all search tests**
 
 Run: `uv run pytest tests/test_api_search.py -v`
 Expected: All PASS
 
-- [ ] **Step 7: Commit**
+- [ ] **Step 4: Commit**
 
 ```bash
 git add src/knowledge_service/api/search.py tests/test_api_search.py
-git commit -m "feat: search queries chunks first, falls back to content"
+git commit -m "feat: simplified chunk-level search endpoint"
 ```
 
 ---
@@ -1222,132 +975,62 @@ git commit -m "feat: search queries chunks first, falls back to content"
 ## Task 7: RAG retriever — chunk-aware retrieval (TDD)
 
 **Files:**
-- Modify: `src/knowledge_service/stores/rag.py:48`
+- Modify: `src/knowledge_service/stores/rag.py`
 - Modify: `tests/test_rag_retriever.py`
 
-### 7a: Tests for chunk-aware RAG
+Since `EmbeddingStore.search()` now returns chunk-level results automatically, the RAG retriever mostly just works. The only change is that `content_results` now contain `chunk_text` and `chunk_index` keys, and the `id` key is now a chunk UUID rather than content UUID.
 
-- [ ] **Step 1: Write the failing tests**
+- [ ] **Step 1: Update RAG retriever test mock**
 
-Append to `tests/test_rag_retriever.py`:
-
-```python
-class TestRetrieveChunkAware:
-    """RAGRetriever should use search_chunks for content retrieval."""
-
-    async def test_calls_search_chunks(self):
-        es = _make_embedding_store()
-        es.search_chunks = AsyncMock(return_value=[])
-        retriever = RAGRetriever(
-            embedding_client=_make_embedding_client(),
-            embedding_store=es,
-            knowledge_store=_make_knowledge_store(),
-        )
-        await retriever.retrieve("question", max_sources=5, min_confidence=0.0)
-        es.search_chunks.assert_called_once()
-
-    async def test_search_chunks_limit_matches_max_sources(self):
-        es = _make_embedding_store()
-        es.search_chunks = AsyncMock(return_value=[])
-        retriever = RAGRetriever(
-            embedding_client=_make_embedding_client(),
-            embedding_store=es,
-            knowledge_store=_make_knowledge_store(),
-        )
-        await retriever.retrieve("q", max_sources=7, min_confidence=0.0)
-        call_kwargs = es.search_chunks.call_args
-        assert call_kwargs.kwargs.get("limit") == 7 or call_kwargs[1].get("limit") == 7
-
-    async def test_also_calls_search_for_unchunked_fallback(self):
-        es = _make_embedding_store()
-        es.search_chunks = AsyncMock(return_value=[])
-        retriever = RAGRetriever(
-            embedding_client=_make_embedding_client(),
-            embedding_store=es,
-            knowledge_store=_make_knowledge_store(),
-        )
-        await retriever.retrieve("q", max_sources=5, min_confidence=0.0)
-        es.search.assert_called_once()
-
-    async def test_chunk_results_in_content_results(self):
-        chunk_row = {
-            "chunk_id": "chunk-1",
-            "text": "The chunk text",
-            "chunk_index": 0,
-            "content_id": "content-1",
-            "url": "https://example.com/article",
-            "title": "Article",
-            "source_type": "article",
-            "tags": [],
-            "ingested_at": "2026-01-01",
-            "similarity": 0.95,
-        }
-        es = _make_embedding_store()
-        es.search_chunks = AsyncMock(return_value=[chunk_row])
-        retriever = RAGRetriever(
-            embedding_client=_make_embedding_client(),
-            embedding_store=es,
-            knowledge_store=_make_knowledge_store(),
-        )
-        ctx = await retriever.retrieve("q", max_sources=5, min_confidence=0.0)
-        assert len(ctx.content_results) >= 1
-        assert ctx.content_results[0]["url"] == "https://example.com/article"
-```
-
-- [ ] **Step 2: Run tests to verify they fail**
-
-Run: `uv run pytest tests/test_rag_retriever.py::TestRetrieveChunkAware -v`
-Expected: FAIL — `search_chunks` is not called.
-
-- [ ] **Step 3: Update RAGRetriever to use chunks**
-
-In `src/knowledge_service/stores/rag.py`, replace Step 2 (content search, line 47-50):
+In `tests/test_rag_retriever.py`, update `_CONTENT_ROW` to match the new `search()` return shape:
 
 ```python
-        # Step 2: Chunk-level content search (primary)
-        chunk_results = await self._embedding_store.search_chunks(
-            query_embedding=embedding, limit=max_sources
-        )
-
-        # Step 2b: Fallback content search for un-chunked documents
-        remaining = max_sources - len(chunk_results)
-        content_results = []
-        if remaining > 0:
-            content_rows = await self._embedding_store.search(
-                query_embedding=embedding, limit=remaining
-            )
-            # Exclude content IDs already covered by chunks
-            seen_ids = {str(r["content_id"]) for r in chunk_results}
-            content_results = [r for r in content_rows if str(r["id"]) not in seen_ids]
-
-        # Merge: chunk results + unchunked content results
-        all_content = list(chunk_results) + content_results
+_CONTENT_ROW = {
+    "id": "chunk-uuid-1",
+    "chunk_text": "Relevant text about the topic",
+    "chunk_index": 0,
+    "content_id": "content-uuid-1",
+    "url": "https://example.com/article",
+    "title": "Test Article",
+    "summary": "A summary",
+    "source_type": "article",
+    "tags": ["health"],
+    "ingested_at": "2026-03-18T10:00:00Z",
+    "similarity": 0.92,
+}
 ```
 
-Then update all downstream references from `content_results` to `all_content` (line 98):
-
-```python
-        return RetrievalContext(
-            content_results=all_content,
-            ...
-        )
-```
-
-- [ ] **Step 4: Run chunk-aware RAG tests**
-
-Run: `uv run pytest tests/test_rag_retriever.py::TestRetrieveChunkAware -v`
-Expected: All PASS
-
-- [ ] **Step 5: Run all RAG tests**
+- [ ] **Step 2: Run existing RAG tests**
 
 Run: `uv run pytest tests/test_rag_retriever.py -v`
+Expected: All PASS (the retriever accesses `row["url"]`, `row.get("title")`, etc. — all still present in the new shape). If any tests reference `row["id"]` as a content_id, update them to use `row["content_id"]`.
+
+- [ ] **Step 3: Update RAG prompt builder for chunk text**
+
+In `src/knowledge_service/clients/rag.py`, the `build_rag_prompt()` function currently uses `row.get("summary")` for context. Update to prefer `chunk_text`:
+
+```python
+    if context.content_results:
+        sections.append("## Relevant Content")
+        for row in context.content_results:
+            title = row.get("title", "Untitled")
+            source_type = row.get("source_type", "unknown")
+            similarity = row.get("similarity", 0.0)
+            text = row.get("chunk_text") or row.get("summary") or "No content"
+            sections.append(f'- "{title}" ({source_type}, similarity: {similarity:.2f}): {text}')
+        sections.append("")
+```
+
+- [ ] **Step 4: Run all RAG tests**
+
+Run: `uv run pytest tests/test_rag_retriever.py tests/test_api_ask.py -v`
 Expected: All PASS
 
-- [ ] **Step 6: Commit**
+- [ ] **Step 5: Commit**
 
 ```bash
-git add src/knowledge_service/stores/rag.py tests/test_rag_retriever.py
-git commit -m "feat: RAGRetriever uses chunk-level search with content fallback"
+git add src/knowledge_service/stores/rag.py src/knowledge_service/clients/rag.py tests/test_rag_retriever.py
+git commit -m "feat: RAG retriever uses chunk-level search results"
 ```
 
 ---
@@ -1364,12 +1047,12 @@ Expected: All PASS
 Run: `uv run ruff check .`
 Expected: No errors
 
-- [ ] **Step 3: Run formatter check**
+- [ ] **Step 3: Run formatter**
 
 Run: `uv run ruff format --check .`
-Expected: No formatting issues (or run `uv run ruff format .` to fix)
+Expected: No issues (or run `uv run ruff format .` to fix)
 
-- [ ] **Step 4: Final commit if any lint fixes**
+- [ ] **Step 4: Commit if any fixes**
 
 ```bash
 git add -A
@@ -1378,21 +1061,19 @@ git commit -m "chore: lint fixes"
 
 ---
 
-## Task 9: Update EmbeddingStore docstring
+## Task 9: Update docstrings
 
 **Files:**
 - Modify: `src/knowledge_service/stores/embedding.py:1-26`
 
-- [ ] **Step 1: Update module docstring to document content_chunks table**
-
-Update the module docstring at the top of `stores/embedding.py` to add the `content_chunks` table:
+- [ ] **Step 1: Update EmbeddingStore module docstring**
 
 ```python
 """EmbeddingStore: asyncpg-backed store for pgvector semantic similarity search.
 
 Manages three tables (schema from migrations/):
 
-    content:
+    content_metadata:
         id              UUID PRIMARY KEY DEFAULT gen_random_uuid()
         url             TEXT UNIQUE
         title           TEXT
@@ -1400,15 +1081,14 @@ Manages three tables (schema from migrations/):
         raw_text        TEXT
         source_type     TEXT NOT NULL
         tags            TEXT[] DEFAULT '{}'
-        ingested_at     TIMESTAMPTZ NOT NULL DEFAULT now()
-        embedding       vector(768)
         metadata        JSONB DEFAULT '{}'
+        ingested_at     TIMESTAMPTZ NOT NULL DEFAULT now()
 
-    content_chunks:
-        chunk_id        UUID PRIMARY KEY DEFAULT gen_random_uuid()
-        content_id      UUID NOT NULL REFERENCES content(id) ON DELETE CASCADE
+    content (chunks):
+        id              UUID PRIMARY KEY DEFAULT gen_random_uuid()
+        content_id      UUID NOT NULL REFERENCES content_metadata(id) ON DELETE CASCADE
         chunk_index     INTEGER NOT NULL
-        text            TEXT NOT NULL
+        chunk_text      TEXT NOT NULL
         embedding       vector(768)
         char_start      INTEGER
         char_end        INTEGER
@@ -1421,8 +1101,8 @@ Manages three tables (schema from migrations/):
         embedding       vector(768)
         created_at      TIMESTAMPTZ NOT NULL DEFAULT now()
 
-All tables have HNSW indexes on (embedding::halfvec(768)) using halfvec_cosine_ops.
-Queries must cast to halfvec to exploit those indexes.
+content and entity_embeddings have HNSW indexes on (embedding::halfvec(768))
+using halfvec_cosine_ops. Queries must cast to halfvec to exploit those indexes.
 """
 ```
 
@@ -1430,5 +1110,5 @@ Queries must cast to halfvec to exploit those indexes.
 
 ```bash
 git add src/knowledge_service/stores/embedding.py
-git commit -m "docs: update EmbeddingStore docstring for content_chunks table"
+git commit -m "docs: update EmbeddingStore docstring for new schema"
 ```
