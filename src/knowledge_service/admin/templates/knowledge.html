@@ -68,20 +68,18 @@
     <table class="w-full text-sm">
         <thead><tr class="text-gray-400 border-b border-gray-700"><th class="text-left p-3">Subject</th><th class="text-left p-3">Predicate</th><th class="text-left p-3">Object</th><th class="text-left p-3">Confidence</th><th class="text-left p-3">Type</th></tr></thead>
         <tbody>
-            <template x-if="triples && triples.length > 0">
-                <template x-for="t in triples" :key="t.subject + t.predicate + t.object">
-                    <tr class="border-b border-gray-700/50 hover:bg-gray-700/30 cursor-pointer" @click="window.location.href = '/admin/knowledge/entity/' + encodeURIComponent(t.subject)">
-                        <td class="p-3 text-blue-400 truncate max-w-xs" x-text="t.subject.split('/').pop()"></td>
-                        <td class="p-3 text-gray-300 truncate max-w-xs" x-text="t.predicate.split('/').pop()"></td>
-                        <td class="p-3 text-gray-300 truncate max-w-xs" x-text="t.object.split('/').pop() || t.object"></td>
-                        <td class="p-3"><span class="px-2 py-1 rounded text-xs" :class="t.confidence >= 0.7 ? 'bg-green-900 text-green-300' : t.confidence >= 0.3 ? 'bg-yellow-900 text-yellow-300' : 'bg-red-900 text-red-300'" x-text="t.confidence.toFixed(2)"></span></td>
-                        <td class="p-3 text-gray-400" x-text="t.knowledge_type"></td>
-                    </tr>
-                </template>
+            <template x-for="t in (triples || [])" :key="t.subject + t.predicate + t.object">
+                <tr class="border-b border-gray-700/50 hover:bg-gray-700/30 cursor-pointer" @click="window.location.href = '/admin/knowledge/entity/' + encodeURIComponent(t.subject)">
+                    <td class="p-3 text-blue-400 truncate max-w-xs" x-text="decodeURIComponent(t.subject.split('/').pop())"></td>
+                    <td class="p-3 text-gray-300 truncate max-w-xs" x-text="decodeURIComponent(t.predicate.split('/').pop())"></td>
+                    <td class="p-3 text-gray-300 truncate max-w-xs" x-text="decodeURIComponent(t.object.split('/').pop() || t.object)"></td>
+                    <td class="p-3"><span class="px-2 py-1 rounded text-xs" :class="t.confidence >= 0.7 ? 'bg-green-900 text-green-300' : t.confidence >= 0.3 ? 'bg-yellow-900 text-yellow-300' : 'bg-red-900 text-red-300'" x-text="t.confidence.toFixed(2)"></span></td>
+                    <td class="p-3 text-gray-400" x-text="t.knowledge_type"></td>
+                </tr>
             </template>
-            <template x-if="triples && triples.length === 0">
-                <tr><td colspan="5" class="p-6 text-center text-gray-500">No triples found.</td></tr>
-            </template>
+            <tr x-show="triples && triples.length === 0">
+                <td colspan="5" class="p-6 text-center text-gray-500">No triples found.</td>
+            </tr>
         </tbody>
     </table>
     <div class="p-3 flex justify-between items-center border-t border-gray-700" x-show="total > limit">

@@ -7,18 +7,16 @@
     <table class="w-full text-sm">
         <thead><tr class="text-gray-400 border-b border-gray-700"><th class="text-left p-3">Title</th><th class="text-left p-3">URL</th><th class="text-left p-3">Source Type</th><th class="text-left p-3">Tags</th><th class="text-left p-3">Ingested</th></tr></thead>
         <tbody>
-            <template x-if="items && items.length > 0">
-                <template x-for="item in items" :key="item.id">
-                    <tr class="border-b border-gray-700/50 hover:bg-gray-700/30 cursor-pointer" @click="window.location.href = '/admin/knowledge/content/' + item.id">
-                        <td class="p-3 text-white" x-text="item.title || '(untitled)'"></td>
-                        <td class="p-3 text-blue-400 truncate max-w-xs" x-text="item.url"></td>
-                        <td class="p-3 text-gray-300" x-text="item.source_type"></td>
-                        <td class="p-3"><template x-for="tag in (item.tags || [])" :key="tag"><span class="bg-gray-700 px-2 py-0.5 rounded text-xs mr-1" x-text="tag"></span></template></td>
-                        <td class="p-3 text-gray-400" x-text="new Date(item.ingested_at).toLocaleDateString()"></td>
-                    </tr>
-                </template>
+            <template x-for="item in (items || [])" :key="item.id">
+                <tr class="border-b border-gray-700/50 hover:bg-gray-700/30 cursor-pointer" @click="window.location.href = '/admin/knowledge/content/' + item.id">
+                    <td class="p-3 text-white" x-text="item.title || '(untitled)'"></td>
+                    <td class="p-3 text-blue-400 truncate max-w-xs" x-text="item.url"></td>
+                    <td class="p-3 text-gray-300" x-text="item.source_type"></td>
+                    <td class="p-3"><template x-for="tag in (item.tags || [])" :key="tag"><span class="bg-gray-700 px-2 py-0.5 rounded text-xs mr-1" x-text="tag"></span></template></td>
+                    <td class="p-3 text-gray-400" x-text="new Date(item.ingested_at).toLocaleDateString()"></td>
+                </tr>
             </template>
-            <template x-if="items && items.length === 0"><tr><td colspan="5" class="p-6 text-center text-gray-500">No content items yet.</td></tr></template>
+            <tr x-show="items && items.length === 0"><td colspan="5" class="p-6 text-center text-gray-500">No content items yet.</td></tr>
         </tbody>
     </table>
 </div>
