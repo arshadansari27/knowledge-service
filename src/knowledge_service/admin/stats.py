@@ -161,6 +161,7 @@ async def get_content_items(request: Request) -> list[dict]:
 async def browse_triples(
     request: Request,
     q: str | None = Query(None, description="Text search across subject/predicate/object"),
+    subject: str | None = Query(None, description="Exact subject URI filter"),
     knowledge_type: str | None = Query(None, description="Filter by knowledge type"),
     min_confidence: float = Query(0.0, ge=0.0, le=1.0),
     max_confidence: float = Query(1.0, ge=0.0, le=1.0),
@@ -185,7 +186,10 @@ async def browse_triples(
         )
 
     filters = []
-    if q:
+    if subject:
+        safe_subj = _sanitize_sparql_string(subject)
+        filters.append(f'FILTER(STR(?s) = "{safe_subj}")')
+    elif q:
         safe_q = _sanitize_sparql_string(q)
         filters.append(
             f'FILTER(CONTAINS(LCASE(STR(?s)), LCASE("{safe_q}")) || '
