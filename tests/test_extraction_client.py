@@ -165,6 +165,13 @@ class TestUriNormalisation:
         assert result["object"] == "a value with spaces"
 
 
+def test_extraction_prompt_includes_all_seven_types():
+    from knowledge_service.clients.llm import _build_extraction_prompt
+    prompt = _build_extraction_prompt("Some text", title=None, source_type=None)
+    for type_name in ("Claim", "Fact", "Relationship", "Event", "Entity", "TemporalState", "Conclusion"):
+        assert type_name in prompt, f"Missing knowledge type '{type_name}' in extraction prompt"
+
+
 class TestNoAuth:
     async def test_no_auth_header_when_key_empty(self, httpx_mock):
         httpx_mock.add_response(

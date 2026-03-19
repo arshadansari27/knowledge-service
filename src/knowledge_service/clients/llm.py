@@ -119,10 +119,17 @@ def _build_extraction_prompt(text: str, title: str | None, source_type: str | No
     return f"""{context}Extract structured knowledge from the text below.
 Return ONLY a JSON object: {{"items": [...]}}
 
-Each item must have knowledge_type (Claim, Fact, or Relationship) and:
-- Claim/Fact/Relationship: subject, predicate, object (short snake_case identifiers), confidence (0.0-1.0)
-- Use Claim for uncertain assertions (confidence < 0.9), Fact for high-confidence verifiable statements (confidence >= 0.9)
-- Extract 3-8 items. If nothing found, return {{"items": []}}
+Each item must have a knowledge_type field. Supported types and required fields:
+- Claim: subject, predicate, object (short snake_case), confidence (0.0-0.89)
+- Fact: subject, predicate, object (short snake_case), confidence (0.9-1.0) for verified facts
+- Relationship: subject, predicate, object, confidence
+- Event: subject (URI/identifier), occurred_at (YYYY-MM-DD), confidence, properties (dict)
+- Entity: uri, rdf_type (e.g. "schema:Person"), label, properties (dict), confidence
+- TemporalState: subject, property, value, valid_from (YYYY-MM-DD), valid_until (YYYY-MM-DD), confidence
+- Conclusion: concludes (text), derived_from (list of identifiers), inference_method, confidence
+
+Use Claim for uncertain assertions, Fact for high-confidence verifiable statements.
+Extract 3-8 items. If nothing found, return {{"items": []}}
 
 Text:
 ---
