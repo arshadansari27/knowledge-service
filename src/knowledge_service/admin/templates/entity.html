@@ -12,7 +12,7 @@
     <table class="w-full text-sm">
         <thead><tr class="text-gray-400 border-b border-gray-700"><th class="text-left p-3">Predicate</th><th class="text-left p-3">Object</th><th class="text-left p-3">Confidence</th><th class="text-left p-3">Type</th></tr></thead>
         <tbody>
-            <template x-for="t in (triples || [])" :key="t.predicate + t.object">
+            <template x-for="(t, idx) in (triples || [])" :key="idx">
                 <tr class="border-b border-gray-700/50 hover:bg-gray-700/30">
                     <td class="p-3 text-gray-300" x-text="decodeURIComponent(t.predicate.split('/').pop())"></td>
                     <td class="p-3">
