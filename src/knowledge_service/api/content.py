@@ -7,15 +7,12 @@ import json
 
 from fastapi import APIRouter, Request
 
+from knowledge_service._utils import _is_uri
 from knowledge_service.config import settings
 from knowledge_service.models import ContentRequest, ContentResponse, expand_to_triples
 from knowledge_service.stores.provenance import ProvenanceStore
 
 router = APIRouter()
-
-
-def _is_uri(value: str) -> bool:
-    return value.startswith(("http://", "https://", "urn:"))
 
 
 async def _resolve_labels(item, entity_resolver) -> tuple[int, object]:

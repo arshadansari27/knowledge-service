@@ -320,25 +320,6 @@ class SearchResult(BaseModel):
     ingested_at: datetime
 
 
-class KnowledgeResult(BaseModel):
-    subject: str
-    predicate: str
-    object: str
-    confidence: float
-    knowledge_type: str
-    valid_from: str | None = None
-    valid_until: str | None = None
-    provenance: list[dict] = []
-
-
-class ContradictionResponse(BaseModel):
-    claim_a: dict
-    claim_b: dict
-    contradiction_probability: float
-    provenance_a: list[dict] = []
-    provenance_b: list[dict] = []
-
-
 class HealthResponse(BaseModel):
     status: str
     components: dict[str, str]
