@@ -136,6 +136,7 @@ class TestFindOppositePredContradictions:
         )
         assert len(results) == 1
         assert results[0]["predicate_in_store"] == "http://ks/increases"
+        assert results[0]["confidence"] == pytest.approx(0.8)
 
     def test_no_false_positives_when_no_opposite_stored(self):
         store = KnowledgeStore(data_dir=None)

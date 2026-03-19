@@ -416,10 +416,7 @@ class KnowledgeStore:
         results = []
         for solution in query_result:
             p_term = solution["p_stored"]
-            try:
-                conf_term = solution["conf"]
-            except Exception:
-                conf_term = None
+            conf_term = solution["conf"]
             results.append({
                 "predicate_in_store": p_term.value if hasattr(p_term, "value") else str(p_term),
                 "confidence": float(conf_term.value) if conf_term else None,
