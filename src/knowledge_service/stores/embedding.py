@@ -89,6 +89,49 @@ class EmbeddingStore:
             )
         return str(row["id"])
 
+    # ------------------------------------------------------------------
+    # Content (chunks) table operations
+    # ------------------------------------------------------------------
+
+    async def delete_chunks(self, content_id: str) -> None:
+        """Delete all chunks for a given content_id."""
+        async with self._pool.acquire() as conn:
+            await conn.execute(
+                "DELETE FROM content WHERE content_id = $1", content_id,
+            )
+
+    async def insert_chunks(
+        self,
+        content_id: str,
+        chunks: list[dict],
+    ) -> None:
+        """Insert chunk rows into the content table.
+
+        Each dict must have: chunk_index, chunk_text, embedding, char_start, char_end.
+        """
+        if not chunks:
+            return
+
+        sql = """
+            INSERT INTO content (
+                content_id, chunk_index, chunk_text, embedding, char_start, char_end
+            )
+            VALUES ($1, $2, $3, $4::vector(768), $5, $6)
+        """
+
+        async with self._pool.acquire() as conn:
+            for chunk in chunks:
+                embedding_str = self._vector_to_str(chunk["embedding"])
+                await conn.execute(
+                    sql,
+                    content_id,
+                    chunk["chunk_index"],
+                    chunk["chunk_text"],
+                    embedding_str,
+                    chunk["char_start"],
+                    chunk["char_end"],
+                )
+
     async def search(
         self,
         query_embedding: list[float],

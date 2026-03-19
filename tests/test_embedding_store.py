@@ -142,6 +142,61 @@ class TestSearch:
         assert 42 in args
 
 
+class TestDeleteChunks:
+    async def test_calls_execute_with_delete(self, store, mock_pool):
+        _, conn = mock_pool
+        conn.execute.return_value = "DELETE 3"
+        await store.delete_chunks("content-uuid-123")
+        conn.execute.assert_called_once()
+        sql = conn.execute.call_args[0][0]
+        assert "DELETE FROM content" in sql
+        assert "content_id" in sql
+
+    async def test_passes_content_id_param(self, store, mock_pool):
+        _, conn = mock_pool
+        conn.execute.return_value = "DELETE 0"
+        await store.delete_chunks("my-uuid")
+        args = conn.execute.call_args[0]
+        assert "my-uuid" in args
+
+
+class TestInsertChunks:
+    async def test_inserts_multiple_chunks(self, store, mock_pool):
+        _, conn = mock_pool
+        conn.execute.return_value = "INSERT 0 1"
+        chunks = [
+            {"chunk_index": 0, "chunk_text": "First chunk", "embedding": [0.1] * 768, "char_start": 0, "char_end": 100},
+            {"chunk_index": 1, "chunk_text": "Second chunk", "embedding": [0.2] * 768, "char_start": 80, "char_end": 200},
+        ]
+        await store.insert_chunks("content-uuid-123", chunks)
+        assert conn.execute.call_count == 2
+
+    async def test_sql_targets_content_table(self, store, mock_pool):
+        _, conn = mock_pool
+        conn.execute.return_value = "INSERT 0 1"
+        chunks = [
+            {"chunk_index": 0, "chunk_text": "chunk", "embedding": [0.1] * 768, "char_start": 0, "char_end": 50},
+        ]
+        await store.insert_chunks("uuid-1", chunks)
+        sql = conn.execute.call_args[0][0]
+        assert "INSERT INTO content" in sql
+
+    async def test_passes_content_id(self, store, mock_pool):
+        _, conn = mock_pool
+        conn.execute.return_value = "INSERT 0 1"
+        chunks = [
+            {"chunk_index": 0, "chunk_text": "chunk", "embedding": [0.1] * 768, "char_start": 0, "char_end": 50},
+        ]
+        await store.insert_chunks("my-content-id", chunks)
+        args = conn.execute.call_args[0]
+        assert "my-content-id" in args
+
+    async def test_no_chunks_no_execute(self, store, mock_pool):
+        _, conn = mock_pool
+        await store.insert_chunks("uuid-1", [])
+        conn.execute.assert_not_called()
+
+
 class TestSearchEntities:
     async def test_search_entities_returns_matches(self, store, mock_pool):
         _, conn = mock_pool
