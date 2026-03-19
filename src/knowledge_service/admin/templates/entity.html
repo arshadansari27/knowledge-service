@@ -12,18 +12,16 @@
     <table class="w-full text-sm">
         <thead><tr class="text-gray-400 border-b border-gray-700"><th class="text-left p-3">Predicate</th><th class="text-left p-3">Object</th><th class="text-left p-3">Confidence</th><th class="text-left p-3">Type</th></tr></thead>
         <tbody>
-            <template x-if="triples">
-                <template x-for="t in triples" :key="t.predicate + t.object">
-                    <tr class="border-b border-gray-700/50 hover:bg-gray-700/30">
-                        <td class="p-3 text-gray-300" x-text="t.predicate.split('/').pop()"></td>
-                        <td class="p-3">
-                            <template x-if="t.object.startsWith('http')"><a :href="'/admin/knowledge/entity/' + encodeURIComponent(t.object)" class="text-blue-400 hover:underline" x-text="t.object.split('/').pop()"></a></template>
-                            <template x-if="!t.object.startsWith('http')"><span class="text-gray-300" x-text="t.object"></span></template>
-                        </td>
-                        <td class="p-3"><span class="px-2 py-1 rounded text-xs" :class="t.confidence >= 0.7 ? 'bg-green-900 text-green-300' : t.confidence >= 0.3 ? 'bg-yellow-900 text-yellow-300' : 'bg-red-900 text-red-300'" x-text="t.confidence.toFixed(2)"></span></td>
-                        <td class="p-3 text-gray-400" x-text="t.knowledge_type"></td>
-                    </tr>
-                </template>
+            <template x-for="t in (triples || [])" :key="t.predicate + t.object">
+                <tr class="border-b border-gray-700/50 hover:bg-gray-700/30">
+                    <td class="p-3 text-gray-300" x-text="decodeURIComponent(t.predicate.split('/').pop())"></td>
+                    <td class="p-3">
+                        <template x-if="t.object.startsWith('http')"><a :href="'/admin/knowledge/entity/' + encodeURIComponent(t.object)" class="text-blue-400 hover:underline" x-text="decodeURIComponent(t.object.split('/').pop())"></a></template>
+                        <template x-if="!t.object.startsWith('http')"><span class="text-gray-300" x-text="t.object"></span></template>
+                    </td>
+                    <td class="p-3"><span class="px-2 py-1 rounded text-xs" :class="t.confidence >= 0.7 ? 'bg-green-900 text-green-300' : t.confidence >= 0.3 ? 'bg-yellow-900 text-yellow-300' : 'bg-red-900 text-red-300'" x-text="t.confidence.toFixed(2)"></span></td>
+                    <td class="p-3 text-gray-400" x-text="t.knowledge_type"></td>
+                </tr>
             </template>
         </tbody>
     </table>

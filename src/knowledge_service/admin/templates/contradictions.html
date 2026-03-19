@@ -5,45 +5,41 @@
 <div x-data="{ contradictions: null, loading: true }"
      x-init="fetch('/api/knowledge/contradictions').then(r => r.json()).then(d => { contradictions = d; loading = false; })">
     <template x-if="loading"><div class="text-gray-400 animate-pulse">Loading contradictions...</div></template>
-    <template x-if="!loading && contradictions.length === 0">
-        <div class="bg-gray-800 rounded-lg p-8 text-center">
-            <p class="text-gray-400 text-lg">No contradictions detected.</p>
-            <p class="text-gray-500 text-sm mt-2">Contradictions appear when the knowledge graph contains conflicting claims.</p>
-        </div>
-    </template>
-    <template x-if="!loading && contradictions.length > 0">
-        <div class="space-y-4">
-            <template x-for="(c, i) in contradictions" :key="i">
-                <div class="bg-gray-800 rounded-lg p-6">
-                    <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
-                        <div class="border border-gray-700 rounded-lg p-4">
-                            <h4 class="text-sm text-gray-400 mb-2">Claim A</h4>
-                            <p class="text-white mb-1">
-                                <a :href="'/admin/knowledge/entity/' + encodeURIComponent(c.claim_a.subject)" class="text-blue-400 hover:underline" x-text="c.claim_a.subject.split('/').pop()"></a>
-                                <span class="text-gray-400 mx-1" x-text="c.claim_a.predicate.split('/').pop()"></span>
-                                <span class="text-gray-200" x-text="c.claim_a.object.split('/').pop() || c.claim_a.object"></span>
-                            </p>
-                            <div class="mt-2"><div class="flex justify-between text-xs mb-1"><span class="text-gray-400">Confidence</span><span x-text="c.claim_a.confidence.toFixed(2)"></span></div>
-                            <div class="w-full bg-gray-700 rounded-full h-2"><div class="bg-blue-500 h-2 rounded-full" :style="'width: ' + (c.claim_a.confidence * 100) + '%'"></div></div></div>
-                        </div>
-                        <div class="border border-gray-700 rounded-lg p-4">
-                            <h4 class="text-sm text-gray-400 mb-2">Claim B</h4>
-                            <p class="text-white mb-1">
-                                <a :href="'/admin/knowledge/entity/' + encodeURIComponent(c.claim_b.subject)" class="text-blue-400 hover:underline" x-text="c.claim_b.subject.split('/').pop()"></a>
-                                <span class="text-gray-400 mx-1" x-text="c.claim_b.predicate.split('/').pop()"></span>
-                                <span class="text-gray-200" x-text="c.claim_b.object.split('/').pop() || c.claim_b.object"></span>
-                            </p>
-                            <div class="mt-2"><div class="flex justify-between text-xs mb-1"><span class="text-gray-400">Confidence</span><span x-text="c.claim_b.confidence.toFixed(2)"></span></div>
-                            <div class="w-full bg-gray-700 rounded-full h-2"><div class="bg-orange-500 h-2 rounded-full" :style="'width: ' + (c.claim_b.confidence * 100) + '%'"></div></div></div>
-                        </div>
+    <div x-show="!loading && contradictions && contradictions.length === 0" class="bg-gray-800 rounded-lg p-8 text-center">
+        <p class="text-gray-400 text-lg">No contradictions detected.</p>
+        <p class="text-gray-500 text-sm mt-2">Contradictions appear when the knowledge graph contains conflicting claims.</p>
+    </div>
+    <div class="space-y-4" x-show="!loading && contradictions && contradictions.length > 0">
+        <template x-for="(c, i) in (contradictions || [])" :key="i">
+            <div class="bg-gray-800 rounded-lg p-6">
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <div class="border border-gray-700 rounded-lg p-4">
+                        <h4 class="text-sm text-gray-400 mb-2">Claim A</h4>
+                        <p class="text-white mb-1">
+                            <a :href="'/admin/knowledge/entity/' + encodeURIComponent(c.claim_a.subject)" class="text-blue-400 hover:underline" x-text="decodeURIComponent(c.claim_a.subject.split('/').pop())"></a>
+                            <span class="text-gray-400 mx-1" x-text="decodeURIComponent(c.claim_a.predicate.split('/').pop())"></span>
+                            <span class="text-gray-200" x-text="decodeURIComponent(c.claim_a.object.split('/').pop()) || c.claim_a.object"></span>
+                        </p>
+                        <div class="mt-2"><div class="flex justify-between text-xs mb-1"><span class="text-gray-400">Confidence</span><span x-text="c.claim_a.confidence.toFixed(2)"></span></div>
+                        <div class="w-full bg-gray-700 rounded-full h-2"><div class="bg-blue-500 h-2 rounded-full" :style="'width: ' + (c.claim_a.confidence * 100) + '%'"></div></div></div>
                     </div>
-                    <div class="mt-3 text-center">
-                        <span class="text-sm text-gray-400">Contradiction probability: </span>
-                        <span class="text-sm font-bold" :class="c.contradiction_probability >= 0.5 ? 'text-red-400' : 'text-yellow-400'" x-text="(c.contradiction_probability * 100).toFixed(1) + '%'"></span>
+                    <div class="border border-gray-700 rounded-lg p-4">
+                        <h4 class="text-sm text-gray-400 mb-2">Claim B</h4>
+                        <p class="text-white mb-1">
+                            <a :href="'/admin/knowledge/entity/' + encodeURIComponent(c.claim_b.subject)" class="text-blue-400 hover:underline" x-text="decodeURIComponent(c.claim_b.subject.split('/').pop())"></a>
+                            <span class="text-gray-400 mx-1" x-text="decodeURIComponent(c.claim_b.predicate.split('/').pop())"></span>
+                            <span class="text-gray-200" x-text="decodeURIComponent(c.claim_b.object.split('/').pop()) || c.claim_b.object"></span>
+                        </p>
+                        <div class="mt-2"><div class="flex justify-between text-xs mb-1"><span class="text-gray-400">Confidence</span><span x-text="c.claim_b.confidence.toFixed(2)"></span></div>
+                        <div class="w-full bg-gray-700 rounded-full h-2"><div class="bg-orange-500 h-2 rounded-full" :style="'width: ' + (c.claim_b.confidence * 100) + '%'"></div></div></div>
                     </div>
                 </div>
-            </template>
-        </div>
-    </template>
+                <div class="mt-3 text-center">
+                    <span class="text-sm text-gray-400">Contradiction probability: </span>
+                    <span class="text-sm font-bold" :class="c.contradiction_probability >= 0.5 ? 'text-red-400' : 'text-yellow-400'" x-text="(c.contradiction_probability * 100).toFixed(1) + '%'"></span>
+                </div>
+            </div>
+        </template>
+    </div>
 </div>
 {% endblock %}
