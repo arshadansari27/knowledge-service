@@ -672,3 +672,51 @@ class TestPostContentEntityResolution:
 
         # subject "cold_exposure" and object "dopamine" are non-URI labels → 2 resolved
         assert response.json()["entities_resolved"] >= 1
+
+
+# ---------------------------------------------------------------------------
+# Tests: Batch (list) input
+# ---------------------------------------------------------------------------
+
+
+class TestPostContentBatch:
+    async def test_batch_returns_list(self, client):
+        """Sending a list of ContentRequests returns a list of ContentResponses."""
+        batch = [MINIMAL_PAYLOAD, CLAIM_PAYLOAD]
+        response = await client.post("/api/content", json=batch)
+        assert response.status_code == 200
+        data = response.json()
+        assert isinstance(data, list)
+        assert len(data) == 2
+
+    async def test_batch_each_item_has_content_id(self, client):
+        batch = [MINIMAL_PAYLOAD, CLAIM_PAYLOAD]
+        response = await client.post("/api/content", json=batch)
+        data = response.json()
+        for item in data:
+            assert "content_id" in item
+            assert item["content_id"]
+
+    async def test_batch_each_item_has_triples_created(self, client):
+        batch = [CLAIM_PAYLOAD, FACT_PAYLOAD]
+        response = await client.post("/api/content", json=batch)
+        data = response.json()
+        for item in data:
+            assert "triples_created" in item
+            assert item["triples_created"] == 1
+
+    async def test_single_request_still_returns_object(self, client):
+        """Single (non-list) input still returns a single object, not a list."""
+        response = await client.post("/api/content", json=MINIMAL_PAYLOAD)
+        data = response.json()
+        assert isinstance(data, dict)
+        assert "content_id" in data
+
+    async def test_batch_validation_error_returns_422(self, client):
+        """A batch with an invalid item returns 422."""
+        batch = [
+            MINIMAL_PAYLOAD,
+            {"title": "No URL", "source_type": "article"},  # missing url
+        ]
+        response = await client.post("/api/content", json=batch)
+        assert response.status_code == 422
