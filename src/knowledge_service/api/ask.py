@@ -42,6 +42,7 @@ async def post_ask(body: AskRequest, request: Request) -> AskResponse:
     """Answer a natural language question using the knowledge base."""
     retriever = request.app.state.rag_retriever
     rag_client = request.app.state.rag_client
+    reasoning_engine = request.app.state.reasoning_engine
 
     context = await retriever.retrieve(
         body.question,
@@ -54,11 +55,11 @@ async def post_ask(body: AskRequest, request: Request) -> AskResponse:
     except Exception as exc:
         raise HTTPException(status_code=502, detail=f"LLM service error: {exc}") from exc
 
-    # Confidence: max from knowledge triples, null if none
+    # Confidence: Noisy-OR combination of triple confidences, null if none
     confidences = [
         t["confidence"] for t in context.knowledge_triples if t.get("confidence") is not None
     ]
-    confidence = max(confidences) if confidences else None
+    confidence = reasoning_engine.combine_evidence(confidences) if confidences else None
 
     # Sources: deduplicated from content results
     seen_urls: set[str] = set()

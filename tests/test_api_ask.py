@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 from httpx import ASGITransport, AsyncClient
@@ -61,7 +61,11 @@ async def client():
     app = create_app(use_lifespan=False)
     app.state.rag_retriever = _make_rag_retriever()
     app.state.rag_client = _make_rag_client()
-
+    mock_engine = MagicMock()
+    mock_engine.combine_evidence.side_effect = lambda confs: (
+        1.0 - (__import__("math").prod(1.0 - c for c in confs)) if confs else 0.0
+    )
+    app.state.reasoning_engine = mock_engine
     transport = ASGITransport(app=app)
     async with AsyncClient(
         transport=transport,
@@ -129,6 +133,7 @@ class TestPostAskLLMFailure:
         failing_client = AsyncMock()
         failing_client.answer.side_effect = Exception("LLM connection refused")
         app.state.rag_client = failing_client
+        app.state.reasoning_engine = MagicMock()
 
         transport = ASGITransport(app=app)
         async with AsyncClient(
@@ -161,6 +166,7 @@ class TestPostAskNullConfidence:
             )
         )
         app.state.rag_client = _make_rag_client()
+        app.state.reasoning_engine = MagicMock()
 
         transport = ASGITransport(app=app)
         async with AsyncClient(
@@ -203,6 +209,7 @@ class TestPostAskContradictions:
         app = create_app(use_lifespan=False)
         app.state.rag_retriever = _make_rag_retriever(context=ctx)
         app.state.rag_client = _make_rag_client()
+        app.state.reasoning_engine = MagicMock()
 
         transport = ASGITransport(app=app)
         async with AsyncClient(
@@ -215,3 +222,72 @@ class TestPostAskContradictions:
         data = response.json()
         assert len(data["contradictions"]) == 1
         assert data["contradictions"][0]["subject"] == "http://ks/s"
+
+
+class TestAskConfidence:
+    async def test_confidence_uses_noisy_or_not_max(self):
+        """With two triples at 0.7 and 0.6, confidence should be ~0.88 (Noisy-OR), not 0.7."""
+        context = RetrievalContext(
+            content_results=[],
+            knowledge_triples=[
+                {
+                    "subject": "s",
+                    "predicate": "p",
+                    "object": "o",
+                    "confidence": 0.7,
+                    "knowledge_type": "Claim",
+                    "valid_from": None,
+                    "valid_until": None,
+                },
+                {
+                    "subject": "s",
+                    "predicate": "p",
+                    "object": "o",
+                    "confidence": 0.6,
+                    "knowledge_type": "Claim",
+                    "valid_from": None,
+                    "valid_until": None,
+                },
+            ],
+            contradictions=[],
+            entities_found=[],
+        )
+        app = create_app(use_lifespan=False)
+        app.state.rag_retriever = _make_rag_retriever(context)
+        app.state.rag_client = _make_rag_client()
+
+        from knowledge_service.reasoning.engine import ReasoningEngine
+
+        app.state.reasoning_engine = ReasoningEngine("src/knowledge_service/reasoning/rules")
+
+        transport = ASGITransport(app=app)
+        async with AsyncClient(
+            transport=transport,
+            base_url="http://test",
+            cookies={"ks_session": make_test_session_cookie()},
+        ) as c:
+            response = await c.post("/api/ask", json={"question": "test?"})
+
+        data = response.json()
+        assert data["confidence"] is not None
+        # Noisy-OR(0.7, 0.6) = 1 - (0.3 * 0.4) = 0.88
+        assert abs(data["confidence"] - 0.88) < 0.01, f"Expected ~0.88, got {data['confidence']}"
+
+    async def test_confidence_is_none_when_no_triples(self):
+        context = RetrievalContext(
+            content_results=[], knowledge_triples=[], contradictions=[], entities_found=[]
+        )
+        app = create_app(use_lifespan=False)
+        app.state.rag_retriever = _make_rag_retriever(context)
+        app.state.rag_client = _make_rag_client()
+        app.state.reasoning_engine = MagicMock()
+
+        transport = ASGITransport(app=app)
+        async with AsyncClient(
+            transport=transport,
+            base_url="http://test",
+            cookies={"ks_session": make_test_session_cookie()},
+        ) as c:
+            response = await c.post("/api/ask", json={"question": "test?"})
+
+        assert response.json()["confidence"] is None
