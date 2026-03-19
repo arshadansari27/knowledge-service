@@ -8,12 +8,22 @@ from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse
 from pydantic import ValidationError
 
+from langchain_text_splitters import RecursiveCharacterTextSplitter
+
 from knowledge_service._utils import _is_uri
 from knowledge_service.api._ingest import process_triple
 from knowledge_service.config import settings
 from knowledge_service.models import ContentRequest, ContentResponse, expand_to_triples
 
 router = APIRouter()
+
+_CHUNK_SIZE = 4000
+_CHUNK_OVERLAP = 200
+_splitter = RecursiveCharacterTextSplitter(
+    chunk_size=_CHUNK_SIZE,
+    chunk_overlap=_CHUNK_OVERLAP,
+    separators=["\n\n", "\n", ". ", " ", ""],
+)
 
 
 async def _resolve_labels(item, entity_resolver) -> tuple[int, object]:
@@ -57,21 +67,53 @@ async def _process_one_content_request(body: ContentRequest, request: Request) -
 
         embedding_store = EmbeddingStore(pg_pool)
 
-    # Step 1: Generate embedding for the content
-    embed_text = body.raw_text or body.summary or body.title
-    embedding = await embedding_client.embed(embed_text)
-
-    # Step 2: Upsert content row in PostgreSQL
-    content_id = await embedding_store.insert_content(
+    # Step 1: Upsert content metadata
+    content_id = await embedding_store.insert_content_metadata(
         url=body.url,
         title=body.title,
         summary=body.summary or "",
         raw_text=body.raw_text or "",
         source_type=body.source_type,
         tags=body.tags,
-        embedding=embedding,
         metadata=body.metadata,
     )
+
+    # Step 2: Always chunk and embed
+    text = body.raw_text or body.summary or body.title
+    if len(text) >= _CHUNK_SIZE:
+        chunks_text = _splitter.split_text(text)
+    else:
+        chunks_text = [text]
+
+    # Track char offsets
+    chunk_records: list[dict] = []
+    search_start = 0
+    for i, ct in enumerate(chunks_text):
+        char_start = text.find(ct[:100], search_start)
+        if char_start == -1:
+            char_start = search_start
+        char_end = char_start + len(ct)
+        search_start = max(search_start, char_start + 1)
+        chunk_records.append(
+            {
+                "chunk_index": i,
+                "chunk_text": ct,
+                "char_start": char_start,
+                "char_end": char_end,
+            }
+        )
+
+    # Embed chunks (batch for multiple, single for one)
+    if len(chunk_records) == 1:
+        embeddings = [await embedding_client.embed(chunk_records[0]["chunk_text"])]
+    else:
+        embeddings = await embedding_client.embed_batch([c["chunk_text"] for c in chunk_records])
+    for rec, emb in zip(chunk_records, embeddings):
+        rec["embedding"] = emb
+
+    # Delete old chunks (re-ingestion) and insert new
+    await embedding_store.delete_chunks(content_id)
+    await embedding_store.insert_chunks(content_id, chunk_records)
 
     # Step 2.5: Auto-extract knowledge from raw_text if none provided
     if not body.knowledge and body.raw_text:
