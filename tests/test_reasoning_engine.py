@@ -66,3 +66,29 @@ class TestInfer:
             claims=claims,
         )
         assert len(results) == 0 or results[0].probability == pytest.approx(0.0)
+
+
+class TestRulesLoading:
+    def test_base_rules_loaded(self, engine):
+        """Engine must have base rules loaded."""
+        assert "supported" in engine._base_rules
+
+    def test_all_rule_files_loaded(self, engine):
+        """Engine should load knowledge_types and temporal rules too."""
+        assert hasattr(engine, "_all_rules")
+        assert len(engine._all_rules) > len(engine._base_rules)
+        # Must not crash with all rules loaded
+        try:
+            engine.infer("supported(a, b, c)", claims=[("a", "b", "c", 0.5)])
+        except Exception as exc:
+            pytest.fail(f"infer() raised unexpectedly with all rules loaded: {exc}")
+
+
+class TestFallbackLogging:
+    def test_fallback_logs_warning_on_problog_failure(self, engine, caplog):
+        import logging
+        with caplog.at_level(logging.WARNING, logger="knowledge_service.reasoning.engine"):
+            # Force fallback by passing a query ProbLog can't parse
+            engine.infer("unsupported_predicate(??invalid syntax??)", claims=[("a","b","c",0.5)])
+        assert any("fallback" in r.message.lower() or "problog" in r.message.lower()
+                   for r in caplog.records)

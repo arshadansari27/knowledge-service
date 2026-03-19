@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import math
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -9,6 +10,8 @@ from typing import Sequence
 
 from problog import get_evaluatable
 from problog.program import PrologString
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -38,6 +41,9 @@ class ReasoningEngine:
     def __init__(self, rules_dir: str | Path) -> None:
         self._rules_dir = Path(rules_dir)
         self._base_rules: str = self._load_rules("base.pl")
+        knowledge_type_rules = self._load_rules("knowledge_types.pl")
+        temporal_rules = self._load_rules("temporal.pl")
+        self._all_rules: str = "\n".join([self._base_rules, knowledge_type_rules, temporal_rules])
 
     # ------------------------------------------------------------------
     # Public API
@@ -89,7 +95,7 @@ class ReasoningEngine:
         if not opposites:
             return ContradictionResult(probability=0.0, involved_claims=[])
 
-        program_parts: list[str] = [self._base_rules, ""]
+        program_parts: list[str] = [self._all_rules, ""]
 
         # Emit probabilistic claim facts (4-arity to keep sources independent)
         for idx, (subj, pred, obj, conf) in enumerate(all_claims):
@@ -150,7 +156,8 @@ class ReasoningEngine:
             for term, prob in results.items():
                 if prob > contradiction_prob:
                     contradiction_prob = prob
-        except Exception:
+        except Exception as exc:
+            logger.warning("ProbLog contradiction check failed, using product fallback: %s", exc)
             # Fall back to product of confidences if ProbLog fails
             new_conf = new_claim[3]
             for subj, pred, obj, conf in existing_claims:
@@ -186,7 +193,7 @@ class ReasoningEngine:
             List of :class:`InferenceResult` ordered by probability descending.
             Returns an empty list when the query is provably false (prob 0).
         """
-        program_parts: list[str] = [self._base_rules, ""]
+        program_parts: list[str] = [self._all_rules, ""]
 
         for idx, (subj, pred, obj, conf) in enumerate(claims):
             s_atom = _to_atom(subj)
@@ -202,8 +209,8 @@ class ReasoningEngine:
         try:
             db = PrologString(program)
             raw_results = get_evaluatable().create_from(db).evaluate()
-        except Exception:
-            # Fallback: pure Python Noisy-OR for supported/3 queries
+        except Exception as exc:
+            logger.warning("ProbLog inference failed, using Python fallback: %s", exc)
             return self._fallback_infer(query, claims)
 
         results: list[InferenceResult] = []
