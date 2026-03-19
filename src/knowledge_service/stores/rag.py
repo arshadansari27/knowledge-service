@@ -5,6 +5,8 @@ from __future__ import annotations
 import asyncio
 from dataclasses import dataclass, field
 
+from knowledge_service._utils import _rdf_value_to_str
+
 
 @dataclass
 class RetrievalContext:
@@ -60,10 +62,8 @@ class RAGRetriever:
             for t in triples:
                 t["subject"] = uri
                 # Stringify pyoxigraph RDF terms so downstream consumers get plain strings
-                p = t.get("predicate")
-                o = t.get("object")
-                t["predicate"] = p.value if hasattr(p, "value") else str(p) if p else ""
-                t["object"] = o.value if hasattr(o, "value") else str(o) if o else ""
+                t["predicate"] = _rdf_value_to_str(t.get("predicate"))
+                t["object"] = _rdf_value_to_str(t.get("object"))
             all_triples.extend(triples)
 
         # Step 5: Filter by min_confidence
