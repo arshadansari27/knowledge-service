@@ -322,6 +322,8 @@ class SearchResult(BaseModel):
     source_type: str
     tags: list[str]
     ingested_at: datetime
+    chunk_text: str
+    chunk_index: int
 
 
 class HealthResponse(BaseModel):
