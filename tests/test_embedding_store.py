@@ -69,11 +69,14 @@ class TestInsertContentMetadata:
 
 
 class TestSearch:
-    async def test_search_returns_results(self, store, mock_pool):
+    async def test_search_returns_chunk_results(self, store, mock_pool):
         _, conn = mock_pool
         conn.fetch.return_value = [
             {
-                "id": "uuid1",
+                "id": "chunk-uuid-1",
+                "chunk_text": "relevant chunk text",
+                "chunk_index": 0,
+                "content_id": "metadata-uuid-1",
                 "url": "https://a.com",
                 "title": "A",
                 "summary": "S",
@@ -83,11 +86,10 @@ class TestSearch:
                 "similarity": 0.95,
             }
         ]
-        results = await store.search(
-            query_embedding=[0.1] * 768,
-            limit=10,
-        )
+        results = await store.search(query_embedding=[0.1] * 768, limit=10)
         assert len(results) == 1
+        assert results[0]["chunk_text"] == "relevant chunk text"
+        assert results[0]["content_id"] == "metadata-uuid-1"
         assert results[0]["similarity"] == 0.95
 
     async def test_search_calls_fetch(self, store, mock_pool):
@@ -96,11 +98,13 @@ class TestSearch:
         await store.search(query_embedding=[0.1] * 768, limit=5)
         conn.fetch.assert_called_once()
 
-    async def test_search_sql_contains_cosine_operator(self, store, mock_pool):
+    async def test_search_sql_joins_content_metadata(self, store, mock_pool):
         _, conn = mock_pool
         conn.fetch.return_value = []
         await store.search(query_embedding=[0.1] * 768, limit=5)
         sql = conn.fetch.call_args[0][0]
+        assert "content_metadata" in sql
+        assert "JOIN" in sql.upper()
         assert "<=>" in sql
         assert "halfvec" in sql
 
@@ -112,7 +116,6 @@ class TestSearch:
             limit=5,
             source_type="article",
         )
-        conn.fetch.assert_called_once()
         sql = conn.fetch.call_args[0][0]
         assert "source_type" in sql
 
@@ -124,11 +127,10 @@ class TestSearch:
             limit=5,
             tags=["python", "database"],
         )
-        conn.fetch.assert_called_once()
         sql = conn.fetch.call_args[0][0]
         assert "tags" in sql
 
-    async def test_search_returns_empty_list_when_no_matches(self, store, mock_pool):
+    async def test_search_returns_empty_list(self, store, mock_pool):
         _, conn = mock_pool
         conn.fetch.return_value = []
         results = await store.search(query_embedding=[0.1] * 768, limit=10)
@@ -165,8 +167,20 @@ class TestInsertChunks:
         _, conn = mock_pool
         conn.execute.return_value = "INSERT 0 1"
         chunks = [
-            {"chunk_index": 0, "chunk_text": "First chunk", "embedding": [0.1] * 768, "char_start": 0, "char_end": 100},
-            {"chunk_index": 1, "chunk_text": "Second chunk", "embedding": [0.2] * 768, "char_start": 80, "char_end": 200},
+            {
+                "chunk_index": 0,
+                "chunk_text": "First chunk",
+                "embedding": [0.1] * 768,
+                "char_start": 0,
+                "char_end": 100,
+            },
+            {
+                "chunk_index": 1,
+                "chunk_text": "Second chunk",
+                "embedding": [0.2] * 768,
+                "char_start": 80,
+                "char_end": 200,
+            },
         ]
         await store.insert_chunks("content-uuid-123", chunks)
         assert conn.execute.call_count == 2
@@ -175,7 +189,13 @@ class TestInsertChunks:
         _, conn = mock_pool
         conn.execute.return_value = "INSERT 0 1"
         chunks = [
-            {"chunk_index": 0, "chunk_text": "chunk", "embedding": [0.1] * 768, "char_start": 0, "char_end": 50},
+            {
+                "chunk_index": 0,
+                "chunk_text": "chunk",
+                "embedding": [0.1] * 768,
+                "char_start": 0,
+                "char_end": 50,
+            },
         ]
         await store.insert_chunks("uuid-1", chunks)
         sql = conn.execute.call_args[0][0]
@@ -185,7 +205,13 @@ class TestInsertChunks:
         _, conn = mock_pool
         conn.execute.return_value = "INSERT 0 1"
         chunks = [
-            {"chunk_index": 0, "chunk_text": "chunk", "embedding": [0.1] * 768, "char_start": 0, "char_end": 50},
+            {
+                "chunk_index": 0,
+                "chunk_text": "chunk",
+                "embedding": [0.1] * 768,
+                "char_start": 0,
+                "char_end": 50,
+            },
         ]
         await store.insert_chunks("my-content-id", chunks)
         args = conn.execute.call_args[0]
