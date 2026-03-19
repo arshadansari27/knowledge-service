@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import math
+from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -63,7 +65,7 @@ async def client():
     app.state.rag_client = _make_rag_client()
     mock_engine = MagicMock()
     mock_engine.combine_evidence.side_effect = lambda confs: (
-        1.0 - (__import__("math").prod(1.0 - c for c in confs)) if confs else 0.0
+        1.0 - (math.prod(1.0 - c for c in confs)) if confs else 0.0
     )
     app.state.reasoning_engine = mock_engine
     transport = ASGITransport(app=app)
@@ -258,7 +260,9 @@ class TestAskConfidence:
 
         from knowledge_service.reasoning.engine import ReasoningEngine
 
-        app.state.reasoning_engine = ReasoningEngine("src/knowledge_service/reasoning/rules")
+        app.state.reasoning_engine = ReasoningEngine(
+            Path(__file__).parent.parent / "src/knowledge_service/reasoning/rules"
+        )
 
         transport = ASGITransport(app=app)
         async with AsyncClient(
