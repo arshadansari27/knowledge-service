@@ -16,11 +16,13 @@ Manages three tables:
     content (chunks):
         id              UUID PRIMARY KEY DEFAULT gen_random_uuid()
         content_id      UUID NOT NULL REFERENCES content_metadata(id) ON DELETE CASCADE
-        chunk_index     INT NOT NULL
+        chunk_index     INTEGER NOT NULL
         chunk_text      TEXT NOT NULL
         embedding       vector(768)
-        char_start      INT NOT NULL DEFAULT 0
-        char_end        INT NOT NULL DEFAULT 0
+        char_start      INTEGER
+        char_end        INTEGER
+        created_at      TIMESTAMPTZ DEFAULT now()
+        UNIQUE(content_id, chunk_index)
 
     entity_embeddings:
         uri             TEXT PRIMARY KEY
