@@ -126,9 +126,12 @@ _RDFS_LABEL = "http://www.w3.org/2000/01/rdf-schema#label"
 
 
 def _ensure_uri(value: str, fallback_ns: str = _KS) -> str:
+    from urllib.parse import quote
+
     if value.startswith(("http://", "https://", "urn:")):
         return value
-    return f"{fallback_ns}{value}"
+    slug = quote(value, safe="/_-:.~")
+    return f"{fallback_ns}{slug}"
 
 
 def expand_to_triples(
@@ -150,8 +153,8 @@ def expand_to_triples(
     if isinstance(item, TripleInput):
         return [
             {
-                "subject": item.subject,
-                "predicate": item.predicate,
+                "subject": _ensure_uri(item.subject, _KS_DATA),
+                "predicate": _ensure_uri(item.predicate),
                 "object": item.object,
                 "confidence": item.confidence,
                 "knowledge_type": item.knowledge_type.value,
@@ -161,9 +164,10 @@ def expand_to_triples(
         ]
 
     if isinstance(item, EventInput):
+        subject = _ensure_uri(item.subject, _KS_DATA)
         triples = [
             {
-                "subject": item.subject,
+                "subject": subject,
                 "predicate": f"{_KS}occurredAt",
                 "object": item.occurred_at.isoformat(),
                 "confidence": item.confidence,
@@ -175,7 +179,7 @@ def expand_to_triples(
         for key, value in item.properties.items():
             triples.append(
                 {
-                    "subject": item.subject,
+                    "subject": subject,
                     "predicate": _ensure_uri(key),
                     "object": value,
                     "confidence": item.confidence,
@@ -263,7 +267,7 @@ def expand_to_triples(
     if isinstance(item, TemporalStateInput):
         return [
             {
-                "subject": item.subject,
+                "subject": _ensure_uri(item.subject, _KS_DATA),
                 "predicate": _ensure_uri(item.property),
                 "object": item.value,
                 "confidence": item.confidence,
