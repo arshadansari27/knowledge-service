@@ -27,18 +27,19 @@ async def knowledge_explorer(request: Request):
 
 @router.get("/admin/knowledge/entity", response_class=HTMLResponse)
 async def entity_detail(request: Request, uri: str):
-    uri = unquote(uri)
+    # uri is already decoded once by FastAPI (e.g. %3A → :)
+    # but still has IRI percent-encoding (e.g. %20) — keep that for SPARQL queries
+    display_label = unquote(uri).split("/")[-1]
     embedding_store = getattr(request.app.state, "embedding_store", None)
     entity_info = None
-    label = uri.split("/")[-1]
     if embedding_store:
         entity_info = await embedding_store.get_entity_by_uri(uri)
         if entity_info:
-            label = entity_info.get("label", label)
+            display_label = entity_info.get("label", display_label)
     return templates.TemplateResponse(
         request,
         "entity.html",
-        {"active": "knowledge", "uri": uri, "label": label, "entity_info": entity_info},
+        {"active": "knowledge", "uri": uri, "label": display_label, "entity_info": entity_info},
     )
 
 
