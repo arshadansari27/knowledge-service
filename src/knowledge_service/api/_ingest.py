@@ -53,6 +53,22 @@ async def process_triple(
         for c in contradictions_raw
     ]
 
+    opp_contradictions_raw: list[dict] = await asyncio.to_thread(
+        knowledge_store.find_opposite_predicate_contradictions,
+        t["subject"],
+        t["predicate"],
+        t["object"],
+    )
+    for c in opp_contradictions_raw:
+        contradictions.append({
+            "subject": t["subject"],
+            "predicate": t["predicate"],
+            "opposite_predicate_in_store": c["predicate_in_store"],
+            "existing_confidence": c.get("confidence"),
+            "new_object": t["object"],
+            "new_confidence": t["confidence"],
+        })
+
     await provenance_store.insert(
         triple_hash=triple_hash,
         subject=t["subject"],

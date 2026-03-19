@@ -9,6 +9,7 @@ def _make_ks(is_new=True, contradictions=None):
     mock = MagicMock()
     mock.insert_triple.return_value = ("abc123", is_new)
     mock.find_contradictions.return_value = contradictions or []
+    mock.find_opposite_predicate_contradictions = MagicMock(return_value=[])
     mock.update_confidence = MagicMock()
     return mock
 
@@ -129,3 +130,28 @@ async def test_process_triple_combines_evidence_for_multiple_sources():
     )
     engine.combine_evidence.assert_called_once()
     ks.update_confidence.assert_called_once()
+
+
+async def test_process_triple_detects_opposite_predicate_contradiction():
+    ks = _make_ks(is_new=True)
+    ks.find_opposite_predicate_contradictions = MagicMock(
+        return_value=[{"predicate_in_store": "http://ks/decreases", "confidence": 0.7}]
+    )
+    pool = _make_pool()
+    engine = _make_engine()
+    t = {
+        "subject": "http://s",
+        "predicate": "http://ks/increases",
+        "object": "http://o",
+        "confidence": 0.8,
+        "knowledge_type": "Claim",
+        "valid_from": None,
+        "valid_until": None,
+    }
+    _, contras = await process_triple(
+        t, ks, pool, engine, "http://src", "article", "manual"
+    )
+    # Should have detected the opposite-predicate contradiction
+    opp = [c for c in contras if "opposite_predicate_in_store" in c]
+    assert len(opp) == 1
+    assert opp[0]["opposite_predicate_in_store"] == "http://ks/decreases"

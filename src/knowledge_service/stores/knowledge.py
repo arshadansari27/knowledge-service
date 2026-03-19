@@ -24,6 +24,7 @@ from knowledge_service.ontology.namespaces import (
     KS,
     KS_CONFIDENCE,
     KS_KNOWLEDGE_TYPE,
+    KS_OPPOSITE_PREDICATE,
     KS_VALID_FROM,
     KS_VALID_UNTIL,
     XSD,
@@ -380,6 +381,49 @@ class KnowledgeStore:
                 "confidence": float(solution["conf"].value) if solution["conf"] else None,
             }
             results.append(row)
+        return results
+
+    def find_opposite_predicate_contradictions(
+        self,
+        subject: str,
+        predicate: str,
+        object_: str,
+    ) -> list[dict]:
+        """Find existing triples whose predicate is declared opposite to ``predicate``.
+
+        Returns triples with the same subject and object but an opposite predicate.
+        Each result dict has: predicate_in_store, confidence.
+
+        Uses UNION to cover both directions of oppositePredicate (A→B and B→A).
+        """
+        obj_sparql = _sparql_object(object_)
+
+        sparql = f"""
+            SELECT DISTINCT ?p_stored ?conf WHERE {{
+                {{
+                    <{predicate}> <{KS_OPPOSITE_PREDICATE.value}> ?p_stored .
+                }} UNION {{
+                    ?p_stored <{KS_OPPOSITE_PREDICATE.value}> <{predicate}> .
+                }}
+                <{subject}> ?p_stored {obj_sparql} .
+                OPTIONAL {{
+                    << <{subject}> ?p_stored {obj_sparql} >>
+                        <{KS_CONFIDENCE.value}> ?conf .
+                }}
+            }}
+        """
+        query_result = self._store.query(sparql)
+        results = []
+        for solution in query_result:
+            p_term = solution["p_stored"]
+            try:
+                conf_term = solution["conf"]
+            except Exception:
+                conf_term = None
+            results.append({
+                "predicate_in_store": p_term.value if hasattr(p_term, "value") else str(p_term),
+                "confidence": float(conf_term.value) if conf_term else None,
+            })
         return results
 
     def backup(self, path: str) -> None:

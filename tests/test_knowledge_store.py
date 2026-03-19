@@ -1,4 +1,5 @@
 import pytest
+from pyoxigraph import Quad
 from knowledge_service.stores.knowledge import KnowledgeStore
 
 
@@ -109,3 +110,37 @@ class TestFindContradictions:
         )
         assert len(candidates) == 1
         assert "london" in str(candidates[0]["object"])
+
+
+class TestFindOppositePredContradictions:
+    def test_finds_opposite_predicate_conflict(self):
+        from pyoxigraph import NamedNode
+        from knowledge_service.ontology.namespaces import KS_OPPOSITE_PREDICATE
+
+        store = KnowledgeStore(data_dir=None)
+        # Register that 'increases' and 'decreases' are opposites
+        store._store.add(
+            Quad(
+                NamedNode("http://ks/increases"),
+                KS_OPPOSITE_PREDICATE,
+                NamedNode("http://ks/decreases"),
+            )
+        )
+        # Insert a triple: dopamine increases serotonin
+        store.insert_triple(
+            "http://ks/dopamine", "http://ks/increases", "http://ks/serotonin", 0.8, "Claim"
+        )
+        # Now check: does 'decreases' contradict 'increases' for same S-O?
+        results = store.find_opposite_predicate_contradictions(
+            "http://ks/dopamine", "http://ks/decreases", "http://ks/serotonin"
+        )
+        assert len(results) == 1
+        assert results[0]["predicate_in_store"] == "http://ks/increases"
+
+    def test_no_false_positives_when_no_opposite_stored(self):
+        store = KnowledgeStore(data_dir=None)
+        store.insert_triple("http://ks/a", "http://ks/foo", "http://ks/b", 0.8, "Claim")
+        results = store.find_opposite_predicate_contradictions(
+            "http://ks/a", "http://ks/bar", "http://ks/b"
+        )
+        assert results == []
