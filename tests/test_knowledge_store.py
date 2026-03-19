@@ -10,7 +10,7 @@ def store():
 
 class TestInsertTriple:
     def test_insert_returns_triple_hash(self, store):
-        h = store.insert_triple(
+        h, _ = store.insert_triple(
             subject="http://knowledge.local/data/cold_exposure",
             predicate="http://knowledge.local/schema/increases",
             object_="http://knowledge.local/data/dopamine",
@@ -28,9 +28,18 @@ class TestInsertTriple:
             confidence=0.8,
             knowledge_type="Fact",
         )
-        h1 = store.insert_triple(**args)
-        h2 = store.insert_triple(**args)
+        h1, _ = store.insert_triple(**args)
+        h2, _ = store.insert_triple(**args)
         assert h1 == h2
+
+    def test_insert_triple_returns_is_new_true_for_new_triple(self, store):
+        hash_, is_new = store.insert_triple("http://s/1", "http://p/1", "obj1", 0.8, "Claim")
+        assert is_new is True
+
+    def test_insert_triple_returns_is_new_false_for_duplicate(self, store):
+        store.insert_triple("http://s/2", "http://p/2", "obj2", 0.8, "Claim")
+        _, is_new = store.insert_triple("http://s/2", "http://p/2", "obj2", 0.8, "Claim")
+        assert is_new is False
 
     def test_insert_stores_rdf_star_confidence(self, store):
         store.insert_triple(
@@ -39,7 +48,7 @@ class TestInsertTriple:
             object_="http://knowledge.local/data/c",
             confidence=0.75,
             knowledge_type="Claim",
-        )
+        )  # return value not needed here
         results = store.get_triples_by_subject("http://knowledge.local/data/a")
         assert len(results) == 1
         assert results[0]["confidence"] == pytest.approx(0.75)

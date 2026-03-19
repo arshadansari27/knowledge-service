@@ -97,7 +97,7 @@ class KnowledgeStore:
         knowledge_type: str,
         valid_from: date | datetime | None = None,
         valid_until: date | datetime | None = None,
-    ) -> str:
+    ) -> tuple[str, bool]:
         """Insert a triple with RDF-star annotations.
 
         The base triple (subject, predicate, object) is stored in the default
@@ -118,7 +118,8 @@ class KnowledgeStore:
             valid_until: Optional end of temporal validity.
 
         Returns:
-            SHA-256 hex digest of the canonical triple form.
+            Tuple of (SHA-256 hex digest of the canonical triple form, is_new).
+            is_new is True if the triple did not previously exist, False otherwise.
         """
         s = NamedNode(subject)
         p = NamedNode(predicate)
@@ -134,7 +135,7 @@ class KnowledgeStore:
         existing_reifications = list(self._store.quads_for_pattern(None, RDF_REIFIES, triple, None))
         if existing_reifications:
             # Annotations already exist; skip to preserve idempotency
-            return triple_hash
+            return triple_hash, False
 
         # Insert RDF-star annotations via SPARQL UPDATE
         obj_sparql = _sparql_object(object_)
@@ -176,7 +177,7 @@ class KnowledgeStore:
                 }}
             """)
 
-        return triple_hash
+        return triple_hash, True
 
     def query(self, sparql: str) -> list[dict]:
         """Execute a SPARQL SELECT query.

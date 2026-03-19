@@ -37,7 +37,7 @@ def _make_pg_pool_mock():
 def _make_knowledge_store_mock():
     """Build a mock KnowledgeStore with default successful return values."""
     mock_ks = MagicMock()
-    mock_ks.insert_triple.return_value = "abc123deadbeef"
+    mock_ks.insert_triple.return_value = ("abc123deadbeef", True)
     mock_ks.find_contradictions.return_value = []
     return mock_ks
 
