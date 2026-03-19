@@ -76,7 +76,8 @@ class TestRulesLoading:
     def test_all_rule_files_loaded(self, engine):
         """Engine should load knowledge_types and temporal rules too."""
         assert hasattr(engine, "_all_rules")
-        assert len(engine._all_rules) > len(engine._base_rules)
+        assert "knowledge_type" in engine._all_rules  # from knowledge_types.pl
+        assert "expired" in engine._all_rules  # from temporal.pl
         # Must not crash with all rules loaded
         try:
             engine.infer("supported(a, b, c)", claims=[("a", "b", "c", 0.5)])
