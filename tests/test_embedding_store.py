@@ -20,71 +20,52 @@ def store(mock_pool):
     return EmbeddingStore(pool)
 
 
-class TestInsertContent:
-    async def test_insert_content_calls_execute(self, store, mock_pool):
+class TestInsertContentMetadata:
+    async def test_returns_content_id(self, store, mock_pool):
         _, conn = mock_pool
-        conn.fetchrow.return_value = {"id": "test-uuid-123"}
-        result = await store.insert_content(
+        conn.fetchrow.return_value = {"id": "metadata-uuid-123"}
+        result = await store.insert_content_metadata(
             url="https://example.com/article",
             title="Test Article",
             summary="A test summary",
             raw_text="Full text content",
             source_type="article",
             tags=["test", "example"],
-            embedding=[0.1] * 768,
             metadata={},
         )
         conn.fetchrow.assert_called_once()
-        assert result == "test-uuid-123"
+        assert result == "metadata-uuid-123"
 
-    async def test_insert_content_sql_contains_upsert(self, store, mock_pool):
+    async def test_sql_targets_content_metadata(self, store, mock_pool):
         _, conn = mock_pool
         conn.fetchrow.return_value = {"id": "some-uuid"}
-        await store.insert_content(
+        await store.insert_content_metadata(
             url="https://example.com/article",
-            title="Test Article",
-            summary="A test summary",
-            raw_text="Full text content",
+            title="Test",
+            summary="Sum",
+            raw_text="Text",
             source_type="article",
-            tags=["test"],
-            embedding=[0.1] * 768,
+            tags=[],
             metadata={},
         )
         sql = conn.fetchrow.call_args[0][0]
-        assert "INSERT INTO content" in sql
+        assert "INSERT INTO content_metadata" in sql
         assert "ON CONFLICT" in sql
 
-    async def test_insert_content_passes_url_param(self, store, mock_pool):
+    async def test_passes_url_param(self, store, mock_pool):
         _, conn = mock_pool
         conn.fetchrow.return_value = {"id": "uuid-abc"}
-        await store.insert_content(
+        await store.insert_content_metadata(
             url="https://example.com/unique",
             title="Title",
             summary="Sum",
             raw_text="Text",
             source_type="article",
             tags=[],
-            embedding=[0.0] * 768,
             metadata={},
         )
         args = conn.fetchrow.call_args[0]
         assert "https://example.com/unique" in args
-
-    async def test_insert_content_returns_str_id(self, store, mock_pool):
-        _, conn = mock_pool
-        conn.fetchrow.return_value = {"id": "returned-uuid"}
-        result = await store.insert_content(
-            url="https://example.com/x",
-            title="T",
-            summary="S",
-            raw_text="R",
-            source_type="article",
-            tags=[],
-            embedding=[0.0] * 768,
-            metadata={},
-        )
-        assert isinstance(result, str)
-        assert result == "returned-uuid"
 
 
 class TestSearch:

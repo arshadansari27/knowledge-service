@@ -47,10 +47,10 @@ class EmbeddingStore:
         return "[" + ",".join(str(v) for v in embedding) + "]"
 
     # ------------------------------------------------------------------
-    # Content table operations
+    # Content metadata table operations
     # ------------------------------------------------------------------
 
-    async def insert_content(
+    async def insert_content_metadata(
         self,
         url: str,
         title: str,
@@ -58,45 +58,34 @@ class EmbeddingStore:
         raw_text: str,
         source_type: str,
         tags: list[str],
-        embedding: list[float],
         metadata: dict,
     ) -> str:
-        """Upsert a content row and return its UUID.
+        """Upsert a content_metadata row and return its UUID.
 
-        On conflict (url) the existing row is updated with fresh values for all
-        mutable columns, leaving id and ingested_at unchanged.
+        On conflict (url) the existing row is updated with fresh values,
+        leaving id and ingested_at unchanged.
         """
-        embedding_str = self._vector_to_str(embedding)
         metadata_json = json.dumps(metadata)
 
         sql = """
-            INSERT INTO content (
-                url, title, summary, raw_text, source_type,
-                tags, embedding, metadata
+            INSERT INTO content_metadata (
+                url, title, summary, raw_text, source_type, tags, metadata
             )
-            VALUES ($1, $2, $3, $4, $5, $6, $7::vector(768), $8)
+            VALUES ($1, $2, $3, $4, $5, $6, $7)
             ON CONFLICT (url) DO UPDATE SET
-                title      = EXCLUDED.title,
-                summary    = EXCLUDED.summary,
-                raw_text   = EXCLUDED.raw_text,
+                title       = EXCLUDED.title,
+                summary     = EXCLUDED.summary,
+                raw_text    = EXCLUDED.raw_text,
                 source_type = EXCLUDED.source_type,
-                tags       = EXCLUDED.tags,
-                embedding  = EXCLUDED.embedding,
-                metadata   = EXCLUDED.metadata
+                tags        = EXCLUDED.tags,
+                metadata    = EXCLUDED.metadata
             RETURNING id
         """
 
         async with self._pool.acquire() as conn:
             row = await conn.fetchrow(
-                sql,
-                url,
-                title,
-                summary,
-                raw_text,
-                source_type,
-                tags,
-                embedding_str,
-                metadata_json,
+                sql, url, title, summary, raw_text,
+                source_type, tags, metadata_json,
             )
         return str(row["id"])
 
