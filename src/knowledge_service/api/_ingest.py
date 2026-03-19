@@ -60,14 +60,16 @@ async def process_triple(
         t["object"],
     )
     for c in opp_contradictions_raw:
-        contradictions.append({
-            "subject": t["subject"],
-            "predicate": t["predicate"],
-            "opposite_predicate_in_store": c["predicate_in_store"],
-            "existing_confidence": c.get("confidence"),
-            "new_object": t["object"],
-            "new_confidence": t["confidence"],
-        })
+        contradictions.append(
+            {
+                "subject": t["subject"],
+                "predicate": t["predicate"],
+                "opposite_predicate_in_store": c["predicate_in_store"],
+                "existing_confidence": c.get("confidence"),
+                "new_object": t["object"],
+                "new_confidence": t["confidence"],
+            }
+        )
 
     await provenance_store.insert(
         triple_hash=triple_hash,

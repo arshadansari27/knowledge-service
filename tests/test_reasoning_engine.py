@@ -88,8 +88,11 @@ class TestRulesLoading:
 class TestFallbackLogging:
     def test_fallback_logs_warning_on_problog_failure(self, engine, caplog):
         import logging
+
         with caplog.at_level(logging.WARNING, logger="knowledge_service.reasoning.engine"):
             # Force fallback by passing a query ProbLog can't parse
-            engine.infer("unsupported_predicate(??invalid syntax??)", claims=[("a","b","c",0.5)])
-        assert any("fallback" in r.message.lower() or "problog" in r.message.lower()
-                   for r in caplog.records)
+            engine.infer("unsupported_predicate(??invalid syntax??)", claims=[("a", "b", "c", 0.5)])
+        assert any(
+            "fallback" in r.message.lower() or "problog" in r.message.lower()
+            for r in caplog.records
+        )

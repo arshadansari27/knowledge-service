@@ -417,10 +417,12 @@ class KnowledgeStore:
         for solution in query_result:
             p_term = solution["p_stored"]
             conf_term = solution["conf"]
-            results.append({
-                "predicate_in_store": p_term.value if hasattr(p_term, "value") else str(p_term),
-                "confidence": float(conf_term.value) if conf_term else None,
-            })
+            results.append(
+                {
+                    "predicate_in_store": p_term.value if hasattr(p_term, "value") else str(p_term),
+                    "confidence": float(conf_term.value) if conf_term else None,
+                }
+            )
         return results
 
     def backup(self, path: str) -> None:

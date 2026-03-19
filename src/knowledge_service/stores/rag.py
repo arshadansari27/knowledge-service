@@ -79,7 +79,7 @@ class RAGRetriever:
         for t in filtered_triples:
             s = t["subject"]
             p = t["predicate"]  # already a str
-            o = t["object"]     # already a str
+            o = t["object"]  # already a str
             key = (s, p)
             if key in seen:
                 continue
