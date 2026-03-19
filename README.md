@@ -555,7 +555,7 @@ All tests mock external dependencies — no PostgreSQL or LLM provider required.
 GitHub Actions pipeline on every push/merge to `main`:
 
 1. **Lint** — `ruff check` + `ruff format --check`
-2. **Test** — `pytest tests/ -v` (304 tests)
+2. **Test** — `pytest tests/ -v` (330 tests)
 3. **Version bump** — auto-increments patch version in `pyproject.toml`, commits back to `main`, creates `vX.Y.Z` git tag
 4. **Docker build** — builds and pushes to Docker Hub as `arshadansari27/knowledge-service:X.Y.Z` and `:latest`
 
@@ -572,12 +572,14 @@ src/knowledge_service/
 ├── main.py                  # FastAPI app factory + lifespan
 ├── config.py                # Settings (pydantic-settings, .env)
 ├── models.py                # Pydantic models for all 7 knowledge types + API contracts
+├── _utils.py                # Shared RDF helpers: _is_uri, _to_rdf_term, _triple_hash, _rdf_value_to_str
 ├── admin/
 │   ├── auth.py              # AuthMiddleware, login/logout, rate limiter, session cookies
 │   ├── routes.py            # Admin page routes (dashboard, knowledge, chat, contradictions)
 │   ├── stats.py             # /api/admin/stats/* and /api/admin/knowledge/triples endpoints
 │   └── templates/           # Jinja2 templates (base, dashboard, knowledge, chat, etc.)
 ├── api/
+│   ├── _ingest.py           # Shared per-triple ingestion pipeline (used by content + claims)
 │   ├── content.py           # POST /api/content
 │   ├── claims.py            # POST /api/claims
 │   ├── search.py            # GET /api/search
@@ -593,7 +595,10 @@ src/knowledge_service/
 │   └── rag.py               # RAGRetriever — hybrid retrieval orchestration
 ├── reasoning/
 │   ├── engine.py            # ProbLog wrapper — Noisy-OR, contradiction detection
-│   └── rules/base.pl        # Core ProbLog rules
+│   └── rules/
+│       ├── base.pl          # Core support/confidence rules
+│       ├── knowledge_types.pl  # Type-specific inference rules
+│       └── temporal.pl      # Temporal validity rules
 ├── ontology/
 │   ├── namespaces.py        # ks:, schema:, dc:, skos:, prov: namespace constants
 │   └── bootstrap.py         # Loads base ontology into pyoxigraph on startup
