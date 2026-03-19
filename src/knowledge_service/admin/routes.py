@@ -25,7 +25,7 @@ async def knowledge_explorer(request: Request):
     return templates.TemplateResponse(request, "knowledge.html", {"active": "knowledge"})
 
 
-@router.get("/admin/knowledge/entity/{uri:path}", response_class=HTMLResponse)
+@router.get("/admin/knowledge/entity", response_class=HTMLResponse)
 async def entity_detail(request: Request, uri: str):
     uri = unquote(uri)
     embedding_store = getattr(request.app.state, "embedding_store", None)
