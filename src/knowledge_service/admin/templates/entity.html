@@ -7,7 +7,7 @@
 {% if entity_info %}
 <div class="bg-gray-800 rounded-lg p-4 mb-6"><span class="text-gray-400 text-sm">Type:</span> <span class="text-gray-200">{{ entity_info.rdf_type or 'Unknown' }}</span></div>
 {% endif %}
-<div class="bg-gray-800 rounded-lg overflow-hidden mb-6" x-data="{ triples: null }" x-init="fetch('/api/admin/knowledge/triples?q={{ uri | urlencode }}&limit=100').then(r => r.json()).then(d => triples = d.items)">
+<div class="bg-gray-800 rounded-lg overflow-hidden mb-6" x-data="{ triples: null }" x-init="fetch('/api/admin/knowledge/triples?subject={{ uri | urlencode }}&limit=100').then(r => r.json()).then(d => triples = d.items)">
     <h3 class="text-lg font-semibold p-4 border-b border-gray-700">Triples</h3>
     <table class="w-full text-sm">
         <thead><tr class="text-gray-400 border-b border-gray-700"><th class="text-left p-3">Predicate</th><th class="text-left p-3">Object</th><th class="text-left p-3">Confidence</th><th class="text-left p-3">Type</th></tr></thead>
