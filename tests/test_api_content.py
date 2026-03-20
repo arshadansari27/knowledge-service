@@ -46,7 +46,7 @@ def _make_embedding_client_mock():
     """Build a mock EmbeddingClient."""
     mock = AsyncMock()
     mock.embed.return_value = [0.1] * 768
-    mock.embed_batch.return_value = [[0.1] * 768]
+    mock.embed_batch.side_effect = lambda texts: [[0.1] * 768 for _ in texts]
     return mock
 
 
@@ -77,9 +77,11 @@ def _make_entity_resolver_mock():
 
 
 def _make_embedding_store_mock():
-    """Build a mock EmbeddingStore."""
+    """Build a mock EmbeddingStore with new schema methods."""
     mock = AsyncMock()
-    mock.insert_content.return_value = "content-uuid-1234"
+    mock.insert_content_metadata.return_value = "content-uuid-1234"
+    mock.delete_chunks.return_value = None
+    mock.insert_chunks.return_value = None
     return mock
 
 
@@ -268,6 +270,7 @@ class TestPostContentKnowledgeStore:
         app.state.embedding_client = _make_embedding_client_mock()
         app.state.extraction_client = _make_extraction_client_mock()
         app.state.reasoning_engine = _make_reasoning_engine_mock()
+        app.state.embedding_store = _make_embedding_store_mock()
 
         transport = ASGITransport(app=app)
         async with AsyncClient(
@@ -294,6 +297,7 @@ class TestPostContentKnowledgeStore:
         app.state.embedding_client = _make_embedding_client_mock()
         app.state.extraction_client = _make_extraction_client_mock()
         app.state.reasoning_engine = _make_reasoning_engine_mock()
+        app.state.embedding_store = _make_embedding_store_mock()
 
         transport = ASGITransport(app=app)
         async with AsyncClient(
@@ -313,6 +317,7 @@ class TestPostContentKnowledgeStore:
         app.state.embedding_client = _make_embedding_client_mock()
         app.state.extraction_client = _make_extraction_client_mock()
         app.state.reasoning_engine = _make_reasoning_engine_mock()
+        app.state.embedding_store = _make_embedding_store_mock()
 
         transport = ASGITransport(app=app)
         async with AsyncClient(
@@ -347,6 +352,7 @@ class TestPostContentContradictions:
         app.state.embedding_client = _make_embedding_client_mock()
         app.state.extraction_client = _make_extraction_client_mock()
         app.state.reasoning_engine = _make_reasoning_engine_mock()
+        app.state.embedding_store = _make_embedding_store_mock()
 
         transport = ASGITransport(app=app)
         async with AsyncClient(
@@ -378,6 +384,7 @@ class TestPostContentEmbedding:
         app.state.embedding_client = mock_ec
         app.state.extraction_client = _make_extraction_client_mock()
         app.state.reasoning_engine = _make_reasoning_engine_mock()
+        app.state.embedding_store = _make_embedding_store_mock()
 
         transport = ASGITransport(app=app)
         async with AsyncClient(
@@ -390,14 +397,16 @@ class TestPostContentEmbedding:
         mock_ec.embed.assert_called_once()
 
     async def test_pg_pool_used_to_insert_content(self):
-        """EmbeddingStore.insert_content must be called, which uses the pg pool."""
+        """EmbeddingStore.insert_content_metadata must be called to upsert content."""
         app = create_app(use_lifespan=False)
         mock_pool = _make_pg_pool_mock()
+        mock_es = _make_embedding_store_mock()
         app.state.knowledge_store = _make_knowledge_store_mock()
         app.state.pg_pool = mock_pool
         app.state.embedding_client = _make_embedding_client_mock()
         app.state.extraction_client = _make_extraction_client_mock()
         app.state.reasoning_engine = _make_reasoning_engine_mock()
+        app.state.embedding_store = mock_es
 
         transport = ASGITransport(app=app)
         async with AsyncClient(
@@ -407,7 +416,7 @@ class TestPostContentEmbedding:
         ) as c:
             response = await c.post("/api/content", json=MINIMAL_PAYLOAD)
 
-        # The content_id should come from the fetchrow call
+        # The content_id should come from insert_content_metadata
         data = response.json()
         assert data["content_id"] == "content-uuid-1234"
 
@@ -427,6 +436,7 @@ class TestPostContentProvenance:
         app.state.embedding_client = _make_embedding_client_mock()
         app.state.extraction_client = _make_extraction_client_mock()
         app.state.reasoning_engine = _make_reasoning_engine_mock()
+        app.state.embedding_store = _make_embedding_store_mock()
 
         transport = ASGITransport(app=app)
         async with AsyncClient(
@@ -524,6 +534,7 @@ class TestPostContentExtraction:
         app.state.embedding_client = _make_embedding_client_mock()
         app.state.extraction_client = mock_xc
         app.state.reasoning_engine = _make_reasoning_engine_mock()
+        app.state.embedding_store = _make_embedding_store_mock()
 
         transport = ASGITransport(app=app)
         async with AsyncClient(
@@ -544,6 +555,7 @@ class TestPostContentExtraction:
         app.state.embedding_client = _make_embedding_client_mock()
         app.state.extraction_client = mock_xc
         app.state.reasoning_engine = _make_reasoning_engine_mock()
+        app.state.embedding_store = _make_embedding_store_mock()
 
         transport = ASGITransport(app=app)
         async with AsyncClient(
@@ -564,6 +576,7 @@ class TestPostContentExtraction:
         app.state.embedding_client = _make_embedding_client_mock()
         app.state.extraction_client = mock_xc
         app.state.reasoning_engine = _make_reasoning_engine_mock()
+        app.state.embedding_store = _make_embedding_store_mock()
 
         transport = ASGITransport(app=app)
         async with AsyncClient(
@@ -597,6 +610,7 @@ class TestPostContentExtraction:
         app.state.embedding_client = _make_embedding_client_mock()
         app.state.extraction_client = mock_xc
         app.state.reasoning_engine = _make_reasoning_engine_mock()
+        app.state.embedding_store = _make_embedding_store_mock()
 
         transport = ASGITransport(app=app)
         async with AsyncClient(
@@ -618,6 +632,7 @@ class TestPostContentExtraction:
         app.state.embedding_client = _make_embedding_client_mock()
         app.state.extraction_client = mock_xc
         app.state.reasoning_engine = _make_reasoning_engine_mock()
+        app.state.embedding_store = _make_embedding_store_mock()
 
         transport = ASGITransport(app=app)
         async with AsyncClient(
@@ -720,3 +735,119 @@ class TestPostContentBatch:
         ]
         response = await client.post("/api/content", json=batch)
         assert response.status_code == 422
+
+
+# ---------------------------------------------------------------------------
+# Tests: Content chunking
+# ---------------------------------------------------------------------------
+
+SHORT_TEXT_PAYLOAD = {
+    "url": "https://example.com/short",
+    "title": "Short Article",
+    "raw_text": "This is a short article.",
+    "source_type": "article",
+}
+
+LONG_TEXT_PAYLOAD = {
+    "url": "https://example.com/long",
+    "title": "Long Article",
+    "raw_text": "A" * 5000,
+    "source_type": "article",
+}
+
+
+class TestContentChunking:
+    async def test_short_content_creates_one_chunk(self):
+        app = create_app(use_lifespan=False)
+        mock_es = _make_embedding_store_mock()
+        app.state.knowledge_store = _make_knowledge_store_mock()
+        app.state.pg_pool = _make_pg_pool_mock()
+        app.state.embedding_client = _make_embedding_client_mock()
+        app.state.extraction_client = _make_extraction_client_mock()
+        app.state.reasoning_engine = _make_reasoning_engine_mock()
+        app.state.embedding_store = mock_es
+
+        transport = ASGITransport(app=app)
+        async with AsyncClient(
+            transport=transport,
+            base_url="http://test",
+            cookies={"ks_session": make_test_session_cookie()},
+        ) as c:
+            response = await c.post("/api/content", json=SHORT_TEXT_PAYLOAD)
+
+        assert response.status_code == 200
+        mock_es.insert_content_metadata.assert_called_once()
+        mock_es.delete_chunks.assert_called_once_with("content-uuid-1234")
+        mock_es.insert_chunks.assert_called_once()
+        chunks = mock_es.insert_chunks.call_args[0][1]
+        assert len(chunks) == 1
+        assert chunks[0]["chunk_index"] == 0
+        assert chunks[0]["chunk_text"] == "This is a short article."
+
+    async def test_long_content_creates_multiple_chunks(self):
+        app = create_app(use_lifespan=False)
+        mock_ec = _make_embedding_client_mock()
+        mock_es = _make_embedding_store_mock()
+        app.state.knowledge_store = _make_knowledge_store_mock()
+        app.state.pg_pool = _make_pg_pool_mock()
+        app.state.embedding_client = mock_ec
+        app.state.extraction_client = _make_extraction_client_mock()
+        app.state.reasoning_engine = _make_reasoning_engine_mock()
+        app.state.embedding_store = mock_es
+
+        transport = ASGITransport(app=app)
+        async with AsyncClient(
+            transport=transport,
+            base_url="http://test",
+            cookies={"ks_session": make_test_session_cookie()},
+        ) as c:
+            response = await c.post("/api/content", json=LONG_TEXT_PAYLOAD)
+
+        assert response.status_code == 200
+        mock_es.insert_chunks.assert_called_once()
+        chunks = mock_es.insert_chunks.call_args[0][1]
+        assert len(chunks) >= 2
+        mock_ec.embed_batch.assert_called_once()
+
+    async def test_no_raw_text_creates_one_chunk_from_title(self):
+        app = create_app(use_lifespan=False)
+        mock_es = _make_embedding_store_mock()
+        app.state.knowledge_store = _make_knowledge_store_mock()
+        app.state.pg_pool = _make_pg_pool_mock()
+        app.state.embedding_client = _make_embedding_client_mock()
+        app.state.extraction_client = _make_extraction_client_mock()
+        app.state.reasoning_engine = _make_reasoning_engine_mock()
+        app.state.embedding_store = mock_es
+
+        transport = ASGITransport(app=app)
+        async with AsyncClient(
+            transport=transport,
+            base_url="http://test",
+            cookies={"ks_session": make_test_session_cookie()},
+        ) as c:
+            response = await c.post("/api/content", json=MINIMAL_PAYLOAD)
+
+        assert response.status_code == 200
+        mock_es.insert_chunks.assert_called_once()
+        chunks = mock_es.insert_chunks.call_args[0][1]
+        assert len(chunks) == 1
+
+    async def test_reingestion_deletes_old_chunks(self):
+        app = create_app(use_lifespan=False)
+        mock_es = _make_embedding_store_mock()
+        app.state.knowledge_store = _make_knowledge_store_mock()
+        app.state.pg_pool = _make_pg_pool_mock()
+        app.state.embedding_client = _make_embedding_client_mock()
+        app.state.extraction_client = _make_extraction_client_mock()
+        app.state.reasoning_engine = _make_reasoning_engine_mock()
+        app.state.embedding_store = mock_es
+
+        transport = ASGITransport(app=app)
+        async with AsyncClient(
+            transport=transport,
+            base_url="http://test",
+            cookies={"ks_session": make_test_session_cookie()},
+        ) as c:
+            await c.post("/api/content", json=SHORT_TEXT_PAYLOAD)
+
+        mock_es.delete_chunks.assert_called_once_with("content-uuid-1234")

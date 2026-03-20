@@ -20,79 +20,63 @@ def store(mock_pool):
     return EmbeddingStore(pool)
 
 
-class TestInsertContent:
-    async def test_insert_content_calls_execute(self, store, mock_pool):
+class TestInsertContentMetadata:
+    async def test_returns_content_id(self, store, mock_pool):
         _, conn = mock_pool
-        conn.fetchrow.return_value = {"id": "test-uuid-123"}
-        result = await store.insert_content(
+        conn.fetchrow.return_value = {"id": "metadata-uuid-123"}
+        result = await store.insert_content_metadata(
             url="https://example.com/article",
             title="Test Article",
             summary="A test summary",
             raw_text="Full text content",
             source_type="article",
             tags=["test", "example"],
-            embedding=[0.1] * 768,
             metadata={},
         )
         conn.fetchrow.assert_called_once()
-        assert result == "test-uuid-123"
+        assert result == "metadata-uuid-123"
 
-    async def test_insert_content_sql_contains_upsert(self, store, mock_pool):
+    async def test_sql_targets_content_metadata(self, store, mock_pool):
         _, conn = mock_pool
         conn.fetchrow.return_value = {"id": "some-uuid"}
-        await store.insert_content(
+        await store.insert_content_metadata(
             url="https://example.com/article",
-            title="Test Article",
-            summary="A test summary",
-            raw_text="Full text content",
+            title="Test",
+            summary="Sum",
+            raw_text="Text",
             source_type="article",
-            tags=["test"],
-            embedding=[0.1] * 768,
+            tags=[],
             metadata={},
         )
         sql = conn.fetchrow.call_args[0][0]
-        assert "INSERT INTO content" in sql
+        assert "INSERT INTO content_metadata" in sql
         assert "ON CONFLICT" in sql
 
-    async def test_insert_content_passes_url_param(self, store, mock_pool):
+    async def test_passes_url_param(self, store, mock_pool):
         _, conn = mock_pool
         conn.fetchrow.return_value = {"id": "uuid-abc"}
-        await store.insert_content(
+        await store.insert_content_metadata(
             url="https://example.com/unique",
             title="Title",
             summary="Sum",
             raw_text="Text",
             source_type="article",
             tags=[],
-            embedding=[0.0] * 768,
             metadata={},
         )
         args = conn.fetchrow.call_args[0]
         assert "https://example.com/unique" in args
 
-    async def test_insert_content_returns_str_id(self, store, mock_pool):
-        _, conn = mock_pool
-        conn.fetchrow.return_value = {"id": "returned-uuid"}
-        result = await store.insert_content(
-            url="https://example.com/x",
-            title="T",
-            summary="S",
-            raw_text="R",
-            source_type="article",
-            tags=[],
-            embedding=[0.0] * 768,
-            metadata={},
-        )
-        assert isinstance(result, str)
-        assert result == "returned-uuid"
-
 
 class TestSearch:
-    async def test_search_returns_results(self, store, mock_pool):
+    async def test_search_returns_chunk_results(self, store, mock_pool):
         _, conn = mock_pool
         conn.fetch.return_value = [
             {
-                "id": "uuid1",
+                "id": "chunk-uuid-1",
+                "chunk_text": "relevant chunk text",
+                "chunk_index": 0,
+                "content_id": "metadata-uuid-1",
                 "url": "https://a.com",
                 "title": "A",
                 "summary": "S",
@@ -102,11 +86,10 @@ class TestSearch:
                 "similarity": 0.95,
             }
         ]
-        results = await store.search(
-            query_embedding=[0.1] * 768,
-            limit=10,
-        )
+        results = await store.search(query_embedding=[0.1] * 768, limit=10)
         assert len(results) == 1
+        assert results[0]["chunk_text"] == "relevant chunk text"
+        assert results[0]["content_id"] == "metadata-uuid-1"
         assert results[0]["similarity"] == 0.95
 
     async def test_search_calls_fetch(self, store, mock_pool):
@@ -115,11 +98,13 @@ class TestSearch:
         await store.search(query_embedding=[0.1] * 768, limit=5)
         conn.fetch.assert_called_once()
 
-    async def test_search_sql_contains_cosine_operator(self, store, mock_pool):
+    async def test_search_sql_joins_content_metadata(self, store, mock_pool):
         _, conn = mock_pool
         conn.fetch.return_value = []
         await store.search(query_embedding=[0.1] * 768, limit=5)
         sql = conn.fetch.call_args[0][0]
+        assert "content_metadata" in sql
+        assert "JOIN" in sql.upper()
         assert "<=>" in sql
         assert "halfvec" in sql
 
@@ -131,7 +116,6 @@ class TestSearch:
             limit=5,
             source_type="article",
         )
-        conn.fetch.assert_called_once()
         sql = conn.fetch.call_args[0][0]
         assert "source_type" in sql
 
@@ -143,11 +127,10 @@ class TestSearch:
             limit=5,
             tags=["python", "database"],
         )
-        conn.fetch.assert_called_once()
         sql = conn.fetch.call_args[0][0]
         assert "tags" in sql
 
-    async def test_search_returns_empty_list_when_no_matches(self, store, mock_pool):
+    async def test_search_returns_empty_list(self, store, mock_pool):
         _, conn = mock_pool
         conn.fetch.return_value = []
         results = await store.search(query_embedding=[0.1] * 768, limit=10)
@@ -159,6 +142,85 @@ class TestSearch:
         await store.search(query_embedding=[0.1] * 768, limit=42)
         args = conn.fetch.call_args[0]
         assert 42 in args
+
+
+class TestDeleteChunks:
+    async def test_calls_execute_with_delete(self, store, mock_pool):
+        _, conn = mock_pool
+        conn.execute.return_value = "DELETE 3"
+        await store.delete_chunks("content-uuid-123")
+        conn.execute.assert_called_once()
+        sql = conn.execute.call_args[0][0]
+        assert "DELETE FROM content" in sql
+        assert "content_id" in sql
+
+    async def test_passes_content_id_param(self, store, mock_pool):
+        _, conn = mock_pool
+        conn.execute.return_value = "DELETE 0"
+        await store.delete_chunks("my-uuid")
+        args = conn.execute.call_args[0]
+        assert "my-uuid" in args
+
+
+class TestInsertChunks:
+    async def test_inserts_multiple_chunks(self, store, mock_pool):
+        _, conn = mock_pool
+        conn.execute.return_value = "INSERT 0 1"
+        chunks = [
+            {
+                "chunk_index": 0,
+                "chunk_text": "First chunk",
+                "embedding": [0.1] * 768,
+                "char_start": 0,
+                "char_end": 100,
+            },
+            {
+                "chunk_index": 1,
+                "chunk_text": "Second chunk",
+                "embedding": [0.2] * 768,
+                "char_start": 80,
+                "char_end": 200,
+            },
+        ]
+        await store.insert_chunks("content-uuid-123", chunks)
+        assert conn.execute.call_count == 2
+
+    async def test_sql_targets_content_table(self, store, mock_pool):
+        _, conn = mock_pool
+        conn.execute.return_value = "INSERT 0 1"
+        chunks = [
+            {
+                "chunk_index": 0,
+                "chunk_text": "chunk",
+                "embedding": [0.1] * 768,
+                "char_start": 0,
+                "char_end": 50,
+            },
+        ]
+        await store.insert_chunks("uuid-1", chunks)
+        sql = conn.execute.call_args[0][0]
+        assert "INSERT INTO content" in sql
+
+    async def test_passes_content_id(self, store, mock_pool):
+        _, conn = mock_pool
+        conn.execute.return_value = "INSERT 0 1"
+        chunks = [
+            {
+                "chunk_index": 0,
+                "chunk_text": "chunk",
+                "embedding": [0.1] * 768,
+                "char_start": 0,
+                "char_end": 50,
+            },
+        ]
+        await store.insert_chunks("my-content-id", chunks)
+        args = conn.execute.call_args[0]
+        assert "my-content-id" in args
+
+    async def test_no_chunks_no_execute(self, store, mock_pool):
+        _, conn = mock_pool
+        await store.insert_chunks("uuid-1", [])
+        conn.execute.assert_not_called()
 
 
 class TestSearchEntities:

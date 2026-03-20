@@ -1,18 +1,28 @@
 """EmbeddingStore: asyncpg-backed store for pgvector semantic similarity search.
 
-Manages two tables (schema from migrations/001_initial.sql):
+Manages three tables:
 
-    content:
+    content_metadata:
         id              UUID PRIMARY KEY DEFAULT gen_random_uuid()
-        url             TEXT UNIQUE
+        url             TEXT UNIQUE NOT NULL
         title           TEXT
         summary         TEXT
         raw_text        TEXT
         source_type     TEXT NOT NULL
         tags            TEXT[] DEFAULT '{}'
         ingested_at     TIMESTAMPTZ NOT NULL DEFAULT now()
-        embedding       vector(768)
         metadata        JSONB DEFAULT '{}'
+
+    content (chunks):
+        id              UUID PRIMARY KEY DEFAULT gen_random_uuid()
+        content_id      UUID NOT NULL REFERENCES content_metadata(id) ON DELETE CASCADE
+        chunk_index     INTEGER NOT NULL
+        chunk_text      TEXT NOT NULL
+        embedding       vector(768)
+        char_start      INTEGER
+        char_end        INTEGER
+        created_at      TIMESTAMPTZ DEFAULT now()
+        UNIQUE(content_id, chunk_index)
 
     entity_embeddings:
         uri             TEXT PRIMARY KEY
@@ -21,8 +31,8 @@ Manages two tables (schema from migrations/001_initial.sql):
         embedding       vector(768)
         created_at      TIMESTAMPTZ NOT NULL DEFAULT now()
 
-Both tables have HNSW indexes on (embedding::halfvec(768)) using halfvec_cosine_ops.
-Queries must cast to halfvec to exploit those indexes.
+content and entity_embeddings have HNSW indexes on (embedding::halfvec(768))
+using halfvec_cosine_ops. Queries must cast to halfvec to exploit those indexes.
 """
 
 from __future__ import annotations
@@ -47,10 +57,10 @@ class EmbeddingStore:
         return "[" + ",".join(str(v) for v in embedding) + "]"
 
     # ------------------------------------------------------------------
-    # Content table operations
+    # Content metadata table operations
     # ------------------------------------------------------------------
 
-    async def insert_content(
+    async def insert_content_metadata(
         self,
         url: str,
         title: str,
@@ -58,31 +68,27 @@ class EmbeddingStore:
         raw_text: str,
         source_type: str,
         tags: list[str],
-        embedding: list[float],
         metadata: dict,
     ) -> str:
-        """Upsert a content row and return its UUID.
+        """Upsert a content_metadata row and return its UUID.
 
-        On conflict (url) the existing row is updated with fresh values for all
-        mutable columns, leaving id and ingested_at unchanged.
+        On conflict (url) the existing row is updated with fresh values,
+        leaving id and ingested_at unchanged.
         """
-        embedding_str = self._vector_to_str(embedding)
         metadata_json = json.dumps(metadata)
 
         sql = """
-            INSERT INTO content (
-                url, title, summary, raw_text, source_type,
-                tags, embedding, metadata
+            INSERT INTO content_metadata (
+                url, title, summary, raw_text, source_type, tags, metadata
             )
-            VALUES ($1, $2, $3, $4, $5, $6, $7::vector(768), $8)
+            VALUES ($1, $2, $3, $4, $5, $6, $7)
             ON CONFLICT (url) DO UPDATE SET
-                title      = EXCLUDED.title,
-                summary    = EXCLUDED.summary,
-                raw_text   = EXCLUDED.raw_text,
+                title       = EXCLUDED.title,
+                summary     = EXCLUDED.summary,
+                raw_text    = EXCLUDED.raw_text,
                 source_type = EXCLUDED.source_type,
-                tags       = EXCLUDED.tags,
-                embedding  = EXCLUDED.embedding,
-                metadata   = EXCLUDED.metadata
+                tags        = EXCLUDED.tags,
+                metadata    = EXCLUDED.metadata
             RETURNING id
         """
 
@@ -95,10 +101,53 @@ class EmbeddingStore:
                 raw_text,
                 source_type,
                 tags,
-                embedding_str,
                 metadata_json,
             )
         return str(row["id"])
+
+    # ------------------------------------------------------------------
+    # Content (chunks) table operations
+    # ------------------------------------------------------------------
+
+    async def delete_chunks(self, content_id: str) -> None:
+        """Delete all chunks for a given content_id."""
+        async with self._pool.acquire() as conn:
+            await conn.execute(
+                "DELETE FROM content WHERE content_id = $1",
+                content_id,
+            )
+
+    async def insert_chunks(
+        self,
+        content_id: str,
+        chunks: list[dict],
+    ) -> None:
+        """Insert chunk rows into the content table.
+
+        Each dict must have: chunk_index, chunk_text, embedding, char_start, char_end.
+        """
+        if not chunks:
+            return
+
+        sql = """
+            INSERT INTO content (
+                content_id, chunk_index, chunk_text, embedding, char_start, char_end
+            )
+            VALUES ($1, $2, $3, $4::vector(768), $5, $6)
+        """
+
+        async with self._pool.acquire() as conn:
+            for chunk in chunks:
+                embedding_str = self._vector_to_str(chunk["embedding"])
+                await conn.execute(
+                    sql,
+                    content_id,
+                    chunk["chunk_index"],
+                    chunk["chunk_text"],
+                    embedding_str,
+                    chunk["char_start"],
+                    chunk["char_end"],
+                )
 
     async def search(
         self,
@@ -108,13 +157,11 @@ class EmbeddingStore:
         tags: list[str] | None = None,
         min_date: Any | None = None,
     ) -> list[dict]:
-        """Return content rows ranked by cosine similarity to query_embedding.
+        """Return chunk rows ranked by cosine similarity, joined with content metadata.
 
         Optional filters:
           source_type — restrict to a single source type
-          tags        — restrict to rows that contain ALL given tags (array contains)
-
-        The halfvec cast ensures the HNSW index is used.
+          tags        — restrict to rows that contain ALL given tags
         """
         embedding_str = self._vector_to_str(query_embedding)
 
@@ -123,15 +170,15 @@ class EmbeddingStore:
 
         if source_type is not None:
             params.append(source_type)
-            conditions.append(f"source_type = ${len(params)}")
+            conditions.append(f"m.source_type = ${len(params)}")
 
         if tags is not None:
             params.append(tags)
-            conditions.append(f"tags @> ${len(params)}")
+            conditions.append(f"m.tags @> ${len(params)}")
 
         if min_date is not None:
             params.append(min_date)
-            conditions.append(f"ingested_at >= ${len(params)}")
+            conditions.append(f"m.ingested_at >= ${len(params)}")
 
         params.append(limit)
         limit_placeholder = f"${len(params)}"
@@ -140,11 +187,14 @@ class EmbeddingStore:
 
         sql = f"""
             SELECT
-                id, url, title, summary, source_type, tags, ingested_at,
-                1 - (embedding::halfvec(768) <=> $1::halfvec(768)) AS similarity
-            FROM content
+                c.id, c.chunk_text, c.chunk_index,
+                m.id AS content_id, m.url, m.title, m.summary,
+                m.source_type, m.tags, m.ingested_at,
+                1 - (c.embedding::halfvec(768) <=> $1::halfvec(768)) AS similarity
+            FROM content c
+            JOIN content_metadata m ON c.content_id = m.id
             {where_clause}
-            ORDER BY embedding::halfvec(768) <=> $1::halfvec(768)
+            ORDER BY c.embedding::halfvec(768) <=> $1::halfvec(768)
             LIMIT {limit_placeholder}
         """
 

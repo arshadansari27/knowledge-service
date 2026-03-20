@@ -30,7 +30,10 @@ def _make_knowledge_store(triples=None, contradictions=None):
 
 
 _CONTENT_ROW = {
-    "id": "uuid-1",
+    "id": "chunk-uuid-1",
+    "chunk_text": "Relevant text about the topic",
+    "chunk_index": 0,
+    "content_id": "content-uuid-1",
     "url": "https://example.com/article",
     "title": "Test Article",
     "summary": "A summary",
