@@ -60,7 +60,9 @@ async def run_migrations(pool: object, migrations_dir: str | Path = "migrations"
                 try:
                     await conn.execute(sql)
                 except Exception as exc:
-                    log.warning("Migration %s failed (may already be applied): %s", sql_file.name, exc)
+                    log.warning(
+                        "Migration %s failed (may already be applied): %s", sql_file.name, exc
+                    )
                 await conn.execute(
                     "INSERT INTO schema_migrations (filename) VALUES ($1)", sql_file.name
                 )
