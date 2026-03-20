@@ -1,7 +1,7 @@
 # Knowledge Service Chunking Enhancement Design
 
 **Date**: 2026-03-20
-**Status**: Draft
+**Status**: Implemented (PR #10, merged 2026-03-20)
 **Author**: Arshad + Claude
 **Related**: `aegis/docs/superpowers/specs/2026-03-20-content-intelligence-pipeline-design.md`
 
@@ -151,6 +151,7 @@ Migration 002: drop old `content` table, create `content_metadata` and new `cont
 ## Implementation Notes
 
 - Chunking runs inside `_process_one_content_request()` after metadata upsert, before triple extraction
-- Embedding calls are batched (embed all chunks in one call via `embed_batch()`)
-- `EmbeddingStore` methods change: `insert_content()` → `insert_content_metadata()`, `search()` rewritten with JOIN, new `insert_chunks()` and `delete_chunks()`
-- The 60s timeout on `/api/content` may need to increase for long documents with many chunks
+- Single chunks use `embed()`, multiple chunks use `embed_batch()` for efficiency
+- `EmbeddingStore` methods: `insert_content_metadata()`, `delete_chunks()`, `insert_chunks()`, `search()` (JOIN-based)
+- Migration runner made idempotent — catches `DuplicateTableError`/`DuplicateObjectError` when docker-entrypoint-initdb.d pre-applies migrations
+- 349 unit tests, verified end-to-end with Docker Compose + LiteLLM proxy

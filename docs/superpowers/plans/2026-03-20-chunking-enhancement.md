@@ -1,6 +1,6 @@
 # Chunking Enhancement Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [x]`) syntax for tracking.
 
 **Goal:** Restructure content storage so every piece of content is stored as chunks (short = 1 chunk, long = N chunks). Search and RAG always operate at chunk level via a single JOIN query.
 
@@ -35,7 +35,7 @@
 **Files:**
 - Create: `migrations/002_content_chunks.sql`
 
-- [ ] **Step 1: Write the migration SQL**
+- [x] **Step 1: Write the migration SQL**
 
 ```sql
 -- 002_content_chunks.sql
@@ -73,7 +73,7 @@ CREATE INDEX idx_content_embedding ON content
 CREATE INDEX idx_content_content_id ON content (content_id);
 ```
 
-- [ ] **Step 2: Commit**
+- [x] **Step 2: Commit**
 
 ```bash
 git add migrations/002_content_chunks.sql
@@ -87,21 +87,21 @@ git commit -m "feat: migration 002 — content_metadata + content as chunks"
 **Files:**
 - Modify: `pyproject.toml`
 
-- [ ] **Step 1: Add dependency to pyproject.toml**
+- [x] **Step 1: Add dependency to pyproject.toml**
 
 In `pyproject.toml`, add `"langchain-text-splitters>=0.3.0"` to the `dependencies` list (after `"pydantic-settings>=2.7.0"`).
 
-- [ ] **Step 2: Sync the environment**
+- [x] **Step 2: Sync the environment**
 
 Run: `uv sync --dev`
 Expected: Resolves and installs `langchain-text-splitters` successfully.
 
-- [ ] **Step 3: Verify import works**
+- [x] **Step 3: Verify import works**
 
 Run: `uv run python -c "from langchain_text_splitters import RecursiveCharacterTextSplitter; print('OK')"`
 Expected: `OK`
 
-- [ ] **Step 4: Commit**
+- [x] **Step 4: Commit**
 
 ```bash
 git add pyproject.toml uv.lock
@@ -118,7 +118,7 @@ git commit -m "feat: add langchain-text-splitters dependency"
 
 ### 3a: `insert_content_metadata()`
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 Replace the `TestInsertContent` class in `tests/test_embedding_store.py` with:
 
@@ -171,12 +171,12 @@ class TestInsertContentMetadata:
         assert "https://example.com/unique" in args
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `uv run pytest tests/test_embedding_store.py::TestInsertContentMetadata -v`
 Expected: FAIL — `AttributeError: 'EmbeddingStore' object has no attribute 'insert_content_metadata'`
 
-- [ ] **Step 3: Write minimal implementation**
+- [x] **Step 3: Write minimal implementation**
 
 In `src/knowledge_service/stores/embedding.py`, replace the `insert_content()` method with:
 
@@ -225,12 +225,12 @@ In `src/knowledge_service/stores/embedding.py`, replace the `insert_content()` m
         return str(row["id"])
 ```
 
-- [ ] **Step 4: Run test to verify it passes**
+- [x] **Step 4: Run test to verify it passes**
 
 Run: `uv run pytest tests/test_embedding_store.py::TestInsertContentMetadata -v`
 Expected: PASS
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add src/knowledge_service/stores/embedding.py tests/test_embedding_store.py
@@ -239,7 +239,7 @@ git commit -m "feat: add EmbeddingStore.insert_content_metadata()"
 
 ### 3b: `delete_chunks()` and `insert_chunks()`
 
-- [ ] **Step 6: Write the failing tests**
+- [x] **Step 6: Write the failing tests**
 
 Add to `tests/test_embedding_store.py`:
 
@@ -299,12 +299,12 @@ class TestInsertChunks:
         conn.execute.assert_not_called()
 ```
 
-- [ ] **Step 7: Run test to verify they fail**
+- [x] **Step 7: Run test to verify they fail**
 
 Run: `uv run pytest tests/test_embedding_store.py::TestDeleteChunks tests/test_embedding_store.py::TestInsertChunks -v`
 Expected: FAIL
 
-- [ ] **Step 8: Write minimal implementation**
+- [x] **Step 8: Write minimal implementation**
 
 Add to `EmbeddingStore` after `insert_content_metadata()`:
 
@@ -353,12 +353,12 @@ Add to `EmbeddingStore` after `insert_content_metadata()`:
                 )
 ```
 
-- [ ] **Step 9: Run test to verify they pass**
+- [x] **Step 9: Run test to verify they pass**
 
 Run: `uv run pytest tests/test_embedding_store.py::TestDeleteChunks tests/test_embedding_store.py::TestInsertChunks -v`
 Expected: PASS
 
-- [ ] **Step 10: Commit**
+- [x] **Step 10: Commit**
 
 ```bash
 git add src/knowledge_service/stores/embedding.py tests/test_embedding_store.py
@@ -367,7 +367,7 @@ git commit -m "feat: add EmbeddingStore.delete_chunks() and insert_chunks()"
 
 ### 3c: Rewrite `search()` with JOIN
 
-- [ ] **Step 11: Write the failing tests**
+- [x] **Step 11: Write the failing tests**
 
 Replace the `TestSearch` class in `tests/test_embedding_store.py`:
 
@@ -444,12 +444,12 @@ class TestSearch:
         assert 42 in args
 ```
 
-- [ ] **Step 12: Run test to verify they fail**
+- [x] **Step 12: Run test to verify they fail**
 
 Run: `uv run pytest tests/test_embedding_store.py::TestSearch -v`
 Expected: FAIL — `search()` still uses old SQL without JOIN.
 
-- [ ] **Step 13: Rewrite `search()` implementation**
+- [x] **Step 13: Rewrite `search()` implementation**
 
 Replace the existing `search()` method in `EmbeddingStore`:
 
@@ -510,12 +510,12 @@ Replace the existing `search()` method in `EmbeddingStore`:
 
 Also remove the old `insert_content()` method (replaced by `insert_content_metadata()`).
 
-- [ ] **Step 14: Run test to verify they pass**
+- [x] **Step 14: Run test to verify they pass**
 
 Run: `uv run pytest tests/test_embedding_store.py::TestSearch -v`
 Expected: PASS
 
-- [ ] **Step 15: Commit**
+- [x] **Step 15: Commit**
 
 ```bash
 git add src/knowledge_service/stores/embedding.py tests/test_embedding_store.py
@@ -529,7 +529,7 @@ git commit -m "feat: rewrite EmbeddingStore.search() with content_metadata JOIN"
 **Files:**
 - Modify: `src/knowledge_service/models.py:316-324`
 
-- [ ] **Step 1: Update SearchResult**
+- [x] **Step 1: Update SearchResult**
 
 In `src/knowledge_service/models.py`, replace the `SearchResult` class:
 
@@ -549,7 +549,7 @@ class SearchResult(BaseModel):
 
 Both `chunk_text` and `chunk_index` are **required** (not optional) since every search result is a chunk.
 
-- [ ] **Step 2: Commit**
+- [x] **Step 2: Commit**
 
 ```bash
 git add src/knowledge_service/models.py
@@ -566,7 +566,7 @@ git commit -m "feat: add required chunk_text, chunk_index to SearchResult"
 
 ### 5a: Tests for always-chunk ingestion
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 Update `tests/test_api_content.py`. First, update the mock helpers:
 
@@ -707,12 +707,12 @@ class TestContentChunking:
         mock_es.delete_chunks.assert_called_once_with("content-uuid-1234")
 ```
 
-- [ ] **Step 2: Run tests to verify they fail**
+- [x] **Step 2: Run tests to verify they fail**
 
 Run: `uv run pytest tests/test_api_content.py::TestContentChunking -v`
 Expected: FAIL — content.py still calls `insert_content()` not the new methods.
 
-- [ ] **Step 3: Rewrite content ingestion**
+- [x] **Step 3: Rewrite content ingestion**
 
 In `src/knowledge_service/api/content.py`, add the import at the top:
 
@@ -786,12 +786,12 @@ Replace steps 1-2 in `_process_one_content_request()` (lines 60-74) with the new
 
 Remove the old `embedding = await embedding_client.embed(embed_text)` and `embedding_store.insert_content(...)` calls.
 
-- [ ] **Step 4: Run chunking tests**
+- [x] **Step 4: Run chunking tests**
 
 Run: `uv run pytest tests/test_api_content.py::TestContentChunking -v`
 Expected: All PASS
 
-- [ ] **Step 5: Update remaining content tests for new mock API**
+- [x] **Step 5: Update remaining content tests for new mock API**
 
 The other test classes in `test_api_content.py` still reference `mock.insert_content` (old API). Update:
 
@@ -803,7 +803,7 @@ The other test classes in `test_api_content.py` still reference `mock.insert_con
 Run: `uv run pytest tests/test_api_content.py -v`
 Fix any remaining failures.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add src/knowledge_service/api/content.py tests/test_api_content.py
@@ -818,7 +818,7 @@ git commit -m "feat: always-chunk content ingestion with content_metadata"
 - Modify: `src/knowledge_service/api/search.py`
 - Modify: `tests/test_api_search.py`
 
-- [ ] **Step 1: Update test fixtures and add chunk search tests**
+- [x] **Step 1: Update test fixtures and add chunk search tests**
 
 Rewrite `tests/test_api_search.py` fixtures and sample data:
 
@@ -893,7 +893,7 @@ app.state.embedding_store = _make_embedding_store_mock(search_rows=<rows_for_thi
 
 Where `<rows_for_this_test>` uses `_SAMPLE_ROW` variants matching what the test expects.
 
-- [ ] **Step 2: Rewrite search endpoint**
+- [x] **Step 2: Rewrite search endpoint**
 
 Replace `src/knowledge_service/api/search.py`:
 
@@ -958,12 +958,12 @@ async def get_search(
 
 No fallback. No deduplication. No sorting. One call.
 
-- [ ] **Step 3: Run all search tests**
+- [x] **Step 3: Run all search tests**
 
 Run: `uv run pytest tests/test_api_search.py -v`
 Expected: All PASS
 
-- [ ] **Step 4: Commit**
+- [x] **Step 4: Commit**
 
 ```bash
 git add src/knowledge_service/api/search.py tests/test_api_search.py
@@ -980,7 +980,7 @@ git commit -m "feat: simplified chunk-level search endpoint"
 
 Since `EmbeddingStore.search()` now returns chunk-level results automatically, the RAG retriever mostly just works. The only change is that `content_results` now contain `chunk_text` and `chunk_index` keys, and the `id` key is now a chunk UUID rather than content UUID.
 
-- [ ] **Step 1: Update RAG retriever test mock**
+- [x] **Step 1: Update RAG retriever test mock**
 
 In `tests/test_rag_retriever.py`, update `_CONTENT_ROW` to match the new `search()` return shape:
 
@@ -1000,12 +1000,12 @@ _CONTENT_ROW = {
 }
 ```
 
-- [ ] **Step 2: Run existing RAG tests**
+- [x] **Step 2: Run existing RAG tests**
 
 Run: `uv run pytest tests/test_rag_retriever.py -v`
 Expected: All PASS (the retriever accesses `row["url"]`, `row.get("title")`, etc. — all still present in the new shape). If any tests reference `row["id"]` as a content_id, update them to use `row["content_id"]`.
 
-- [ ] **Step 3: Update RAG prompt builder for chunk text**
+- [x] **Step 3: Update RAG prompt builder for chunk text**
 
 In `src/knowledge_service/clients/rag.py`, the `build_rag_prompt()` function currently uses `row.get("summary")` for context. Update to prefer `chunk_text`:
 
@@ -1021,12 +1021,12 @@ In `src/knowledge_service/clients/rag.py`, the `build_rag_prompt()` function cur
         sections.append("")
 ```
 
-- [ ] **Step 4: Run all RAG tests**
+- [x] **Step 4: Run all RAG tests**
 
 Run: `uv run pytest tests/test_rag_retriever.py tests/test_api_ask.py -v`
 Expected: All PASS
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add src/knowledge_service/stores/rag.py src/knowledge_service/clients/rag.py tests/test_rag_retriever.py
@@ -1037,22 +1037,22 @@ git commit -m "feat: RAG retriever uses chunk-level search results"
 
 ## Task 8: Full test suite + lint
 
-- [ ] **Step 1: Run full test suite**
+- [x] **Step 1: Run full test suite**
 
 Run: `uv run pytest tests/ -v`
 Expected: All PASS
 
-- [ ] **Step 2: Run linter**
+- [x] **Step 2: Run linter**
 
 Run: `uv run ruff check .`
 Expected: No errors
 
-- [ ] **Step 3: Run formatter**
+- [x] **Step 3: Run formatter**
 
 Run: `uv run ruff format --check .`
 Expected: No issues (or run `uv run ruff format .` to fix)
 
-- [ ] **Step 4: Commit if any fixes**
+- [x] **Step 4: Commit if any fixes**
 
 ```bash
 git add -A
@@ -1066,7 +1066,7 @@ git commit -m "chore: lint fixes"
 **Files:**
 - Modify: `src/knowledge_service/stores/embedding.py:1-26`
 
-- [ ] **Step 1: Update EmbeddingStore module docstring**
+- [x] **Step 1: Update EmbeddingStore module docstring**
 
 ```python
 """EmbeddingStore: asyncpg-backed store for pgvector semantic similarity search.
@@ -1106,7 +1106,7 @@ using halfvec_cosine_ops. Queries must cast to halfvec to exploit those indexes.
 """
 ```
 
-- [ ] **Step 2: Commit**
+- [x] **Step 2: Commit**
 
 ```bash
 git add src/knowledge_service/stores/embedding.py
