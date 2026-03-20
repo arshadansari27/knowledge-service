@@ -42,7 +42,8 @@ FastAPI Process
 └── ProvenanceStore    PostgreSQL — source tracking and evidence trail
 
 PostgreSQL
-├── content            Raw content rows with embeddings (pgvector halfvec)
+├── content_metadata   Document metadata (url, title, source_type, tags, raw_text)
+├── content            Chunk rows with embeddings (pgvector halfvec) — every doc has ≥1 chunk
 ├── provenance         Per-source evidence rows linked to triples by SHA-256 hash
 └── ingestion_events   Append-only audit log
 ```
@@ -114,7 +115,7 @@ POST /api/content
 Content-Type: application/json
 ```
 
-Ingest a piece of content with its associated knowledge. Generates an embedding for semantic search, stores the content in PostgreSQL, and writes all knowledge items to the RDF graph with provenance.
+Ingest a piece of content with its associated knowledge. Chunks the text (short content = 1 chunk, long content ≥4000 chars = multiple overlapping chunks), generates embeddings per chunk for semantic search, stores metadata and chunks in PostgreSQL, and writes all knowledge items to the RDF graph with provenance.
 
 Accepts a **single object** or a **JSON array** for batch processing. When an array is sent, a matching array of responses is returned.
 
@@ -266,7 +267,7 @@ All 7 knowledge types are accepted. Examples for each:
 GET /api/search?q=cold+exposure+dopamine&limit=10&source_type=article
 ```
 
-Searches ingested content by semantic similarity using pgvector cosine distance. Returns content rows ranked by similarity to the query.
+Searches ingested content by semantic similarity using pgvector cosine distance. Returns chunk-level results — each result is the most relevant chunk of a document, not the full document. Short documents have a single chunk; long documents (≥4000 chars) are split into overlapping chunks.
 
 **Parameters:**
 - `q` (required) — query text
@@ -285,7 +286,9 @@ Searches ingested content by semantic similarity using pgvector cosine distance.
     "similarity": 0.94,
     "source_type": "article",
     "tags": ["health"],
-    "ingested_at": "2026-03-18T10:00:00Z"
+    "ingested_at": "2026-03-18T10:00:00Z",
+    "chunk_text": "The relevant section matching the query...",
+    "chunk_index": 0
   }
 ]
 ```
@@ -591,7 +594,7 @@ All tests mock external dependencies — no PostgreSQL or LLM provider required.
 GitHub Actions pipeline on every push/merge to `main`:
 
 1. **Lint** — `ruff check` + `ruff format --check`
-2. **Test** — `pytest tests/ -v` (330 tests)
+2. **Test** — `pytest tests/ -v` (349 tests)
 3. **Version bump** — auto-increments patch version in `pyproject.toml`, commits back to `main`, creates `vX.Y.Z` git tag
 4. **Docker build** — builds and pushes to Docker Hub as `arshadansari27/knowledge-service:X.Y.Z` and `:latest`
 

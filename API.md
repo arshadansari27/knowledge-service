@@ -166,7 +166,7 @@ curl -X POST http://localhost:8000/api/claims \
 
 ## GET /api/search
 
-Search ingested content by semantic similarity using pgvector cosine distance.
+Search ingested content by semantic similarity using pgvector cosine distance. Returns chunk-level results — each result is a chunk of a document, not the full document.
 
 **Query Parameters:**
 
@@ -189,10 +189,17 @@ Search ingested content by semantic similarity using pgvector cosine distance.
     "similarity": 0.87,
     "source_type": "article",
     "tags": ["health", "sleep"],
-    "ingested_at": "2025-01-15T10:30:00Z"
+    "ingested_at": "2025-01-15T10:30:00Z",
+    "chunk_text": "The relevant section of the document matching the query...",
+    "chunk_index": 0
   }
 ]
 ```
+
+| Field | Description |
+|-------|-------------|
+| `chunk_text` | The text of the matching chunk (always present) |
+| `chunk_index` | Position of this chunk within its parent document (0-indexed) |
 
 ### Example
 
