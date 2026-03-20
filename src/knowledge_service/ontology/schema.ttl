@@ -25,3 +25,29 @@ ks:occurredAt          rdf:type rdf:Property ; rdfs:label "occurred at" .
 ks:amount              rdf:type rdf:Property ; rdfs:label "amount" .
 ks:currency            rdf:type rdf:Property ; rdfs:label "currency" .
 ks:oppositePredicate   rdf:type rdf:Property ; rdfs:label "opposite predicate" .
+
+# Domain predicates (canonical vocabulary for extraction)
+ks:causes          rdf:type rdf:Property ; rdfs:label "causes" .
+ks:increases       rdf:type rdf:Property ; rdfs:label "increases" .
+ks:decreases       rdf:type rdf:Property ; rdfs:label "decreases" .
+ks:inhibits        rdf:type rdf:Property ; rdfs:label "inhibits" .
+ks:activates       rdf:type rdf:Property ; rdfs:label "activates" .
+ks:is_a            rdf:type rdf:Property ; rdfs:label "is a" .
+ks:part_of         rdf:type rdf:Property ; rdfs:label "part of" .
+ks:located_in      rdf:type rdf:Property ; rdfs:label "located in" .
+ks:created_by      rdf:type rdf:Property ; rdfs:label "created by" .
+ks:depends_on      rdf:type rdf:Property ; rdfs:label "depends on" .
+ks:related_to      rdf:type rdf:Property ; rdfs:label "related to" .
+ks:contains        rdf:type rdf:Property ; rdfs:label "contains" .
+ks:precedes        rdf:type rdf:Property ; rdfs:label "precedes" .
+ks:follows         rdf:type rdf:Property ; rdfs:label "follows" .
+ks:has_property    rdf:type rdf:Property ; rdfs:label "has property" .
+ks:used_for        rdf:type rdf:Property ; rdfs:label "used for" .
+ks:produced_by     rdf:type rdf:Property ; rdfs:label "produced by" .
+ks:associated_with rdf:type rdf:Property ; rdfs:label "associated with" .
+
+# Opposite predicate pairs
+ks:increases       ks:oppositePredicate ks:decreases .
+ks:activates       ks:oppositePredicate ks:inhibits .
+ks:precedes        ks:oppositePredicate ks:follows .
+ks:contains        ks:oppositePredicate ks:part_of .
