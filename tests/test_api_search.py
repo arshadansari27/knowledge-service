@@ -23,7 +23,10 @@ from tests.conftest import make_test_session_cookie
 _NOW = datetime(2024, 6, 1, 12, 0, 0, tzinfo=timezone.utc)
 
 _SAMPLE_ROW = {
-    "id": "content-uuid-1234",
+    "id": "chunk-uuid-1",
+    "chunk_text": "The relevant text from this article",
+    "chunk_index": 0,
+    "content_id": "content-uuid-1234",
     "url": "https://example.com/article",
     "title": "Test Article",
     "summary": "A test article summary",
@@ -68,6 +71,12 @@ def _make_embedding_client_mock():
     return mock
 
 
+def _make_embedding_store_mock(search_rows=None):
+    mock = AsyncMock()
+    mock.search.return_value = search_rows or []
+    return mock
+
+
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------
@@ -80,6 +89,7 @@ async def client():
     app.state.knowledge_store = _make_knowledge_store_mock()
     app.state.pg_pool = _make_pg_pool_mock()
     app.state.embedding_client = _make_embedding_client_mock()
+    app.state.embedding_store = _make_embedding_store_mock(search_rows=[_SAMPLE_ROW])
 
     transport = ASGITransport(app=app)
     async with AsyncClient(
@@ -97,6 +107,7 @@ async def empty_client():
     app.state.knowledge_store = _make_knowledge_store_mock()
     app.state.pg_pool = _make_pg_pool_mock(rows=[])
     app.state.embedding_client = _make_embedding_client_mock()
+    app.state.embedding_store = _make_embedding_store_mock()
 
     transport = ASGITransport(app=app)
     async with AsyncClient(
@@ -135,6 +146,8 @@ class TestGetSearchBasic:
         assert "source_type" in result
         assert "tags" in result
         assert "ingested_at" in result
+        assert "chunk_text" in result
+        assert "chunk_index" in result
 
     async def test_result_values_match_row(self, client):
         response = await client.get("/api/search", params={"q": "test query"})
@@ -146,6 +159,8 @@ class TestGetSearchBasic:
         assert result["summary"] == "A test article summary"
         assert result["source_type"] == "article"
         assert result["tags"] == ["python", "testing"]
+        assert result["chunk_text"] == "The relevant text from this article"
+        assert result["chunk_index"] == 0
 
 
 # ---------------------------------------------------------------------------
@@ -174,6 +189,7 @@ class TestGetSearchSimilarity:
         app.state.knowledge_store = _make_knowledge_store_mock()
         app.state.pg_pool = _make_pg_pool_mock(rows=rows)
         app.state.embedding_client = _make_embedding_client_mock()
+        app.state.embedding_store = _make_embedding_store_mock(search_rows=rows)
 
         transport = ASGITransport(app=app)
         async with AsyncClient(
@@ -222,6 +238,7 @@ class TestGetSearchValidation:
         app.state.knowledge_store = _make_knowledge_store_mock()
         app.state.pg_pool = _make_pg_pool_mock(rows=[])
         app.state.embedding_client = mock_ec
+        app.state.embedding_store = _make_embedding_store_mock()
 
         transport = ASGITransport(app=app)
         async with AsyncClient(
@@ -260,6 +277,7 @@ class TestGetSearchEmbedding:
         app.state.knowledge_store = _make_knowledge_store_mock()
         app.state.pg_pool = _make_pg_pool_mock(rows=[])
         app.state.embedding_client = mock_ec
+        app.state.embedding_store = _make_embedding_store_mock()
 
         transport = ASGITransport(app=app)
         async with AsyncClient(
@@ -277,6 +295,7 @@ class TestGetSearchEmbedding:
         app.state.knowledge_store = _make_knowledge_store_mock()
         app.state.pg_pool = _make_pg_pool_mock(rows=[])
         app.state.embedding_client = mock_ec
+        app.state.embedding_store = _make_embedding_store_mock()
 
         transport = ASGITransport(app=app)
         async with AsyncClient(
@@ -302,6 +321,7 @@ class TestGetSearchNullSummary:
         app.state.knowledge_store = _make_knowledge_store_mock()
         app.state.pg_pool = _make_pg_pool_mock(rows=rows)
         app.state.embedding_client = _make_embedding_client_mock()
+        app.state.embedding_store = _make_embedding_store_mock(search_rows=rows)
 
         transport = ASGITransport(app=app)
         async with AsyncClient(
@@ -321,6 +341,7 @@ class TestGetSearchNullSummary:
         app.state.knowledge_store = _make_knowledge_store_mock()
         app.state.pg_pool = _make_pg_pool_mock(rows=rows)
         app.state.embedding_client = _make_embedding_client_mock()
+        app.state.embedding_store = _make_embedding_store_mock(search_rows=rows)
 
         transport = ASGITransport(app=app)
         async with AsyncClient(

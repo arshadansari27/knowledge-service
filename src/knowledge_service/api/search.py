@@ -20,17 +20,18 @@ async def get_search(
 ) -> list[SearchResult]:
     """Search ingested content by semantic similarity.
 
-    Processing pipeline:
-    1. Embed the query text via Ollama.
-    2. Query EmbeddingStore for content rows ranked by cosine similarity.
-    3. Return a list of SearchResult with similarity scores.
+    Queries chunk embeddings in the content table, joined with content_metadata
+    for filtering and metadata. Every result is a chunk.
     """
     embedding_client = request.app.state.embedding_client
-    pg_pool = request.app.state.pg_pool
+    embedding_store = getattr(request.app.state, "embedding_store", None)
+
+    if embedding_store is None:
+        pg_pool = request.app.state.pg_pool
+        embedding_store = EmbeddingStore(pg_pool)
 
     embedding = await embedding_client.embed(q)
 
-    embedding_store = EmbeddingStore(pg_pool)
     rows = await embedding_store.search(
         query_embedding=embedding,
         limit=limit,
@@ -38,12 +39,9 @@ async def get_search(
         tags=tags,
     )
 
-    # ------------------------------------------------------------------
-    # Step 3: Map to SearchResult
-    # ------------------------------------------------------------------
     return [
         SearchResult(
-            content_id=str(row["id"]),
+            content_id=str(row["content_id"]),
             url=row["url"],
             title=row["title"],
             summary=row.get("summary"),
@@ -51,6 +49,8 @@ async def get_search(
             source_type=row["source_type"],
             tags=list(row["tags"]) if row["tags"] else [],
             ingested_at=row["ingested_at"],
+            chunk_text=row["chunk_text"],
+            chunk_index=row["chunk_index"],
         )
         for row in rows
     ]
