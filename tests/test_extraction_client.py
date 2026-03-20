@@ -4,9 +4,9 @@ import pytest
 
 from knowledge_service.clients.llm import (
     ExtractionClient,
-    _normalize_item_uris,
-    _to_entity_uri,
-    _to_predicate_uri,
+    normalize_item_uris,
+    to_entity_uri,
+    to_predicate_uri,
     resolve_predicate_synonym,
 )
 
@@ -138,19 +138,19 @@ class TestExtract:
 
 
 class TestUriNormalisation:
-    def test_to_entity_uri_slugifies(self):
-        assert _to_entity_uri("cold exposure") == "http://knowledge.local/data/cold_exposure"
+    def testto_entity_uri_slugifies(self):
+        assert to_entity_uri("cold exposure") == "http://knowledge.local/data/cold_exposure"
 
-    def test_to_entity_uri_preserves_existing_uri(self):
+    def testto_entity_uri_preserves_existing_uri(self):
         uri = "http://schema.org/Person"
-        assert _to_entity_uri(uri) == uri
+        assert to_entity_uri(uri) == uri
 
-    def test_to_predicate_uri_slugifies(self):
-        assert _to_predicate_uri("increases") == "http://knowledge.local/schema/increases"
+    def testto_predicate_uri_slugifies(self):
+        assert to_predicate_uri("increases") == "http://knowledge.local/schema/increases"
 
-    def test_to_predicate_uri_preserves_existing_uri(self):
+    def testto_predicate_uri_preserves_existing_uri(self):
         uri = "http://knowledge.local/schema/depends_on"
-        assert _to_predicate_uri(uri) == uri
+        assert to_predicate_uri(uri) == uri
 
     def test_normalize_claim_subject_and_predicate(self):
         item = {
@@ -160,7 +160,7 @@ class TestUriNormalisation:
             "object": "dopamine",
             "confidence": 0.7,
         }
-        result = _normalize_item_uris(item)
+        result = normalize_item_uris(item)
         assert result["subject"] == "http://knowledge.local/data/cold_exposure"
         assert result["predicate"] == "http://knowledge.local/schema/increases"
         assert result["object"] == "http://knowledge.local/data/dopamine"
@@ -173,7 +173,7 @@ class TestUriNormalisation:
             "object": "a value with spaces",
             "confidence": 0.7,
         }
-        result = _normalize_item_uris(item)
+        result = normalize_item_uris(item)
         assert result["object"] == "a value with spaces"
 
     def test_normalize_resolves_predicate_synonym(self):
@@ -184,7 +184,7 @@ class TestUriNormalisation:
             "object": "y",
             "confidence": 0.7,
         }
-        result = _normalize_item_uris(item)
+        result = normalize_item_uris(item)
         assert result["predicate"] == "http://knowledge.local/schema/increases"
 
     def test_object_type_entity_converts_to_uri(self):
@@ -196,7 +196,7 @@ class TestUriNormalisation:
             "object_type": "entity",
             "confidence": 0.7,
         }
-        result = _normalize_item_uris(item)
+        result = normalize_item_uris(item)
         assert result["object"].startswith("http://knowledge.local/data/")
         assert "object_type" not in result
 
@@ -209,7 +209,7 @@ class TestUriNormalisation:
             "object_type": "literal",
             "confidence": 0.7,
         }
-        result = _normalize_item_uris(item)
+        result = normalize_item_uris(item)
         # Even though "dopamine" has no spaces and is short, object_type=literal wins
         assert result["object"] == "dopamine"
         assert "object_type" not in result
@@ -222,7 +222,7 @@ class TestUriNormalisation:
             "object": "dopamine",
             "confidence": 0.7,
         }
-        result = _normalize_item_uris(item)
+        result = normalize_item_uris(item)
         # No object_type → heuristic: short, no spaces → entity URI
         assert result["object"] == "http://knowledge.local/data/dopamine"
 

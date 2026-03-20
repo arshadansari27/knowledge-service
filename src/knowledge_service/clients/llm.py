@@ -92,6 +92,8 @@ CANONICAL_PREDICATES: list[str] = [
     "associated_with",
 ]
 
+_CANONICAL_SET: frozenset[str] = frozenset(CANONICAL_PREDICATES)
+
 PREDICATE_SYNONYMS: dict[str, str] = {
     # increases
     "boosts": "increases",
@@ -165,12 +167,12 @@ def resolve_predicate_synonym(predicate: str) -> str:
     slug = re.sub(r"_+", "_", slug).strip("_")
     if slug in PREDICATE_SYNONYMS:
         return PREDICATE_SYNONYMS[slug]
-    if slug in CANONICAL_PREDICATES:
+    if slug in _CANONICAL_SET:
         return slug
     return predicate
 
 
-def _to_entity_uri(value: str) -> str:
+def to_entity_uri(value: str) -> str:
     if value.startswith(("http://", "https://", "urn:")):
         return value
     slug = re.sub(r"[^\w]", "_", value.lower().strip())
@@ -178,7 +180,7 @@ def _to_entity_uri(value: str) -> str:
     return f"{_KS_ENTITY}{slug}"
 
 
-def _to_predicate_uri(value: str) -> str:
+def to_predicate_uri(value: str) -> str:
     if value.startswith(("http://", "https://", "urn:")):
         return value
     slug = re.sub(r"[^\w]", "_", value.lower().strip())
@@ -202,7 +204,7 @@ def _is_object_entity(item: dict) -> bool:
     return bool(obj) and " " not in obj and len(obj) <= 60
 
 
-def _normalize_item_uris(item: dict) -> dict:
+def normalize_item_uris(item: dict) -> dict:
     """Normalize subject/predicate string fields to URIs based on knowledge_type.
 
     Also resolves predicate synonyms and strips the ``object_type`` helper field.
@@ -211,21 +213,21 @@ def _normalize_item_uris(item: dict) -> dict:
     item = dict(item)
     if kt in ("Claim", "Fact", "Relationship"):
         if "subject" in item:
-            item["subject"] = _to_entity_uri(item["subject"])
+            item["subject"] = to_entity_uri(item["subject"])
         if "predicate" in item:
             item["predicate"] = resolve_predicate_synonym(item["predicate"])
-            item["predicate"] = _to_predicate_uri(item["predicate"])
+            item["predicate"] = to_predicate_uri(item["predicate"])
         if _is_object_entity(item):
-            item["object"] = _to_entity_uri(item["object"])
+            item["object"] = to_entity_uri(item["object"])
     elif kt == "TemporalState":
         if "subject" in item:
-            item["subject"] = _to_entity_uri(item["subject"])
+            item["subject"] = to_entity_uri(item["subject"])
         if "property" in item:
             item["property"] = resolve_predicate_synonym(item["property"])
-            item["property"] = _to_predicate_uri(item["property"])
+            item["property"] = to_predicate_uri(item["property"])
     elif kt == "Event":
         if "subject" in item:
-            item["subject"] = _to_entity_uri(item["subject"])
+            item["subject"] = to_entity_uri(item["subject"])
     # Strip object_type — not part of the Pydantic model
     item.pop("object_type", None)
     return item

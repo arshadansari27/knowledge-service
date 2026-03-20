@@ -13,8 +13,8 @@ from langchain_text_splitters import RecursiveCharacterTextSplitter
 from knowledge_service._utils import _is_uri
 from knowledge_service.api._ingest import process_triple
 from knowledge_service.clients.llm import (
-    _to_entity_uri,
-    _to_predicate_uri,
+    to_entity_uri,
+    to_predicate_uri,
     resolve_predicate_synonym,
 )
 from knowledge_service.config import settings
@@ -74,22 +74,22 @@ def _apply_uri_fallback(item) -> object:
 
     if kt in ("Claim", "Fact", "Relationship"):
         if not _is_uri(item.subject):
-            item.subject = _to_entity_uri(item.subject)
+            item.subject = to_entity_uri(item.subject)
         if not _is_uri(item.predicate):
             item.predicate = resolve_predicate_synonym(item.predicate)
-            item.predicate = _to_predicate_uri(item.predicate)
+            item.predicate = to_predicate_uri(item.predicate)
         obj = item.object
         if obj and not _is_uri(obj) and " " not in obj and len(obj) <= 60:
-            item.object = _to_entity_uri(obj)
+            item.object = to_entity_uri(obj)
     elif kt == "TemporalState":
         if not _is_uri(item.subject):
-            item.subject = _to_entity_uri(item.subject)
+            item.subject = to_entity_uri(item.subject)
         if not _is_uri(item.property):
             item.property = resolve_predicate_synonym(item.property)
-            item.property = _to_predicate_uri(item.property)
+            item.property = to_predicate_uri(item.property)
     elif kt == "Event":
         if not _is_uri(item.subject):
-            item.subject = _to_entity_uri(item.subject)
+            item.subject = to_entity_uri(item.subject)
 
     return item
 

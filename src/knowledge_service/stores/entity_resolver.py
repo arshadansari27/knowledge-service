@@ -96,7 +96,7 @@ class EntityResolver:
         4. If no match, create new predicate URI and store embedding
         """
         from knowledge_service.clients.llm import (  # noqa: PLC0415
-            CANONICAL_PREDICATES,
+            _CANONICAL_SET,
             resolve_predicate_synonym,
         )
 
@@ -104,7 +104,7 @@ class EntityResolver:
         resolved = resolve_predicate_synonym(label)
         slug = re.sub(r"[^\w]", "_", resolved.lower().strip())
         slug = re.sub(r"_+", "_", slug).strip("_")
-        if slug in CANONICAL_PREDICATES:
+        if slug in _CANONICAL_SET:
             return f"{KS}{slug}"
 
         # Embed and search

@@ -8,7 +8,7 @@ import asyncpg.exceptions
 from fastapi import FastAPI
 
 from knowledge_service.clients.federation import FederationClient
-from knowledge_service.clients.llm import EmbeddingClient, ExtractionClient
+from knowledge_service.clients.llm import EmbeddingClient, ExtractionClient, LLMClientError
 from knowledge_service.clients.rag import RAGClient
 from knowledge_service.config import settings
 from knowledge_service.ontology.bootstrap import bootstrap_ontology
@@ -97,8 +97,8 @@ async def _seed_predicate_embeddings(embedding_store: EmbeddingStore, embedding_
     labels = [p.replace("_", " ") for p in CANONICAL_PREDICATES]
     try:
         embeddings = await embedding_client.embed_batch(labels)
-    except Exception:
-        log.warning("Failed to seed predicate embeddings — embedding API unavailable")
+    except (LLMClientError, OSError) as exc:
+        log.warning("Failed to seed predicate embeddings — embedding API unavailable: %s", exc)
         return
 
     for predicate, label, embedding in zip(CANONICAL_PREDICATES, labels, embeddings):
