@@ -82,6 +82,31 @@ async def run_migrations(pool: object, migrations_dir: str | Path = "migrations"
             await conn.execute("SELECT pg_advisory_unlock(hashtext('knowledge_migrations'))")
 
 
+async def _seed_predicate_embeddings(embedding_store: EmbeddingStore, embedding_client) -> None:
+    """Seed the predicate_embeddings table with canonical predicates.
+
+    Embeds each canonical predicate label and upserts into the table so
+    that predicate resolution has a warm vocabulary from the start.
+    """
+    import logging  # noqa: PLC0415
+
+    from knowledge_service.clients.llm import CANONICAL_PREDICATES  # noqa: PLC0415
+    from knowledge_service.ontology.namespaces import KS  # noqa: PLC0415  # noqa: F811
+
+    log = logging.getLogger(__name__)
+    labels = [p.replace("_", " ") for p in CANONICAL_PREDICATES]
+    try:
+        embeddings = await embedding_client.embed_batch(labels)
+    except Exception:
+        log.warning("Failed to seed predicate embeddings — embedding API unavailable")
+        return
+
+    for predicate, label, embedding in zip(CANONICAL_PREDICATES, labels, embeddings):
+        uri = f"{KS}{predicate}"
+        await embedding_store.insert_predicate_embedding(uri=uri, label=label, embedding=embedding)
+    log.info("Seeded %d canonical predicate embeddings", len(CANONICAL_PREDICATES))
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     """Manage application startup and shutdown.
@@ -136,6 +161,9 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         app.state.embedding_client,
         federation_client=federation_client,
     )
+
+    # Seed canonical predicate embeddings (idempotent — upserts)
+    await _seed_predicate_embeddings(embedding_store, app.state.embedding_client)
 
     # RAG components
     rag_model = settings.llm_rag_model or settings.llm_chat_model

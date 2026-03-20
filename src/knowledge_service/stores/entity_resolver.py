@@ -11,7 +11,7 @@ import asyncio
 import logging
 import re
 
-from knowledge_service.ontology.namespaces import KS_DATA, OWL
+from knowledge_service.ontology.namespaces import KS, KS_DATA, OWL
 
 logger = logging.getLogger(__name__)
 
@@ -20,6 +20,7 @@ class EntityResolver:
     """Resolves concept labels to entity URIs, reusing existing entities when possible."""
 
     SIMILARITY_THRESHOLD = 0.85
+    PREDICATE_SIMILARITY_THRESHOLD = 0.90
 
     def __init__(self, knowledge_store, embedding_store, embedding_client, federation_client=None):
         self._knowledge_store = knowledge_store
@@ -83,5 +84,43 @@ class EntityResolver:
         uri = f"{KS_DATA}{self._slugify(label)}"
         await self._embedding_store.insert_entity_embedding(
             uri=uri, label=label, rdf_type=rdf_type or "", embedding=embedding
+        )
+        return uri
+
+    async def resolve_predicate(self, label: str) -> str:
+        """Resolve a predicate label to a canonical predicate URI.
+
+        1. Check synonym lookup for exact match (no embedding call needed)
+        2. Embed the label and search predicate_embeddings
+        3. If match >= threshold (0.90), return existing URI
+        4. If no match, create new predicate URI and store embedding
+        """
+        from knowledge_service.clients.llm import (  # noqa: PLC0415
+            CANONICAL_PREDICATES,
+            resolve_predicate_synonym,
+        )
+
+        # Fast path: exact synonym or canonical match (no embedding call needed)
+        resolved = resolve_predicate_synonym(label)
+        slug = re.sub(r"[^\w]", "_", resolved.lower().strip())
+        slug = re.sub(r"_+", "_", slug).strip("_")
+        if slug in CANONICAL_PREDICATES:
+            return f"{KS}{slug}"
+
+        # Embed and search
+        embedding = await self._embedding_client.embed(label)
+        candidates = await self._embedding_store.search_predicates(
+            query_embedding=embedding, limit=3
+        )
+
+        for candidate in candidates:
+            if candidate["similarity"] >= self.PREDICATE_SIMILARITY_THRESHOLD:
+                return candidate["uri"]
+
+        # No match — create new predicate
+        slug = self._slugify(label)
+        uri = f"{KS}{slug}"
+        await self._embedding_store.insert_predicate_embedding(
+            uri=uri, label=label, embedding=embedding
         )
         return uri

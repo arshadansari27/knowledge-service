@@ -12,6 +12,11 @@ from langchain_text_splitters import RecursiveCharacterTextSplitter
 
 from knowledge_service._utils import _is_uri
 from knowledge_service.api._ingest import process_triple
+from knowledge_service.clients.llm import (
+    _to_entity_uri,
+    _to_predicate_uri,
+    resolve_predicate_synonym,
+)
 from knowledge_service.config import settings
 from knowledge_service.models import ContentRequest, ContentResponse, expand_to_triples
 
@@ -27,13 +32,19 @@ _splitter = RecursiveCharacterTextSplitter(
 
 
 async def _resolve_labels(item, entity_resolver) -> tuple[int, object]:
-    """Resolve entity labels in a knowledge item. Returns (count, updated_item)."""
+    """Resolve entity labels in a knowledge item via embedding similarity.
+
+    Returns (count_resolved, updated_item).
+    """
     resolved = 0
     kt = item.knowledge_type.value
 
     if kt in ("Claim", "Fact", "Relationship"):
         if not _is_uri(item.subject):
             item.subject = await entity_resolver.resolve(item.subject)
+            resolved += 1
+        if not _is_uri(item.predicate):
+            item.predicate = await entity_resolver.resolve_predicate(item.predicate)
             resolved += 1
         if not _is_uri(item.object) and " " not in item.object and len(item.object) <= 60:
             item.object = await entity_resolver.resolve(item.object)
@@ -42,12 +53,45 @@ async def _resolve_labels(item, entity_resolver) -> tuple[int, object]:
         if not _is_uri(item.subject):
             item.subject = await entity_resolver.resolve(item.subject)
             resolved += 1
+        if not _is_uri(item.property):
+            item.property = await entity_resolver.resolve_predicate(item.property)
+            resolved += 1
     elif kt == "Event":
         if not _is_uri(item.subject):
             item.subject = await entity_resolver.resolve(item.subject)
             resolved += 1
 
     return resolved, item
+
+
+def _apply_uri_fallback(item) -> object:
+    """Ensure all subject/predicate/object fields are URIs.
+
+    Called after entity resolution to catch any fields that weren't resolved
+    (e.g., predicates, or when entity_resolver is None).
+    """
+    kt = item.knowledge_type.value
+
+    if kt in ("Claim", "Fact", "Relationship"):
+        if not _is_uri(item.subject):
+            item.subject = _to_entity_uri(item.subject)
+        if not _is_uri(item.predicate):
+            item.predicate = resolve_predicate_synonym(item.predicate)
+            item.predicate = _to_predicate_uri(item.predicate)
+        obj = item.object
+        if obj and not _is_uri(obj) and " " not in obj and len(obj) <= 60:
+            item.object = _to_entity_uri(obj)
+    elif kt == "TemporalState":
+        if not _is_uri(item.subject):
+            item.subject = _to_entity_uri(item.subject)
+        if not _is_uri(item.property):
+            item.property = resolve_predicate_synonym(item.property)
+            item.property = _to_predicate_uri(item.property)
+    elif kt == "Event":
+        if not _is_uri(item.subject):
+            item.subject = _to_entity_uri(item.subject)
+
+    return item
 
 
 async def _process_one_content_request(body: ContentRequest, request: Request) -> ContentResponse:
@@ -133,6 +177,10 @@ async def _process_one_content_request(body: ContentRequest, request: Request) -
         for i, item in enumerate(knowledge):
             count, knowledge[i] = await _resolve_labels(item, entity_resolver)
             entities_resolved += count
+
+    # Step 2.8: Ensure all fields are proper URIs (fallback for unresolved fields)
+    for i, item in enumerate(knowledge):
+        knowledge[i] = _apply_uri_fallback(item)
 
     # Step 3: Expand all knowledge items to triples and process
     triples_created = 0

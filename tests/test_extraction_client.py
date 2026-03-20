@@ -4,9 +4,10 @@ import pytest
 
 from knowledge_service.clients.llm import (
     ExtractionClient,
+    _normalize_item_uris,
     _to_entity_uri,
     _to_predicate_uri,
-    _normalize_item_uris,
+    resolve_predicate_synonym,
 )
 
 _BASE = "http://llm-test"
@@ -118,6 +119,17 @@ class TestExtract:
         assert headers["authorization"] == "Bearer sk-mykey"
         await client.close()
 
+    async def test_extract_returns_raw_labels_not_uris(self, mock_llm):
+        """extract() should return items with original labels, not pre-normalized URIs."""
+        client = ExtractionClient(base_url=_BASE, model="qwen3:14b", api_key=_KEY)
+        result = await client.extract("Cold exposure increases dopamine.")
+        assert len(result) == 1
+        # Subject/predicate/object should be raw labels, NOT http:// URIs
+        assert result[0].subject == "cold_exposure"
+        assert result[0].predicate == "increases"
+        assert result[0].object == "dopamine"
+        await client.close()
+
     async def test_close_is_idempotent(self, mock_llm):
         client = ExtractionClient(base_url=_BASE, model="qwen3:14b", api_key=_KEY)
         await client.extract("text")
@@ -164,6 +176,76 @@ class TestUriNormalisation:
         result = _normalize_item_uris(item)
         assert result["object"] == "a value with spaces"
 
+    def test_normalize_resolves_predicate_synonym(self):
+        item = {
+            "knowledge_type": "Claim",
+            "subject": "x",
+            "predicate": "boosts",
+            "object": "y",
+            "confidence": 0.7,
+        }
+        result = _normalize_item_uris(item)
+        assert result["predicate"] == "http://knowledge.local/schema/increases"
+
+    def test_object_type_entity_converts_to_uri(self):
+        item = {
+            "knowledge_type": "Claim",
+            "subject": "x",
+            "predicate": "p",
+            "object": "dopamine levels in the brain",
+            "object_type": "entity",
+            "confidence": 0.7,
+        }
+        result = _normalize_item_uris(item)
+        assert result["object"].startswith("http://knowledge.local/data/")
+        assert "object_type" not in result
+
+    def test_object_type_literal_preserved(self):
+        item = {
+            "knowledge_type": "Claim",
+            "subject": "x",
+            "predicate": "p",
+            "object": "dopamine",
+            "object_type": "literal",
+            "confidence": 0.7,
+        }
+        result = _normalize_item_uris(item)
+        # Even though "dopamine" has no spaces and is short, object_type=literal wins
+        assert result["object"] == "dopamine"
+        assert "object_type" not in result
+
+    def test_missing_object_type_falls_back_to_heuristic(self):
+        item = {
+            "knowledge_type": "Claim",
+            "subject": "x",
+            "predicate": "p",
+            "object": "dopamine",
+            "confidence": 0.7,
+        }
+        result = _normalize_item_uris(item)
+        # No object_type → heuristic: short, no spaces → entity URI
+        assert result["object"] == "http://knowledge.local/data/dopamine"
+
+
+class TestPredicateSynonymResolution:
+    def test_known_synonym_resolves(self):
+        assert resolve_predicate_synonym("boosts") == "increases"
+
+    def test_canonical_predicate_unchanged(self):
+        assert resolve_predicate_synonym("increases") == "increases"
+
+    def test_unknown_predicate_unchanged(self):
+        assert resolve_predicate_synonym("correlates_with") == "correlates_with"
+
+    def test_synonym_case_insensitive(self):
+        assert resolve_predicate_synonym("Boosts") == "increases"
+
+    def test_synonym_with_spaces(self):
+        assert resolve_predicate_synonym("leads to") == "causes"
+
+    def test_synonym_with_hyphens(self):
+        assert resolve_predicate_synonym("results-in") == "causes"
+
 
 def test_extraction_prompt_includes_all_seven_types():
     from knowledge_service.clients.llm import _build_extraction_prompt
@@ -179,6 +261,39 @@ def test_extraction_prompt_includes_all_seven_types():
         "Conclusion",
     ):
         assert type_name in prompt, f"Missing knowledge type '{type_name}' in extraction prompt"
+
+
+def test_extraction_prompt_includes_predicate_vocabulary():
+    from knowledge_service.clients.llm import _build_extraction_prompt
+
+    prompt = _build_extraction_prompt("Some text", title=None, source_type=None)
+    for pred in ("causes", "increases", "decreases", "inhibits", "activates"):
+        assert pred in prompt, f"Missing predicate '{pred}' in extraction prompt"
+
+
+def test_extraction_prompt_includes_naming_rules():
+    from knowledge_service.clients.llm import _build_extraction_prompt
+
+    prompt = _build_extraction_prompt("Some text", title=None, source_type=None)
+    assert "snake_case" in prompt
+    assert "singular" in prompt.lower()
+    assert "canonical" in prompt.lower()
+
+
+def test_extraction_prompt_includes_example():
+    from knowledge_service.clients.llm import _build_extraction_prompt
+
+    prompt = _build_extraction_prompt("Some text", title=None, source_type=None)
+    assert "Example:" in prompt
+    assert "cold_water_immersion" in prompt
+
+
+def test_extraction_prompt_includes_object_type():
+    from knowledge_service.clients.llm import _build_extraction_prompt
+
+    prompt = _build_extraction_prompt("Some text", title=None, source_type=None)
+    assert "object_type" in prompt
+    assert '"entity"' in prompt or "'entity'" in prompt
 
 
 class TestNoAuth:

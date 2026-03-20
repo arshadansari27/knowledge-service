@@ -72,7 +72,12 @@ def _make_entity_resolver_mock():
         slug = label.lower().replace(" ", "_")
         return f"http://knowledge.local/data/{slug}"
 
+    async def _resolve_predicate(label):
+        slug = label.lower().replace(" ", "_")
+        return f"http://knowledge.local/schema/{slug}"
+
     mock.resolve.side_effect = _resolve
+    mock.resolve_predicate.side_effect = _resolve_predicate
     return mock
 
 

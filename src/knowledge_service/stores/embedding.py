@@ -263,3 +263,48 @@ class EmbeddingStore:
         if row is None:
             return None
         return dict(row)
+
+    # ------------------------------------------------------------------
+    # Predicate embeddings table operations
+    # ------------------------------------------------------------------
+
+    async def insert_predicate_embedding(
+        self,
+        uri: str,
+        label: str,
+        embedding: list[float],
+    ) -> None:
+        """Upsert a predicate embedding row."""
+        embedding_str = self._vector_to_str(embedding)
+
+        sql = """
+            INSERT INTO predicate_embeddings (uri, label, embedding)
+            VALUES ($1, $2, $3::vector(768))
+            ON CONFLICT (uri) DO UPDATE SET
+                label     = EXCLUDED.label,
+                embedding = EXCLUDED.embedding
+        """
+
+        async with self._pool.acquire() as conn:
+            await conn.execute(sql, uri, label, embedding_str)
+
+    async def search_predicates(
+        self,
+        query_embedding: list[float],
+        limit: int,
+    ) -> list[dict]:
+        """Return predicate rows ranked by cosine similarity."""
+        embedding_str = self._vector_to_str(query_embedding)
+
+        sql = """
+            SELECT
+                uri, label,
+                1 - (embedding::halfvec(768) <=> $1::halfvec(768)) AS similarity
+            FROM predicate_embeddings
+            ORDER BY embedding::halfvec(768) <=> $1::halfvec(768)
+            LIMIT $2
+        """
+
+        async with self._pool.acquire() as conn:
+            rows = await conn.fetch(sql, embedding_str, limit)
+        return [dict(row) for row in rows]
