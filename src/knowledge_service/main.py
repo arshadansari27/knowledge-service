@@ -4,6 +4,7 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import AsyncIterator
 
+import asyncpg.exceptions
 from fastapi import FastAPI
 
 from knowledge_service.clients.federation import FederationClient
@@ -59,9 +60,17 @@ async def run_migrations(pool: object, migrations_dir: str | Path = "migrations"
                 sql = sql_file.read_text()
                 try:
                     await conn.execute(sql)
-                except Exception as exc:
+                except asyncpg.exceptions.DuplicateTableError as exc:
                     log.warning(
-                        "Migration %s failed (may already be applied): %s", sql_file.name, exc
+                        "Migration %s: table already exists (applied externally): %s",
+                        sql_file.name,
+                        exc,
+                    )
+                except asyncpg.exceptions.DuplicateObjectError as exc:
+                    log.warning(
+                        "Migration %s: object already exists (applied externally): %s",
+                        sql_file.name,
+                        exc,
                     )
                 await conn.execute(
                     "INSERT INTO schema_migrations (filename) VALUES ($1)", sql_file.name
