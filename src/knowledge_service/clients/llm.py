@@ -401,7 +401,7 @@ class ExtractionClient:
         # --- Phase 1: Entity/Event extraction ---
         phase1_prompt = _build_entity_extraction_prompt(text, title, source_type)
         phase1_raw = await self._call_llm(phase1_prompt)
-        if phase1_raw is None:
+        if not phase1_raw:
             return []
 
         phase1_items = []
