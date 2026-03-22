@@ -296,6 +296,27 @@ def test_extraction_prompt_includes_object_type():
     assert '"entity"' in prompt or "'entity'" in prompt
 
 
+class TestEntityExtractionPrompt:
+    def test_entity_extraction_prompt_focuses_on_entities(self):
+        from knowledge_service.clients.llm import _build_entity_extraction_prompt
+
+        prompt = _build_entity_extraction_prompt("Some text", title=None, source_type=None)
+        assert "Entity" in prompt
+        assert "Event" in prompt
+        assert "Claim:" not in prompt
+        assert "Relationship:" not in prompt
+        assert "snake_case" in prompt
+
+    def test_entity_extraction_prompt_includes_text(self):
+        from knowledge_service.clients.llm import _build_entity_extraction_prompt
+
+        prompt = _build_entity_extraction_prompt(
+            "Cold exposure boosts dopamine.", title="Test", source_type="article"
+        )
+        assert "Cold exposure boosts dopamine" in prompt
+        assert "Title: Test" in prompt
+
+
 class TestNoAuth:
     async def test_no_auth_header_when_key_empty(self, httpx_mock):
         httpx_mock.add_response(
