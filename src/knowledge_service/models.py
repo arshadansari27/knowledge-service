@@ -193,7 +193,7 @@ def expand_to_triples(
     if isinstance(item, EntityInput):
         triples = [
             {
-                "subject": item.uri,
+                "subject": _ensure_uri(item.uri, _KS_DATA),
                 "predicate": _RDF_TYPE,
                 "object": _ensure_uri(item.rdf_type),
                 "confidence": item.confidence,
@@ -202,7 +202,7 @@ def expand_to_triples(
                 "valid_until": None,
             },
             {
-                "subject": item.uri,
+                "subject": _ensure_uri(item.uri, _KS_DATA),
                 "predicate": _RDFS_LABEL,
                 "object": item.label,
                 "confidence": item.confidence,
@@ -214,7 +214,7 @@ def expand_to_triples(
         for key, value in item.properties.items():
             triples.append(
                 {
-                    "subject": item.uri,
+                    "subject": _ensure_uri(item.uri, _KS_DATA),
                     "predicate": _ensure_uri(key),
                     "object": value,
                     "confidence": item.confidence,

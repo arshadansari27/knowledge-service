@@ -84,6 +84,11 @@ def _apply_uri_fallback(item) -> object:
     elif kt == "Event":
         if not _is_uri(item.subject):
             item.subject = to_entity_uri(item.subject)
+    elif kt == "Entity":
+        if not _is_uri(item.uri):
+            item.uri = to_entity_uri(item.uri)
+    elif kt == "Conclusion":
+        pass  # Conclusion has no URI fields to normalize
 
     return item
 
