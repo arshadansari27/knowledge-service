@@ -23,6 +23,7 @@ async def process_triple(
     source_url: str,
     source_type: str,
     extractor: str,
+    chunk_id: str | None = None,
 ) -> tuple[bool, list[dict]]:
     """Insert one triple, detect contradictions, record provenance, combine evidence.
 
@@ -93,6 +94,7 @@ async def process_triple(
         metadata={},
         valid_from=t["valid_from"],
         valid_until=t["valid_until"],
+        chunk_id=chunk_id,
     )
 
     prov_rows = await provenance_store.get_by_triple(triple_hash)

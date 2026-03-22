@@ -86,7 +86,11 @@ def _make_embedding_store_mock():
     mock = AsyncMock()
     mock.insert_content_metadata.return_value = "content-uuid-1234"
     mock.delete_chunks.return_value = None
-    mock.insert_chunks.return_value = None
+
+    async def _insert_chunks(content_id, chunks):
+        return [(c["chunk_index"], f"chunk-uuid-{c['chunk_index']}") for c in chunks]
+
+    mock.insert_chunks.side_effect = _insert_chunks
     return mock
 
 
