@@ -317,6 +317,28 @@ class TestEntityExtractionPrompt:
         assert "Title: Test" in prompt
 
 
+class TestRelationExtractionPrompt:
+    def test_relation_extraction_prompt_includes_entity_list(self):
+        from knowledge_service.clients.llm import _build_relation_extraction_prompt
+
+        prompt = _build_relation_extraction_prompt(
+            "text", None, None, entities=["cold_exposure", "dopamine"]
+        )
+        assert "cold_exposure" in prompt
+        assert "dopamine" in prompt
+        assert "Claim" in prompt
+        assert "causes" in prompt
+
+    def test_relation_extraction_prompt_constrains_to_entities(self):
+        from knowledge_service.clients.llm import _build_relation_extraction_prompt
+
+        prompt = _build_relation_extraction_prompt(
+            "text", None, None, entities=["entity_a", "entity_b"]
+        )
+        assert "entity_a" in prompt
+        assert "Only use" in prompt or "only use" in prompt
+
+
 class TestNoAuth:
     async def test_no_auth_header_when_key_empty(self, httpx_mock):
         httpx_mock.add_response(

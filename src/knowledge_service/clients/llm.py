@@ -320,6 +320,64 @@ Text:
 ---"""
 
 
+def _build_relation_extraction_prompt(
+    text: str,
+    title: str | None,
+    source_type: str | None,
+    entities: list[str],
+) -> str:
+    """Build the phase-2 prompt that extracts relations constrained to known entities."""
+    context = ""
+    if title:
+        context += f"Title: {title}\n"
+    if source_type:
+        context += f"Source type: {source_type}\n"
+    predicates_csv = ", ".join(CANONICAL_PREDICATES)
+    entity_list = ", ".join(entities)
+    return f"""{context}Extract relationships and claims from the text below.
+Return ONLY a JSON object: {{"items": [...]}}
+
+Known entities: [{entity_list}]
+Only use these entities as subjects and objects. Do NOT invent new entities.
+
+Each item must have a knowledge_type field. Supported types and required fields:
+- Claim: subject, predicate, object, object_type, confidence (0.0-0.89)
+- Fact: subject, predicate, object, object_type, confidence (0.9-1.0) for verified facts
+- Relationship: subject, predicate, object, object_type, confidence
+- TemporalState: subject, property, value, valid_from (YYYY-MM-DD), valid_until (YYYY-MM-DD), confidence
+- Conclusion: concludes (text), derived_from (list of identifiers), inference_method, confidence
+
+Preferred predicates (use these when applicable):
+{predicates_csv}
+Only invent a new predicate if none of the above fit.
+
+Entity naming rules (for consistency with the entity list above):
+- Use canonical, well-known names: "dopamine" not "the neurotransmitter dopamine"
+- Use singular form: "neuron" not "neurons"
+- Use lowercase snake_case: "cold_exposure" not "Cold Exposure"
+- Be specific: "vitamin_d3" not "vitamin_d" when the text specifies D3
+
+For object values, include object_type ("entity" or "literal"):
+- "entity": the object is a thing/concept from the entity list above
+- "literal": the object is a measurement, description, or date (e.g. "250%", "2024-01-15")
+
+Use Claim for uncertain assertions, Fact for high-confidence verifiable statements.
+Extract 3-8 items. If nothing found, return {{"items": []}}
+
+Example:
+Text: "Regular cold water immersion has been shown to increase dopamine levels by up to 250%."
+Known entities: [cold_water_immersion, dopamine]
+Output: {{"items": [
+  {{"knowledge_type": "Claim", "subject": "cold_water_immersion", "predicate": "increases", "object": "dopamine", "object_type": "entity", "confidence": 0.75}},
+  {{"knowledge_type": "Claim", "subject": "cold_water_immersion", "predicate": "has_property", "object": "250% dopamine increase", "object_type": "literal", "confidence": 0.7}}
+]}}
+
+Text:
+---
+{text[:_MAX_TEXT_CHARS]}
+---"""
+
+
 class ExtractionClient:
     """HTTP client that calls the OpenAI-compatible chat API to extract knowledge items."""
 
