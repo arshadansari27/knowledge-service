@@ -63,7 +63,11 @@ async def search_bm25(
 ) -> list[dict]:
 ```
 
-Converts query via `plainto_tsquery('english', query_text)`. Ranks with `ts_rank(c.tsv, query)`. Joins with `content_metadata` for filtering (same as vector search). Returns same dict shape as `search()` with `ts_rank` score as `similarity`.
+Converts query via `plainto_tsquery('english', query_text)`. The SQL **must** include `WHERE c.tsv @@ query` to use the GIN index — without it, `ts_rank` would compute over all rows (O(N) sequential scan). Ranks matching rows with `ts_rank(c.tsv, query)`. Joins with `content_metadata` for filtering (same as vector search).
+
+**Return shape:** Must return the same dict keys as `search()`, critically including `id` as the `content.id` chunk UUID (not `content_id`). This key is used by RRF for deduplication across result lists.
+
+**Empty query guard:** If `plainto_tsquery('english', query_text)` produces an empty tsquery (e.g., stop-word-only input like "the"), return `[]` immediately rather than running a pointless query.
 
 Uses `plainto_tsquery` (not `to_tsquery`) because user queries are natural language, not structured boolean expressions. `plainto_tsquery` handles spaces and punctuation safely.
 
@@ -82,8 +86,8 @@ async def search(
 ```
 
 When `query_text` is provided (hybrid mode):
-1. Run vector search (existing logic, top `limit * 2` to over-fetch for fusion)
-2. Run BM25 search (`search_bm25`, top `limit * 2`)
+1. Run vector search (existing logic, top `limit * 3` to over-fetch for fusion)
+2. Run BM25 search (`search_bm25`, top `limit * 3`)
 3. Fuse via RRF with `k=60`
 4. Return top `limit` results
 
@@ -91,7 +95,7 @@ When `query_text` is None: existing vector-only behavior (fully backward compati
 
 ### Reciprocal Rank Fusion
 
-Standalone function in `EmbeddingStore` or a utility module:
+Module-level function in `embedding.py` (pure function, no dependencies):
 
 ```python
 def reciprocal_rank_fusion(
@@ -113,7 +117,7 @@ def reciprocal_rank_fusion(
 
 `k=60` is the standard constant used in the literature. It dampens rank differences so that being rank 1 vs rank 5 matters more than being rank 50 vs rank 55.
 
-The fused result dict inherits from whichever search found the item. If both searches found it, the vector search result dict is used (it has the cosine similarity score which is more interpretable than ts_rank). The `similarity` field in fused results represents cosine similarity from vector search, not the RRF score — this preserves the existing API semantics.
+**Fused result `similarity` field:** After RRF fusion, the `similarity` field in each result dict is **replaced with the RRF score**. This is a normalized score where higher = more relevant across both retrieval methods. The raw cosine similarity and ts_rank scores are discarded. This avoids the problem of BM25-only results having ts_rank values in a field consumers expect to be cosine similarity. The RRF score is always in a comparable range regardless of which search found the item.
 
 ### Caller changes
 
@@ -172,3 +176,6 @@ content_results = await self._embedding_store.search(
 - Test backward compatibility: `search()` without `query_text` behaves identically to before
 - Test trigger: inserting a chunk auto-populates `tsv` column
 - Test `plainto_tsquery` handles edge cases: empty string, special characters, very long queries
+- Test empty query guard: stop-word-only query ("the") returns empty BM25 results, fusion degrades to vector-only
+- Test fused results have RRF score as `similarity` (not raw cosine or ts_rank)
+- Note: trigger test requires real PostgreSQL — verify migration SQL correctness by inspection, not unit test (project uses mocked DB in tests)
