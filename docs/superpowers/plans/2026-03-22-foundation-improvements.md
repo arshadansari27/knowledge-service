@@ -1,6 +1,6 @@
 # Foundation Improvements Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [x]`) syntax for tracking.
 
 **Goal:** Add 12 ProbLog reasoning rules, 4-tier named graph trust boundaries, and chunk-level provenance tracking to the knowledge-service.
 
@@ -9,6 +9,16 @@
 **Tech Stack:** ProbLog, pyoxigraph (SPARQL 1.2, named graphs, RDF-star), PostgreSQL/asyncpg, FastAPI
 
 **Spec:** `docs/superpowers/specs/2026-03-21-foundation-improvements-design.md`
+
+**Status:** COMPLETE — merged as PR #12 (commit `4f7d9d7`), version 0.1.19. 397 tests passing.
+
+**Implementation notes:**
+- ProbLog dates use YYYYMMDD integers (not ISO strings) because ProbLog `>` only works on numbers
+- ProbLog stub facts (`__stub`) needed in `_program_preamble()` to avoid undefined predicate errors
+- `update_confidence()` preserves the named graph when replacing confidence values
+- All SPARQL in API layer (knowledge.py, contradictions.py, stats.py) also required `GRAPH ?g` rewrites beyond what the plan specified
+- `inverse/2` facts loaded from `ks:inversePredicate` triples at startup via `set_inverse_pairs()`
+- Engine extracted `_program_preamble()` and `_emit_claim_facts()` helpers to avoid duplication between `infer()` and `check_contradiction()`
 
 ---
 
@@ -65,7 +75,7 @@
 - Create: `src/knowledge_service/reasoning/rules/inference_chains.pl`
 - Create: `src/knowledge_service/reasoning/rules/confidence.pl`
 
-- [ ] **Step 1: Create inference_chains.pl**
+- [x] **Step 1: Create inference_chains.pl**
 
 ```prolog
 % Transitive link (bounded to 2-hop to prevent runaway)
@@ -84,7 +94,7 @@ causal_propagation(A, C) :-
     claims(B, decreases, C, _).
 ```
 
-- [ ] **Step 2: Create confidence.pl**
+- [x] **Step 2: Create confidence.pl**
 
 ```prolog
 % High-confidence: supported and no value conflicts
@@ -103,7 +113,7 @@ authoritative(S, P, O) :-
     claim_type(S, P, O, fact).
 ```
 
-- [ ] **Step 3: Commit**
+- [x] **Step 3: Commit**
 
 ```bash
 git add src/knowledge_service/reasoning/rules/inference_chains.pl src/knowledge_service/reasoning/rules/confidence.pl
@@ -116,7 +126,7 @@ git commit -m "feat: add inference chain and confidence ProbLog rules"
 - Modify: `src/knowledge_service/reasoning/rules/base.pl:17` (append after `supported`)
 - Modify: `src/knowledge_service/reasoning/rules/temporal.pl` (replace entirely)
 
-- [ ] **Step 1: Append inverse_holds and corroborated to base.pl**
+- [x] **Step 1: Append inverse_holds and corroborated to base.pl**
 
 Add after line 17 (the `supported` rule):
 
@@ -134,7 +144,7 @@ corroborated(S, P, O) :-
     Src1 \= Src2.
 ```
 
-- [ ] **Step 2: Replace temporal.pl**
+- [x] **Step 2: Replace temporal.pl**
 
 Replace entire contents of `temporal.pl`:
 
@@ -164,7 +174,7 @@ supersedes(S, P, O_new, O_old) :-
     O_new \= O_old.
 ```
 
-- [ ] **Step 3: Commit**
+- [x] **Step 3: Commit**
 
 ```bash
 git add src/knowledge_service/reasoning/rules/base.pl src/knowledge_service/reasoning/rules/temporal.pl
@@ -178,7 +188,7 @@ git commit -m "feat: expand base.pl with inverse/corroboration, replace temporal
 - Modify: `src/knowledge_service/ontology/schema.ttl:53` (fix contains/part_of)
 - Modify: `src/knowledge_service/ontology/namespaces.py:64` (add constant)
 
-- [ ] **Step 1: Add ks:inversePredicate property to schema.ttl**
+- [x] **Step 1: Add ks:inversePredicate property to schema.ttl**
 
 After line 27 (`ks:oppositePredicate`), add:
 
@@ -186,7 +196,7 @@ After line 27 (`ks:oppositePredicate`), add:
 ks:inversePredicate    rdf:type rdf:Property ; rdfs:label "inverse predicate" .
 ```
 
-- [ ] **Step 2: Fix contains/part_of — replace oppositePredicate with inversePredicate**
+- [x] **Step 2: Fix contains/part_of — replace oppositePredicate with inversePredicate**
 
 Change line 53 from:
 ```turtle
@@ -197,7 +207,7 @@ To:
 ks:contains        ks:inversePredicate ks:part_of .
 ```
 
-- [ ] **Step 3: Add KS_INVERSE_PREDICATE constant to namespaces.py**
+- [x] **Step 3: Add KS_INVERSE_PREDICATE constant to namespaces.py**
 
 After line 64 (`KS_OPPOSITE_PREDICATE`), add:
 
@@ -205,7 +215,7 @@ After line 64 (`KS_OPPOSITE_PREDICATE`), add:
 KS_INVERSE_PREDICATE = ks("inversePredicate")
 ```
 
-- [ ] **Step 4: Commit**
+- [x] **Step 4: Commit**
 
 ```bash
 git add src/knowledge_service/ontology/schema.ttl src/knowledge_service/ontology/namespaces.py
@@ -219,7 +229,7 @@ git commit -m "feat: add ks:inversePredicate, fix contains/part_of from opposite
 - Modify: `src/knowledge_service/reasoning/engine.py:175-222` (infer 5-tuple)
 - Modify: `src/knowledge_service/reasoning/engine.py:69-173` (check_contradiction 5-tuple)
 
-- [ ] **Step 1: Write failing test for glob-loading**
+- [x] **Step 1: Write failing test for glob-loading**
 
 Add to `tests/test_reasoning_engine.py`:
 
@@ -236,12 +246,12 @@ class TestGlobLoading:
         assert "corroborated" in engine._all_rules
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `uv run pytest tests/test_reasoning_engine.py::TestGlobLoading -v`
 Expected: FAIL — `indirect_link` not in `_all_rules` (only 3 files loaded)
 
-- [ ] **Step 3: Implement glob-loading in engine.py**
+- [x] **Step 3: Implement glob-loading in engine.py**
 
 Replace `__init__` (lines 41-46) with:
 
@@ -255,12 +265,12 @@ def __init__(self, rules_dir: str | Path) -> None:
     self._base_rules: str = self._load_rules("base.pl")
 ```
 
-- [ ] **Step 4: Run test to verify it passes**
+- [x] **Step 4: Run test to verify it passes**
 
 Run: `uv run pytest tests/test_reasoning_engine.py::TestGlobLoading -v`
 Expected: PASS
 
-- [ ] **Step 5: Write failing test for 5-tuple infer with metadata**
+- [x] **Step 5: Write failing test for 5-tuple infer with metadata**
 
 Add to `tests/test_reasoning_engine.py`:
 
@@ -285,12 +295,12 @@ class TestInferWithMetadata:
         assert len(results) >= 1
 ```
 
-- [ ] **Step 6: Run test to verify it fails**
+- [x] **Step 6: Run test to verify it fails**
 
 Run: `uv run pytest tests/test_reasoning_engine.py::TestInferWithMetadata -v`
 Expected: FAIL — `ValueError: too many values to unpack`
 
-- [ ] **Step 7: Implement 5-tuple support in infer()**
+- [x] **Step 7: Implement 5-tuple support in infer()**
 
 Replace `infer()` method (lines 175-222). Key changes:
 - Accept `list[tuple]` (4 or 5 elements)
@@ -351,12 +361,12 @@ def infer(
     return results
 ```
 
-- [ ] **Step 8: Run test to verify it passes**
+- [x] **Step 8: Run test to verify it passes**
 
 Run: `uv run pytest tests/test_reasoning_engine.py::TestInferWithMetadata -v`
 Expected: PASS
 
-- [ ] **Step 9: Apply same 5-tuple change to check_contradiction()**
+- [x] **Step 9: Apply same 5-tuple change to check_contradiction()**
 
 Update `check_contradiction()` (lines 69-173):
 - Change signature to accept `tuple` (4 or 5 elements)
@@ -364,7 +374,7 @@ Update `check_contradiction()` (lines 69-173):
 - After emitting claims, emit metadata facts same way as `infer()`
 - Add `current_date/1` injection
 
-- [ ] **Step 10: Update _fallback_infer for 5-tuple compat**
+- [x] **Step 10: Update _fallback_infer for 5-tuple compat**
 
 In `_fallback_infer` (line 236), change unpack from:
 ```python
@@ -375,12 +385,12 @@ To:
 claim[3] for claim in claims if claim[0] == qs and claim[1] == qp and claim[2] == qo
 ```
 
-- [ ] **Step 11: Run full reasoning test suite**
+- [x] **Step 11: Run full reasoning test suite**
 
 Run: `uv run pytest tests/test_reasoning_engine.py -v`
 Expected: ALL PASS (existing tests still work with 4-tuples)
 
-- [ ] **Step 12: Commit**
+- [x] **Step 12: Commit**
 
 ```bash
 git add src/knowledge_service/reasoning/engine.py tests/test_reasoning_engine.py
@@ -392,7 +402,7 @@ git commit -m "feat: glob-load ProbLog rules, support 5-tuple claims with metada
 **Files:**
 - Modify: `tests/test_reasoning_engine.py`
 
-- [ ] **Step 1: Write tests for inference chains**
+- [x] **Step 1: Write tests for inference chains**
 
 ```python
 class TestInferenceChains:
@@ -423,7 +433,7 @@ class TestInferenceChains:
         assert len(results) == 0 or results[0].probability == pytest.approx(0.0)
 ```
 
-- [ ] **Step 2: Write tests for confidence rules**
+- [x] **Step 2: Write tests for confidence rules**
 
 ```python
 class TestConfidenceRules:
@@ -449,7 +459,7 @@ class TestConfidenceRules:
         assert results[0].probability > 0
 ```
 
-- [ ] **Step 3: Write tests for temporal rules**
+- [x] **Step 3: Write tests for temporal rules**
 
 ```python
 class TestTemporalRules:
@@ -468,7 +478,7 @@ class TestTemporalRules:
         assert results[0].probability > 0
 ```
 
-- [ ] **Step 4: Write test for inverse_holds**
+- [x] **Step 4: Write test for inverse_holds**
 
 ```python
 class TestInverseHolds:
@@ -487,12 +497,12 @@ class TestInverseHolds:
             engine._all_rules = original_all_rules
 ```
 
-- [ ] **Step 5: Run all new tests**
+- [x] **Step 5: Run all new tests**
 
 Run: `uv run pytest tests/test_reasoning_engine.py -v`
 Expected: ALL PASS
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add tests/test_reasoning_engine.py
@@ -508,7 +518,7 @@ git commit -m "test: comprehensive tests for all new ProbLog rules"
 **Files:**
 - Modify: `src/knowledge_service/ontology/namespaces.py:64`
 
-- [ ] **Step 1: Add named graph constants**
+- [x] **Step 1: Add named graph constants**
 
 After `KS_OPPOSITE_PREDICATE` (line 64), add:
 
@@ -524,7 +534,7 @@ KS_GRAPH_INFERRED = f"{KS}graph/inferred"
 
 (Note: `KS_INVERSE_PREDICATE` may already exist from Task 3. If so, just add the graph constants.)
 
-- [ ] **Step 2: Commit**
+- [x] **Step 2: Commit**
 
 ```bash
 git add src/knowledge_service/ontology/namespaces.py
@@ -539,7 +549,7 @@ git commit -m "feat: add named graph URI constants to namespaces"
 
 This is the largest task. Every SPARQL query and `quads_for_pattern` call needs updating.
 
-- [ ] **Step 1: Write failing test for insert_triple with graph parameter**
+- [x] **Step 1: Write failing test for insert_triple with graph parameter**
 
 Add to `tests/test_knowledge_store.py`:
 
@@ -589,12 +599,12 @@ class TestNamedGraphs:
         assert len(contras) >= 1
 ```
 
-- [ ] **Step 2: Run tests to verify they fail**
+- [x] **Step 2: Run tests to verify they fail**
 
 Run: `uv run pytest tests/test_knowledge_store.py::TestNamedGraphs -v`
 Expected: FAIL — `insert_triple() got an unexpected keyword argument 'graph'`
 
-- [ ] **Step 3: Implement named graph support in KnowledgeStore**
+- [x] **Step 3: Implement named graph support in KnowledgeStore**
 
 Update imports at top of `knowledge.py` — add:
 ```python
@@ -741,12 +751,12 @@ sparql = f"""
 """
 ```
 
-- [ ] **Step 4: Run named graph tests**
+- [x] **Step 4: Run named graph tests**
 
 Run: `uv run pytest tests/test_knowledge_store.py::TestNamedGraphs -v`
 Expected: PASS
 
-- [ ] **Step 5: Update existing tests that use bare SPARQL or default graph**
+- [x] **Step 5: Update existing tests that use bare SPARQL or default graph**
 
 Existing tests will break because:
 - `TestQuery.test_sparql_query` uses bare SPARQL without `GRAPH` clause — update to use `GRAPH ?g { ... }` pattern
@@ -755,12 +765,12 @@ Existing tests will break because:
 
 Update all affected tests to use the named graph patterns.
 
-- [ ] **Step 6: Run full knowledge store test suite**
+- [x] **Step 6: Run full knowledge store test suite**
 
 Run: `uv run pytest tests/test_knowledge_store.py -v`
 Expected: ALL PASS
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```bash
 git add src/knowledge_service/stores/knowledge.py tests/test_knowledge_store.py
@@ -772,7 +782,7 @@ git commit -m "feat: named graph support in KnowledgeStore with SPARQL rewrites"
 **Files:**
 - Modify: `src/knowledge_service/ontology/bootstrap.py`
 
-- [ ] **Step 1: Implement named graph loading with idempotency**
+- [x] **Step 1: Implement named graph loading with idempotency**
 
 Replace `bootstrap_ontology()`:
 
@@ -797,12 +807,12 @@ def bootstrap_ontology(store: Store) -> int:
     return final_count - initial_count
 ```
 
-- [ ] **Step 2: Run existing tests**
+- [x] **Step 2: Run existing tests**
 
 Run: `uv run pytest tests/ -v -k "bootstrap or ontology"`
 Expected: PASS
 
-- [ ] **Step 3: Commit**
+- [x] **Step 3: Commit**
 
 ```bash
 git add src/knowledge_service/ontology/bootstrap.py
@@ -814,7 +824,7 @@ git commit -m "feat: bootstrap ontology into ks:graph/ontology named graph"
 **Files:**
 - Modify: `src/knowledge_service/api/_ingest.py:11-19`
 
-- [ ] **Step 1: Add graph mapping logic**
+- [x] **Step 1: Add graph mapping logic**
 
 Add import and helper at top of `_ingest.py`:
 
@@ -828,7 +838,7 @@ def _extractor_to_graph(extractor: str) -> str:
     return KS_GRAPH_ASSERTED
 ```
 
-- [ ] **Step 2: Pass graph to insert_triple**
+- [x] **Step 2: Pass graph to insert_triple**
 
 In `process_triple()`, change the `knowledge_store.insert_triple` call to include `graph`:
 
@@ -848,12 +858,12 @@ triple_hash, is_new = await asyncio.to_thread(
 )
 ```
 
-- [ ] **Step 3: Run ingest tests**
+- [x] **Step 3: Run ingest tests**
 
 Run: `uv run pytest tests/test_ingest.py tests/test_api_content.py tests/test_api_claims.py -v`
 Expected: PASS
 
-- [ ] **Step 4: Commit**
+- [x] **Step 4: Commit**
 
 ```bash
 git add src/knowledge_service/api/_ingest.py
@@ -866,7 +876,7 @@ git commit -m "feat: map extractor to named graph in process_triple"
 - Modify: `src/knowledge_service/stores/rag.py:62-67`
 - Modify: `src/knowledge_service/clients/rag.py:46-55`
 
-- [ ] **Step 1: Add graph/trust_tier to retrieval context triples**
+- [x] **Step 1: Add graph/trust_tier to retrieval context triples**
 
 In `rag.py`, after stringifying predicate/object (line 66), add trust tier:
 
@@ -878,7 +888,7 @@ graph = t.get("graph", "")
 t["trust_tier"] = "verified" if graph == KS_GRAPH_ASSERTED else "extracted"
 ```
 
-- [ ] **Step 2: Update RAG prompt to show trust tier**
+- [x] **Step 2: Update RAG prompt to show trust tier**
 
 In `clients/rag.py`, change the knowledge triples section (line 54):
 
@@ -886,12 +896,12 @@ In `clients/rag.py`, change the knowledge triples section (line 54):
 sections.append(f"- [{t.get('trust_tier', 'unknown')}] {s} -> {p} -> {o} ({ktype}, confidence: {conf})")
 ```
 
-- [ ] **Step 3: Run RAG tests**
+- [x] **Step 3: Run RAG tests**
 
 Run: `uv run pytest tests/test_rag_retriever.py tests/test_rag_client.py -v`
 Expected: PASS
 
-- [ ] **Step 4: Commit**
+- [x] **Step 4: Commit**
 
 ```bash
 git add src/knowledge_service/stores/rag.py src/knowledge_service/clients/rag.py
@@ -904,7 +914,7 @@ git commit -m "feat: trust tier labels in RAG retrieval context and prompt"
 - Create: `src/knowledge_service/stores/graph_migration.py`
 - Modify: `src/knowledge_service/main.py` (call migration at startup)
 
-- [ ] **Step 1: Create graph_migration.py**
+- [x] **Step 1: Create graph_migration.py**
 
 ```python
 """One-time migration: move triples from default graph to named graphs."""
@@ -1021,7 +1031,7 @@ async def migrate_to_named_graphs(store: Store, pg_pool) -> int:
     return migrated
 ```
 
-- [ ] **Step 2: Wire migration into main.py lifespan**
+- [x] **Step 2: Wire migration into main.py lifespan**
 
 In `main.py`, after the line where `bootstrap_ontology` is called and after `pg_pool` is created, add:
 
@@ -1030,12 +1040,12 @@ from knowledge_service.stores.graph_migration import migrate_to_named_graphs
 await migrate_to_named_graphs(knowledge_store.store, pg_pool)
 ```
 
-- [ ] **Step 3: Run full test suite**
+- [x] **Step 3: Run full test suite**
 
 Run: `uv run pytest tests/ -v`
 Expected: ALL PASS
 
-- [ ] **Step 4: Commit**
+- [x] **Step 4: Commit**
 
 ```bash
 git add src/knowledge_service/stores/graph_migration.py src/knowledge_service/main.py
@@ -1051,14 +1061,14 @@ git commit -m "feat: one-time migration script for default graph to named graphs
 **Files:**
 - Create: `migrations/004_add_chunk_provenance.sql`
 
-- [ ] **Step 1: Create migration file**
+- [x] **Step 1: Create migration file**
 
 ```sql
 ALTER TABLE provenance ADD COLUMN chunk_id UUID REFERENCES content(id) ON DELETE SET NULL;
 CREATE INDEX idx_provenance_chunk_id ON provenance(chunk_id);
 ```
 
-- [ ] **Step 2: Commit**
+- [x] **Step 2: Commit**
 
 ```bash
 git add migrations/004_add_chunk_provenance.sql
@@ -1072,7 +1082,7 @@ git commit -m "feat: add chunk_id column to provenance table"
 - Modify: `src/knowledge_service/stores/provenance.py:93-98` (get_by_triple)
 - Modify: `tests/test_provenance_store.py`
 
-- [ ] **Step 1: Write failing test for chunk_id in provenance**
+- [x] **Step 1: Write failing test for chunk_id in provenance**
 
 Add to `tests/test_provenance_store.py`:
 
@@ -1110,12 +1120,12 @@ class TestChunkProvenance:
         assert rows[0]["chunk_id"] is None
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `uv run pytest tests/test_provenance_store.py::TestChunkProvenance -v`
 Expected: FAIL — `insert() got an unexpected keyword argument 'chunk_id'`
 
-- [ ] **Step 3: Add chunk_id to ProvenanceStore.insert()**
+- [x] **Step 3: Add chunk_id to ProvenanceStore.insert()**
 
 In `provenance.py`, update `insert()`:
 
@@ -1141,12 +1151,12 @@ sql = """
 
 Add `chunk_id` as the 12th parameter in `conn.execute()`.
 
-- [ ] **Step 4: Run test to verify it passes**
+- [x] **Step 4: Run test to verify it passes**
 
 Run: `uv run pytest tests/test_provenance_store.py -v`
 Expected: ALL PASS
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add src/knowledge_service/stores/provenance.py tests/test_provenance_store.py
@@ -1159,7 +1169,7 @@ git commit -m "feat: add chunk_id support to ProvenanceStore"
 - Modify: `src/knowledge_service/stores/embedding.py:120-150`
 - Modify: `tests/test_embedding_store.py`
 
-- [ ] **Step 1: Update insert_chunks to return IDs**
+- [x] **Step 1: Update insert_chunks to return IDs**
 
 Change `insert_chunks` return type and use `fetchrow` with `RETURNING id`:
 
@@ -1198,7 +1208,7 @@ async def insert_chunks(
     return results
 ```
 
-- [ ] **Step 2: Add get_chunks_by_ids method**
+- [x] **Step 2: Add get_chunks_by_ids method**
 
 ```python
 async def get_chunks_by_ids(self, chunk_ids: list[str]) -> dict[str, str]:
@@ -1211,7 +1221,7 @@ async def get_chunks_by_ids(self, chunk_ids: list[str]) -> dict[str, str]:
     return {str(r["id"]): r["chunk_text"] for r in rows}
 ```
 
-- [ ] **Step 3: Commit**
+- [x] **Step 3: Commit**
 
 ```bash
 git add src/knowledge_service/stores/embedding.py
@@ -1224,7 +1234,7 @@ git commit -m "feat: insert_chunks returns IDs, add get_chunks_by_ids"
 - Modify: `src/knowledge_service/api/_ingest.py:11-19` (add chunk_id param)
 - Modify: `src/knowledge_service/api/content.py:97-219` (per-chunk extraction)
 
-- [ ] **Step 1: Add chunk_id to process_triple**
+- [x] **Step 1: Add chunk_id to process_triple**
 
 In `_ingest.py`, add `chunk_id: str | None = None` parameter to `process_triple()`:
 
@@ -1249,7 +1259,7 @@ await provenance_store.insert(
 )
 ```
 
-- [ ] **Step 2: Update content.py for per-chunk extraction with chunk IDs**
+- [x] **Step 2: Update content.py for per-chunk extraction with chunk IDs**
 
 In `_process_one_content_request()`, after chunks are inserted (around line 159-160), capture returned IDs:
 
@@ -1300,12 +1310,12 @@ for i, item in enumerate(knowledge):
         contradictions_all.extend(contras)
 ```
 
-- [ ] **Step 3: Run content ingestion tests**
+- [x] **Step 3: Run content ingestion tests**
 
 Run: `uv run pytest tests/test_api_content.py tests/test_ingest.py -v`
 Expected: PASS
 
-- [ ] **Step 4: Commit**
+- [x] **Step 4: Commit**
 
 ```bash
 git add src/knowledge_service/api/_ingest.py src/knowledge_service/api/content.py
@@ -1318,7 +1328,7 @@ git commit -m "feat: per-chunk extraction with chunk_id provenance tracking"
 - Modify: `src/knowledge_service/api/ask.py`
 - Modify: `tests/test_api_ask.py`
 
-- [ ] **Step 1: Write failing test for evidence in ask response**
+- [x] **Step 1: Write failing test for evidence in ask response**
 
 Add to `tests/test_api_ask.py`:
 
@@ -1332,12 +1342,12 @@ class TestAskEvidence:
         assert isinstance(data["evidence"], list)
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `uv run pytest tests/test_api_ask.py::TestAskEvidence -v`
 Expected: FAIL — `evidence` not in response
 
-- [ ] **Step 3: Add EvidenceSnippet model and evidence assembly**
+- [x] **Step 3: Add EvidenceSnippet model and evidence assembly**
 
 In `ask.py`, add models:
 
@@ -1402,12 +1412,12 @@ Add `evidence=evidence` to the `AskResponse` return.
 
 Note: `_triple_hash` already exists in `_utils.py` (line 18) — import it from there. No new function needed.
 
-- [ ] **Step 4: Run ask tests**
+- [x] **Step 4: Run ask tests**
 
 Run: `uv run pytest tests/test_api_ask.py -v`
 Expected: ALL PASS
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add src/knowledge_service/api/ask.py src/knowledge_service/_utils.py tests/test_api_ask.py
@@ -1416,21 +1426,21 @@ git commit -m "feat: evidence snippets with chunk text in /api/ask response"
 
 ### Task 17: Final integration test
 
-- [ ] **Step 1: Run full test suite**
+- [x] **Step 1: Run full test suite**
 
 Run: `uv run pytest tests/ -v`
 Expected: ALL PASS
 
-- [ ] **Step 2: Run lint**
+- [x] **Step 2: Run lint**
 
 Run: `uv run ruff check . && uv run ruff format --check .`
 Expected: No errors
 
-- [ ] **Step 3: Fix any lint issues**
+- [x] **Step 3: Fix any lint issues**
 
 Run: `uv run ruff format .` if needed.
 
-- [ ] **Step 4: Final commit if lint fixes were needed**
+- [x] **Step 4: Final commit if lint fixes were needed**
 
 ```bash
 git add -A
