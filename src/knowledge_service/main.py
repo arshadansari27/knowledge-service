@@ -150,6 +150,17 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
     app.state.reasoning_engine = ReasoningEngine(rules_dir=settings.problog_rules_dir)
 
+    # Load inverse predicate pairs from ontology for inverse_holds rule
+    from knowledge_service.ontology.namespaces import KS_INVERSE_PREDICATE  # noqa: PLC0415
+
+    inverse_quads = list(
+        app.state.knowledge_store.store.quads_for_pattern(None, KS_INVERSE_PREDICATE, None, None)
+    )
+    inverse_pairs = [
+        (q.subject.value.split("/")[-1], q.object.value.split("/")[-1]) for q in inverse_quads
+    ]
+    app.state.reasoning_engine.set_inverse_pairs(inverse_pairs)
+
     # Federation client (optional)
     federation_client = None
     if settings.federation_enabled:

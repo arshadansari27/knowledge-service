@@ -177,6 +177,40 @@ class TestTemporalRules:
         assert results[0].probability > 0
 
 
+class TestCorroboration:
+    """Test corroborated rule from base.pl."""
+
+    def test_corroborated_with_two_sources(self, engine):
+        """A claim from 2+ independent sources is corroborated."""
+        claims = [
+            ("cold_exposure", "increases", "dopamine", 0.7),
+            ("cold_exposure", "increases", "dopamine", 0.6),
+        ]
+        results = engine.infer("corroborated(cold_exposure, increases, dopamine)", claims=claims)
+        assert len(results) >= 1
+        assert results[0].probability > 0
+
+    def test_not_corroborated_single_source(self, engine):
+        """A claim from a single source is not corroborated."""
+        claims = [("a", "b", "c", 0.9)]
+        results = engine.infer("corroborated(a, b, c)", claims=claims)
+        assert len(results) == 0 or results[0].probability == pytest.approx(0.0)
+
+
+class TestSupersedes:
+    """Test supersedes rule from temporal.pl."""
+
+    def test_newer_supersedes_older(self, engine):
+        """Newer temporal state for same S-P supersedes older."""
+        claims = [
+            ("btc", "has_property", "50000", 0.9, {"valid_from": "2023-01-01"}),
+            ("btc", "has_property", "100000", 0.9, {"valid_from": "2025-01-01"}),
+        ]
+        results = engine.infer("supersedes(btc, has_property, '100000', '50000')", claims=claims)
+        assert len(results) >= 1
+        assert results[0].probability > 0
+
+
 class TestInverseHolds:
     """Task 5: Test inverse_holds rule from base.pl."""
 

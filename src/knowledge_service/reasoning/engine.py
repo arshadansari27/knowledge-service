@@ -46,10 +46,21 @@ class ReasoningEngine:
             parts.append(pl_file.read_text(encoding="utf-8"))
         self._all_rules: str = "\n".join(parts)
         self._base_rules: str = self._load_rules("base.pl")
+        # Inverse predicate pairs for inverse_holds rule.
+        # Set via set_inverse_pairs() at app startup from ks:inversePredicate triples.
+        self._inverse_pairs: list[tuple[str, str]] = []
 
     # ------------------------------------------------------------------
     # Public API
     # ------------------------------------------------------------------
+
+    def set_inverse_pairs(self, pairs: list[tuple[str, str]]) -> None:
+        """Set inverse predicate pairs for the inverse_holds rule.
+
+        Called at app startup after reading ks:inversePredicate triples
+        from the knowledge store.
+        """
+        self._inverse_pairs = list(pairs)
 
     def combine_evidence(self, confidences: Sequence[float]) -> float:
         """Combine independent evidence sources using the Noisy-OR formula.
@@ -84,8 +95,8 @@ class ReasoningEngine:
         their individual confidences (conjunction).
 
         Args:
-            new_claim: ``(subject, predicate, object, confidence)``.
-            existing_claims: List of ``(subject, predicate, object, confidence)``.
+            new_claim: ``(subject, predicate, object, confidence[, meta_dict])``.
+            existing_claims: List of ``(subject, predicate, object, confidence[, meta_dict])``.
             opposites: Pairs ``(pred_a, pred_b)`` that are mutually exclusive.
 
         Returns:
@@ -240,7 +251,10 @@ class ReasoningEngine:
         parts.append("valid_from(__stub, __stub, __stub, 0).")
         parts.append("valid_until(__stub, __stub, __stub, 0).")
         parts.append("claim_type(__stub, __stub, __stub, __stub).")
+        # Emit inverse/2 facts from configured pairs (+ stub for ProbLog safety)
         parts.append("inverse(__stub, __stub).")
+        for p1, p2 in self._inverse_pairs:
+            parts.append(f"inverse({_to_atom(p1)}, {_to_atom(p2)}).")
         parts.append("")
         return parts
 
