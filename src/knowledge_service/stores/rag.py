@@ -6,6 +6,7 @@ import asyncio
 from dataclasses import dataclass, field
 
 from knowledge_service._utils import _rdf_value_to_str
+from knowledge_service.ontology.namespaces import KS_GRAPH_ASSERTED
 
 
 @dataclass
@@ -64,6 +65,8 @@ class RAGRetriever:
                 # Stringify pyoxigraph RDF terms so downstream consumers get plain strings
                 t["predicate"] = _rdf_value_to_str(t.get("predicate"))
                 t["object"] = _rdf_value_to_str(t.get("object"))
+                graph = t.get("graph", "")
+                t["trust_tier"] = "verified" if graph == KS_GRAPH_ASSERTED else "extracted"
             all_triples.extend(triples)
 
         # Step 5: Filter by min_confidence
