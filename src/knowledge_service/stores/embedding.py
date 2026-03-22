@@ -121,25 +121,27 @@ class EmbeddingStore:
         self,
         content_id: str,
         chunks: list[dict],
-    ) -> None:
-        """Insert chunk rows into the content table.
+    ) -> list[tuple[int, str]]:
+        """Insert chunk rows. Returns list of (chunk_index, chunk_id).
 
         Each dict must have: chunk_index, chunk_text, embedding, char_start, char_end.
         """
         if not chunks:
-            return
+            return []
 
         sql = """
             INSERT INTO content (
                 content_id, chunk_index, chunk_text, embedding, char_start, char_end
             )
             VALUES ($1, $2, $3, $4::vector(768), $5, $6)
+            RETURNING id
         """
 
+        results = []
         async with self._pool.acquire() as conn:
             for chunk in chunks:
                 embedding_str = self._vector_to_str(chunk["embedding"])
-                await conn.execute(
+                row = await conn.fetchrow(
                     sql,
                     content_id,
                     chunk["chunk_index"],
@@ -148,6 +150,17 @@ class EmbeddingStore:
                     chunk["char_start"],
                     chunk["char_end"],
                 )
+                results.append((chunk["chunk_index"], str(row["id"])))
+        return results
+
+    async def get_chunks_by_ids(self, chunk_ids: list[str]) -> dict[str, str]:
+        """Return {chunk_id: chunk_text} for the given IDs."""
+        if not chunk_ids:
+            return {}
+        sql = "SELECT id, chunk_text FROM content WHERE id = ANY($1::uuid[])"
+        async with self._pool.acquire() as conn:
+            rows = await conn.fetch(sql, chunk_ids)
+        return {str(r["id"]): r["chunk_text"] for r in rows}
 
     async def search(
         self,
