@@ -41,6 +41,34 @@ import json
 from typing import Any
 
 
+def reciprocal_rank_fusion(
+    *result_lists: list[dict],
+    key: str = "id",
+    k: int = 60,
+    limit: int = 10,
+) -> list[dict]:
+    """Fuse multiple ranked result lists via Reciprocal Rank Fusion.
+
+    Each item's score = sum(1 / (k + rank + 1)) across all lists it appears in.
+    Items appearing in multiple lists score higher than single-list items.
+    The fused RRF score replaces the 'similarity' field in the returned dicts.
+    """
+    scores: dict[str, float] = {}
+    items: dict[str, dict] = {}
+    for results in result_lists:
+        for rank, item in enumerate(results):
+            item_key = str(item[key])
+            scores[item_key] = scores.get(item_key, 0.0) + 1.0 / (k + rank + 1)
+            items[item_key] = item
+    ranked = sorted(scores.items(), key=lambda x: x[1], reverse=True)[:limit]
+    fused = []
+    for item_key, score in ranked:
+        result = dict(items[item_key])
+        result["similarity"] = score
+        fused.append(result)
+    return fused
+
+
 class EmbeddingStore:
     """Wraps an asyncpg connection pool for pgvector embedding operations."""
 
