@@ -1,3 +1,5 @@
+% Dates are emitted as integers in YYYYMMDD format for numeric comparison.
+
 % Expired: valid_until has passed
 expired(S, P, O) :-
     claims(S, P, O, _),

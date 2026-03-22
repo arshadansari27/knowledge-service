@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 import math
 from dataclasses import dataclass, field
+from datetime import date
 from pathlib import Path
 from typing import Sequence
 
@@ -40,10 +41,11 @@ class ReasoningEngine:
 
     def __init__(self, rules_dir: str | Path) -> None:
         self._rules_dir = Path(rules_dir)
+        parts = []
+        for pl_file in sorted(self._rules_dir.glob("*.pl")):
+            parts.append(pl_file.read_text(encoding="utf-8"))
+        self._all_rules: str = "\n".join(parts)
         self._base_rules: str = self._load_rules("base.pl")
-        knowledge_type_rules = self._load_rules("knowledge_types.pl")
-        temporal_rules = self._load_rules("temporal.pl")
-        self._all_rules: str = "\n".join([self._base_rules, knowledge_type_rules, temporal_rules])
 
     # ------------------------------------------------------------------
     # Public API
@@ -68,8 +70,8 @@ class ReasoningEngine:
 
     def check_contradiction(
         self,
-        new_claim: tuple[str, str, str, float],
-        existing_claims: list[tuple[str, str, str, float]],
+        new_claim: tuple,
+        existing_claims: list[tuple],
         opposites: list[tuple[str, str]],
     ) -> ContradictionResult:
         """Check whether ``new_claim`` contradicts any of ``existing_claims``.
@@ -95,14 +97,11 @@ class ReasoningEngine:
         if not opposites:
             return ContradictionResult(probability=0.0, involved_claims=[])
 
-        program_parts: list[str] = [self._all_rules, ""]
+        program_parts = self._program_preamble()
 
         # Emit probabilistic claim facts (4-arity to keep sources independent)
-        for idx, (subj, pred, obj, conf) in enumerate(all_claims):
-            s_atom = _to_atom(subj)
-            p_atom = _to_atom(pred)
-            o_atom = _to_atom(obj)
-            program_parts.append(f"{conf}::claims({s_atom}, {p_atom}, {o_atom}, source{idx}).")
+        for idx, claim in enumerate(all_claims):
+            self._emit_claim_facts(claim, idx, program_parts)
 
         program_parts.append("")
 
@@ -119,14 +118,15 @@ class ReasoningEngine:
         contradiction_prob = 0.0
         involved: list[tuple] = []
 
-        new_subj, new_pred, new_obj, _ = new_claim
+        new_subj, new_pred, new_obj = new_claim[0], new_claim[1], new_claim[2]
         ns = _to_atom(new_subj)
         np_ = _to_atom(new_pred)
         no = _to_atom(new_obj)
 
         # Find any opposite predicate that appears in existing claims
         relevant_queries: list[str] = []
-        for subj, pred, obj, _ in existing_claims:
+        for ec in existing_claims:
+            subj, pred, obj = ec[0], ec[1], ec[2]
             s = _to_atom(subj)
             p = _to_atom(pred)
             o = _to_atom(obj)
@@ -160,7 +160,8 @@ class ReasoningEngine:
             logger.warning("ProbLog contradiction check failed, using product fallback: %s", exc)
             # Fall back to product of confidences if ProbLog fails
             new_conf = new_claim[3]
-            for subj, pred, obj, conf in existing_claims:
+            for ec in existing_claims:
+                subj, pred, obj, conf = ec[0], ec[1], ec[2], ec[3]
                 for pred_a, pred_b in opposites:
                     if (new_pred in (pred_a, pred_b)) and (pred in (pred_a, pred_b)):
                         if new_pred != pred and subj == new_subj and obj == new_obj:
@@ -175,7 +176,7 @@ class ReasoningEngine:
     def infer(
         self,
         query: str,
-        claims: list[tuple[str, str, str, float]],
+        claims: list[tuple],
     ) -> list[InferenceResult]:
         """Run a ProbLog query over a set of probabilistic claims.
 
@@ -187,19 +188,19 @@ class ReasoningEngine:
         Args:
             query: A Prolog goal string, e.g.
                    ``"supported(cold_exposure, increases, dopamine)"``.
-            claims: List of ``(subject, predicate, object, confidence)`` tuples.
+            claims: List of 4-tuples ``(subject, predicate, object, confidence)``
+                    or 5-tuples ``(subject, predicate, object, confidence, meta)``
+                    where *meta* is a dict with optional keys ``knowledge_type``,
+                    ``valid_from``, ``valid_until``.
 
         Returns:
             List of :class:`InferenceResult` ordered by probability descending.
             Returns an empty list when the query is provably false (prob 0).
         """
-        program_parts: list[str] = [self._all_rules, ""]
+        program_parts = self._program_preamble()
 
-        for idx, (subj, pred, obj, conf) in enumerate(claims):
-            s_atom = _to_atom(subj)
-            p_atom = _to_atom(pred)
-            o_atom = _to_atom(obj)
-            program_parts.append(f"{conf}::claims({s_atom}, {p_atom}, {o_atom}, source{idx}).")
+        for idx, claim in enumerate(claims):
+            self._emit_claim_facts(claim, idx, program_parts)
 
         program_parts.append("")
         program_parts.append(f"query({query}).")
@@ -225,6 +226,47 @@ class ReasoningEngine:
     # Internal helpers
     # ------------------------------------------------------------------
 
+    def _program_preamble(self) -> list[str]:
+        """Return the common program header: rules, current_date, and stub facts.
+
+        ProbLog errors if a predicate used in a rule body has zero clauses.
+        We emit sentinel facts with a dummy sentinel value so the predicates
+        are always defined.
+        """
+        parts: list[str] = [self._all_rules, ""]
+        # Inject current_date/1 (integer YYYYMMDD) for temporal reasoning
+        parts.append(f"current_date({_date_to_int(date.today().isoformat())}).")
+        # Stub facts so ProbLog never sees an undefined predicate
+        parts.append("valid_from(__stub, __stub, __stub, 0).")
+        parts.append("valid_until(__stub, __stub, __stub, 0).")
+        parts.append("claim_type(__stub, __stub, __stub, __stub).")
+        parts.append("inverse(__stub, __stub).")
+        parts.append("")
+        return parts
+
+    def _emit_claim_facts(self, claim: tuple, idx: int, program_parts: list[str]) -> None:
+        """Emit ProbLog facts for a single claim tuple (4 or 5 elements)."""
+        subj, pred, obj, conf = claim[0], claim[1], claim[2], claim[3]
+        meta: dict = claim[4] if len(claim) > 4 else {}
+        s_atom = _to_atom(subj)
+        p_atom = _to_atom(pred)
+        o_atom = _to_atom(obj)
+        program_parts.append(f"{conf}::claims({s_atom}, {p_atom}, {o_atom}, source{idx}).")
+
+        # Emit metadata facts when present
+        if meta.get("knowledge_type"):
+            program_parts.append(
+                f"claim_type({s_atom}, {p_atom}, {o_atom}, {meta['knowledge_type']})."
+            )
+        if meta.get("valid_from"):
+            program_parts.append(
+                f"valid_from({s_atom}, {p_atom}, {o_atom}, {_date_to_int(meta['valid_from'])})."
+            )
+        if meta.get("valid_until"):
+            program_parts.append(
+                f"valid_until({s_atom}, {p_atom}, {o_atom}, {_date_to_int(meta['valid_until'])})."
+            )
+
     def _load_rules(self, filename: str) -> str:
         """Load a Prolog rules file from the rules directory."""
         path = self._rules_dir / filename
@@ -233,7 +275,7 @@ class ReasoningEngine:
     def _fallback_infer(
         self,
         query: str,
-        claims: list[tuple[str, str, str, float]],
+        claims: list[tuple],
     ) -> list[InferenceResult]:
         """Pure-Python fallback for supported/3 queries when ProbLog is unavailable."""
         import re
@@ -244,7 +286,7 @@ class ReasoningEngine:
 
         qs, qp, qo = m.group(1), m.group(2), m.group(3)
         matching_confs = [
-            conf for (subj, pred, obj, conf) in claims if subj == qs and pred == qp and obj == qo
+            claim[3] for claim in claims if claim[0] == qs and claim[1] == qp and claim[2] == qo
         ]
 
         if not matching_confs:
@@ -252,6 +294,11 @@ class ReasoningEngine:
 
         prob = self.combine_evidence(matching_confs)
         return [InferenceResult(query=query, probability=prob)]
+
+
+def _date_to_int(iso_date: str) -> int:
+    """Convert an ISO date string (YYYY-MM-DD) to an integer YYYYMMDD for ProbLog arithmetic."""
+    return int(iso_date.replace("-", ""))
 
 
 def _to_atom(value: str) -> str:
