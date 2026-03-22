@@ -48,11 +48,13 @@ class ProvenanceStore:
         metadata: dict | None = None,
         valid_from: datetime | None = None,
         valid_until: datetime | None = None,
+        chunk_id: str | None = None,
     ) -> None:
         """Upsert a provenance record.
 
-        On conflict (triple_hash, source_url) the confidence, metadata, and
-        temporal bounds are updated to the new values, leaving ingested_at unchanged.
+        On conflict (triple_hash, source_url) the confidence, metadata,
+        temporal bounds, and chunk_id are updated to the new values,
+        leaving ingested_at unchanged.
         """
         metadata_json = json.dumps(metadata if metadata is not None else {})
 
@@ -60,14 +62,15 @@ class ProvenanceStore:
             INSERT INTO provenance (
                 triple_hash, subject, predicate, object, source_url,
                 source_type, extractor, confidence, metadata,
-                valid_from, valid_until
+                valid_from, valid_until, chunk_id
             )
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
             ON CONFLICT (triple_hash, source_url) DO UPDATE SET
                 confidence  = EXCLUDED.confidence,
                 metadata    = EXCLUDED.metadata,
                 valid_from  = EXCLUDED.valid_from,
-                valid_until = EXCLUDED.valid_until
+                valid_until = EXCLUDED.valid_until,
+                chunk_id    = EXCLUDED.chunk_id
         """
 
         async with self._pool.acquire() as conn:
@@ -84,6 +87,7 @@ class ProvenanceStore:
                 metadata_json,
                 valid_from,
                 valid_until,
+                chunk_id,
             )
 
     # ------------------------------------------------------------------
