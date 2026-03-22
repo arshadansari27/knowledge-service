@@ -72,7 +72,7 @@ Replace `_build_extraction_prompt()` with:
 
 Replace `ExtractionClient.extract()` body:
 1. Build phase 1 prompt, call LLM, parse response
-2. Collect entity names: `[item.label for item in phase1_items if hasattr(item, 'label')]` + event subjects
+2. Collect entity names: `[item.label for item in phase1_items if hasattr(item, 'label')]` (raw labels, pre-URI-normalization) + `[item.subject for item in phase1_items if hasattr(item, 'subject') and item.knowledge_type.value == 'Event']` for event subjects
 3. Build phase 2 prompt with entity list, call LLM, parse response
 4. Return `phase1_items + phase2_items`
 
@@ -174,6 +174,14 @@ chunks_with_headers = chunk_text(text, chunk_size=_CHUNK_SIZE, chunk_overlap=_CH
 # Returns: list[dict] with keys: chunk_text, section_header
 ```
 
+#### Char offset handling for markdown chunks
+
+`MarkdownHeaderTextSplitter` strips heading markers from chunk text, so `text.find(chunk_text)` may fail. The `chunk_text()` function returns chunks that include the original heading text prepended (e.g., `"## Methodology\nThe approach..."`) so `text.find()` continues to work. If `MarkdownHeaderTextSplitter` strips headings, the chunking module reconstructs the chunk with the heading prepended before returning.
+
+Alternatively, the chunking module can return `char_start`/`char_end` offsets directly (computed during splitting) instead of relying on the `text.find()` heuristic in `content.py`. This is cleaner — the chunking module knows the offsets at split time.
+
+**Decision:** The `chunk_text()` function returns `{"chunk_text", "section_header", "char_start", "char_end"}` dicts. `content.py` no longer computes offsets via `text.find()` — it uses the offsets from the chunking module directly.
+
 Extract the chunking logic into a dedicated module `src/knowledge_service/chunking.py` to keep `content.py` focused on the ingestion pipeline. The module exposes:
 
 ```python
@@ -182,10 +190,11 @@ def chunk_text(
     chunk_size: int = 4000,
     chunk_overlap: int = 200,
 ) -> list[dict]:
-    """Split text into chunks with optional section headers.
+    """Split text into chunks with section headers and char offsets.
 
-    Returns list of {"chunk_text": str, "section_header": str | None}.
+    Returns list of {"chunk_text": str, "section_header": str | None, "char_start": int, "char_end": int}.
     Uses MarkdownHeaderTextSplitter for markdown, RecursiveCharacterTextSplitter for plain text.
+    Computes char offsets at split time (content.py no longer uses text.find heuristic).
     """
 ```
 
@@ -213,14 +222,16 @@ def chunk_text(
 
 | File | Phase | Change |
 |---|---|---|
-| `src/knowledge_service/clients/llm.py` | 5 | Two-phase prompts, updated extract() |
+| `src/knowledge_service/clients/llm.py` | 5 | Two-phase prompts, updated extract(). Remove old `_build_extraction_prompt()` (5 existing tests import it — must be rewritten) |
 | `src/knowledge_service/chunking.py` | 6 | New module: markdown-aware chunking |
-| `src/knowledge_service/api/content.py` | 6 | Use new chunking module |
-| `src/knowledge_service/stores/embedding.py` | 6 | insert_chunks includes section_header |
-| `src/knowledge_service/clients/rag.py` | 6 | Show section_header in prompt |
-| `src/knowledge_service/models.py` | 6 | SearchResult gains section_header |
+| `src/knowledge_service/api/content.py` | 6 | Use new chunking module, updated char offset logic |
+| `src/knowledge_service/stores/embedding.py` | 6 | insert_chunks includes section_header; `search()` and `search_bm25()` SELECT `c.section_header`; use `chunk.get("section_header")` with default `None` |
+| `src/knowledge_service/api/search.py` | 6 | Pass `section_header` from search results to `SearchResult` |
+| `src/knowledge_service/stores/rag.py` | 6 | Pass `section_header` from search results into content_results dicts |
+| `src/knowledge_service/clients/rag.py` | 6 | Show section_header in RAG prompt when present |
+| `src/knowledge_service/models.py` | 6 | SearchResult gains optional `section_header` field |
 | `migrations/006_add_section_header.sql` | 6 | New column on content table |
-| `tests/test_extraction_client.py` | 5 | Two-phase extraction tests |
+| `tests/test_extraction_client.py` | 5 | Two-phase extraction tests (rewrite existing tests that import old `_build_extraction_prompt`) |
 | `tests/test_chunking.py` | 6 | Chunking module tests |
 
 ### Backward compatibility
