@@ -197,13 +197,22 @@ class EmbeddingStore:
         source_type: str | None = None,
         tags: list[str] | None = None,
         min_date: Any | None = None,
+        query_text: str | None = None,
     ) -> list[dict]:
         """Return chunk rows ranked by cosine similarity, joined with content metadata.
+
+        When query_text is provided, also runs BM25 full-text search and fuses
+        both result sets via Reciprocal Rank Fusion (RRF). Vector search is
+        overfetched (limit * 3) to give RRF a richer candidate pool.
 
         Optional filters:
           source_type — restrict to a single source type
           tags        — restrict to rows that contain ALL given tags
+          min_date    — restrict to rows ingested on or after this date
+          query_text  — enable hybrid mode (vector + BM25 via RRF)
         """
+        overfetch = limit * 3 if query_text else limit
+
         embedding_str = self._vector_to_str(query_embedding)
 
         conditions: list[str] = []
@@ -221,7 +230,7 @@ class EmbeddingStore:
             params.append(min_date)
             conditions.append(f"m.ingested_at >= ${len(params)}")
 
-        params.append(limit)
+        params.append(overfetch)
         limit_placeholder = f"${len(params)}"
 
         where_clause = f"WHERE {' AND '.join(conditions)}" if conditions else ""
@@ -241,7 +250,15 @@ class EmbeddingStore:
 
         async with self._pool.acquire() as conn:
             rows = await conn.fetch(sql, *params)
-        return [dict(row) for row in rows]
+        vector_results = [dict(row) for row in rows]
+
+        if query_text:
+            bm25_results = await self.search_bm25(
+                query_text, overfetch, source_type, tags, min_date
+            )
+            return reciprocal_rank_fusion(vector_results, bm25_results, key="id", k=60, limit=limit)
+
+        return vector_results
 
     async def search_bm25(
         self,

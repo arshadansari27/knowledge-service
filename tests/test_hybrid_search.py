@@ -106,3 +106,37 @@ class TestSearchBM25:
         await store.search_bm25("test", limit=10, source_type="article")
         sql = conn.fetch.call_args[0][0]
         assert "source_type" in sql
+
+
+class TestHybridSearch:
+    async def test_hybrid_fuses_vector_and_bm25(self, store, mock_pool):
+        _, conn = mock_pool
+        conn.fetch.side_effect = [
+            [  # vector results
+                {"id": "chunk-vec", "chunk_text": "vector match", "chunk_index": 0,
+                 "content_id": "m1", "url": "http://a.com", "title": "A", "summary": None,
+                 "source_type": "article", "tags": [], "ingested_at": "2026-01-01", "similarity": 0.8},
+            ],
+            [  # BM25 results
+                {"id": "chunk-bm25", "chunk_text": "keyword match", "chunk_index": 0,
+                 "content_id": "m2", "url": "http://b.com", "title": "B", "summary": None,
+                 "source_type": "article", "tags": [], "ingested_at": "2026-01-01", "similarity": 0.5},
+            ],
+        ]
+        results = await store.search(
+            query_embedding=[0.1] * 768, limit=10, query_text="keyword match",
+        )
+        ids = {r["id"] for r in results}
+        assert "chunk-vec" in ids
+        assert "chunk-bm25" in ids
+
+    async def test_no_query_text_is_vector_only(self, store, mock_pool):
+        _, conn = mock_pool
+        conn.fetch.return_value = [
+            {"id": "chunk-1", "chunk_text": "text", "chunk_index": 0,
+             "content_id": "m1", "url": "http://a.com", "title": "A", "summary": None,
+             "source_type": "article", "tags": [], "ingested_at": "2026-01-01", "similarity": 0.9},
+        ]
+        results = await store.search(query_embedding=[0.1] * 768, limit=10)
+        assert len(results) == 1
+        assert conn.fetch.call_count == 1  # only vector, no BM25
