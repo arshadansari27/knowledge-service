@@ -83,11 +83,21 @@ async def get_knowledge_query(
 
     sparql = f"""
         SELECT ?s ?p ?o ?conf ?ktype ?vfrom ?vuntil WHERE {{
-            ?s ?p ?o .
-            OPTIONAL {{ << ?s ?p ?o >> <{KS_CONFIDENCE.value}> ?conf . }}
-            OPTIONAL {{ << ?s ?p ?o >> <{KS_KNOWLEDGE_TYPE.value}> ?ktype . }}
-            OPTIONAL {{ << ?s ?p ?o >> <{KS_VALID_FROM.value}> ?vfrom . }}
-            OPTIONAL {{ << ?s ?p ?o >> <{KS_VALID_UNTIL.value}> ?vuntil . }}
+            GRAPH ?g {{
+                ?s ?p ?o .
+            }}
+            OPTIONAL {{
+                GRAPH ?g {{ << ?s ?p ?o >> <{KS_CONFIDENCE.value}> ?conf . }}
+            }}
+            OPTIONAL {{
+                GRAPH ?g {{ << ?s ?p ?o >> <{KS_KNOWLEDGE_TYPE.value}> ?ktype . }}
+            }}
+            OPTIONAL {{
+                GRAPH ?g {{ << ?s ?p ?o >> <{KS_VALID_FROM.value}> ?vfrom . }}
+            }}
+            OPTIONAL {{
+                GRAPH ?g {{ << ?s ?p ?o >> <{KS_VALID_UNTIL.value}> ?vuntil . }}
+            }}
             FILTER(BOUND(?conf))
             {" ".join(filters)}
         }}
@@ -146,7 +156,7 @@ async def get_knowledge_query(
                 # Look up owl:sameAs to find external URI
                 same_as_rows: list[dict] = await asyncio.to_thread(
                     knowledge_store.query,
-                    f"SELECT ?o WHERE {{ <{subject}> <http://www.w3.org/2002/07/owl#sameAs> ?o }}",
+                    f"SELECT ?o WHERE {{ GRAPH ?g {{ <{subject}> <http://www.w3.org/2002/07/owl#sameAs> ?o }} }}",
                 )
                 external_uri = None
                 for row in same_as_rows:
