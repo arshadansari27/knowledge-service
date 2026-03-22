@@ -233,58 +233,7 @@ def normalize_item_uris(item: dict) -> dict:
     return item
 
 
-def _build_extraction_prompt(text: str, title: str | None, source_type: str | None) -> str:
-    context = ""
-    if title:
-        context += f"Title: {title}\n"
-    if source_type:
-        context += f"Source type: {source_type}\n"
-    predicates_csv = ", ".join(CANONICAL_PREDICATES)
-    return f"""{context}Extract structured knowledge from the text below.
-Return ONLY a JSON object: {{"items": [...]}}
-
-Each item must have a knowledge_type field. Supported types and required fields:
-- Claim: subject, predicate, object, object_type, confidence (0.0-0.89)
-- Fact: subject, predicate, object, object_type, confidence (0.9-1.0) for verified facts
-- Relationship: subject, predicate, object, object_type, confidence
-- Event: subject, occurred_at (YYYY-MM-DD), confidence, properties (dict)
-- Entity: uri, rdf_type (e.g. "schema:Person"), label, properties (dict), confidence
-- TemporalState: subject, property, value, valid_from (YYYY-MM-DD), valid_until (YYYY-MM-DD), confidence
-- Conclusion: concludes (text), derived_from (list of identifiers), inference_method, confidence
-
-Preferred predicates (use these when applicable):
-{predicates_csv}
-Only invent a new predicate if none of the above fit.
-
-Entity naming rules:
-- Use canonical, well-known names: "dopamine" not "the neurotransmitter dopamine"
-- Use singular form: "neuron" not "neurons"
-- Use lowercase snake_case: "cold_exposure" not "Cold Exposure"
-- Be specific: "vitamin_d3" not "vitamin_d" when the text specifies D3
-
-For object values, include object_type ("entity" or "literal"):
-- "entity": the object is a thing/concept (e.g. "dopamine", "postgresql")
-- "literal": the object is a measurement, description, or date (e.g. "250%", "2024-01-15")
-
-Use Claim for uncertain assertions, Fact for high-confidence verifiable statements.
-Extract 3-8 items. If nothing found, return {{"items": []}}
-
-Example:
-Text: "Regular cold water immersion has been shown to increase dopamine levels by up to 250%."
-Output: {{"items": [
-  {{"knowledge_type": "Claim", "subject": "cold_water_immersion", "predicate": "increases", "object": "dopamine", "object_type": "entity", "confidence": 0.75}},
-  {{"knowledge_type": "Claim", "subject": "cold_water_immersion", "predicate": "has_property", "object": "250% dopamine increase", "object_type": "literal", "confidence": 0.7}}
-]}}
-
-Text:
----
-{text[:_MAX_TEXT_CHARS]}
----"""
-
-
-def _build_entity_extraction_prompt(
-    text: str, title: str | None, source_type: str | None
-) -> str:
+def _build_entity_extraction_prompt(text: str, title: str | None, source_type: str | None) -> str:
     """Build the phase-1 prompt that extracts Entity and Event items only."""
     context = ""
     if title:
@@ -379,7 +328,13 @@ Text:
 
 
 class ExtractionClient:
-    """HTTP client that calls the OpenAI-compatible chat API to extract knowledge items."""
+    """HTTP client that calls the OpenAI-compatible chat API to extract knowledge items.
+
+    Uses a two-phase extraction strategy:
+      Phase 1: Extract Entity and Event items
+      Phase 2: Extract relations (Claim, Fact, Relationship, TemporalState, Conclusion)
+               constrained to the entities discovered in phase 1
+    """
 
     def __init__(self, base_url: str, model: str, api_key: str) -> None:
         self._model = model
@@ -392,16 +347,12 @@ class ExtractionClient:
             timeout=httpx.Timeout(connect=5.0, read=120.0, write=10.0, pool=5.0),
         )
 
-    async def extract(
-        self,
-        text: str,
-        title: str | None = None,
-        source_type: str | None = None,
-    ) -> list:
-        """Extract KnowledgeInput items from raw text. Returns [] on any failure."""
-        from knowledge_service.models import KnowledgeInput  # noqa: PLC0415
+    async def _call_llm(self, prompt: str) -> list[dict]:
+        """Send a prompt to the LLM and return parsed item dicts.
 
-        prompt = _build_extraction_prompt(text, title, source_type)
+        Returns an empty list on HTTP errors, timeouts, or JSON parse failures.
+        Raises no exceptions.
+        """
         try:
             response = await self._client.post(
                 "/v1/chat/completions",
@@ -429,14 +380,64 @@ class ExtractionClient:
             logger.warning("ExtractionClient: could not parse JSON response: %s", exc)
             return []
 
+        return parsed.get("items", [])
+
+    async def extract(
+        self,
+        text: str,
+        title: str | None = None,
+        source_type: str | None = None,
+    ) -> list:
+        """Extract KnowledgeInput items from raw text using two-phase extraction.
+
+        Phase 1: entities/events. Phase 2: relations constrained to phase 1 entities.
+        If phase 1 fails → return [].
+        If phase 2 fails → return phase 1 results only.
+        """
+        from knowledge_service.models import KnowledgeInput  # noqa: PLC0415
+
         adapter = TypeAdapter(KnowledgeInput)
-        result = []
-        for item_dict in parsed.get("items", []):
+
+        # --- Phase 1: Entity/Event extraction ---
+        phase1_prompt = _build_entity_extraction_prompt(text, title, source_type)
+        phase1_raw = await self._call_llm(phase1_prompt)
+        if phase1_raw is None:
+            return []
+
+        phase1_items = []
+        for item_dict in phase1_raw:
             try:
-                result.append(adapter.validate_python(item_dict))
+                phase1_items.append(adapter.validate_python(item_dict))
             except ValidationError as exc:
                 logger.warning("ExtractionClient: skipping invalid item %s: %s", item_dict, exc)
-        return result
+
+        # Collect entity names from phase 1 results
+        entity_names: list[str] = []
+        for item in phase1_items:
+            kt = item.knowledge_type.value
+            if kt == "Entity":
+                entity_names.append(item.label)
+            elif kt == "Event":
+                entity_names.append(item.subject)
+
+        # If no entities found, skip phase 2
+        if not entity_names:
+            return phase1_items
+
+        # --- Phase 2: Relation extraction constrained to phase 1 entities ---
+        phase2_prompt = _build_relation_extraction_prompt(text, title, source_type, entity_names)
+        phase2_raw = await self._call_llm(phase2_prompt)
+        if not phase2_raw:
+            return phase1_items
+
+        phase2_items = []
+        for item_dict in phase2_raw:
+            try:
+                phase2_items.append(adapter.validate_python(item_dict))
+            except ValidationError as exc:
+                logger.warning("ExtractionClient: skipping invalid item %s: %s", item_dict, exc)
+
+        return phase1_items + phase2_items
 
     async def close(self) -> None:
         """Close the underlying HTTP client."""

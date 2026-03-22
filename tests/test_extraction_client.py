@@ -23,6 +23,23 @@ def _make_chat_response(items: list) -> dict:
 
 @pytest.fixture
 def mock_llm(httpx_mock):
+    # Phase 1: entity response
+    httpx_mock.add_response(
+        url=_CHAT_URL,
+        json=_make_chat_response(
+            [
+                {
+                    "knowledge_type": "Entity",
+                    "uri": "cold_exposure",
+                    "rdf_type": "schema:Thing",
+                    "label": "cold_exposure",
+                    "properties": {},
+                    "confidence": 0.9,
+                },
+            ]
+        ),
+    )
+    # Phase 2: relation response
     httpx_mock.add_response(
         url=_CHAT_URL,
         json=_make_chat_response(
@@ -41,11 +58,12 @@ def mock_llm(httpx_mock):
 
 
 class TestExtract:
-    async def test_returns_claim_from_valid_response(self, mock_llm):
+    async def test_returns_entity_and_claim_from_valid_response(self, mock_llm):
         client = ExtractionClient(base_url=_BASE, model="qwen3:14b", api_key=_KEY)
         result = await client.extract("Cold exposure increases dopamine.")
-        assert len(result) == 1
-        assert result[0].knowledge_type.value == "Claim"
+        assert len(result) == 2
+        assert result[0].knowledge_type.value == "Entity"
+        assert result[1].knowledge_type.value == "Claim"
         await client.close()
 
     async def test_returns_empty_on_http_error(self, httpx_mock):
@@ -66,24 +84,29 @@ class TestExtract:
         await client.close()
 
     async def test_skips_invalid_items_returns_valid(self, httpx_mock):
+        # Phase 1: one valid Entity, one invalid item
         httpx_mock.add_response(
             url=_CHAT_URL,
             json=_make_chat_response(
                 [
                     {
-                        "knowledge_type": "Claim",
-                        "subject": "a",
-                        "predicate": "b",
-                        "object": "c",
-                        "confidence": 0.7,
+                        "knowledge_type": "Entity",
+                        "uri": "a",
+                        "rdf_type": "schema:Thing",
+                        "label": "a",
+                        "properties": {},
+                        "confidence": 0.9,
                     },
-                    {"knowledge_type": "Claim", "missing_required_fields": True},
+                    {"knowledge_type": "Entity", "missing_required_fields": True},
                 ]
             ),
         )
+        # Phase 2: empty (entity 'a' found so phase 2 runs)
+        httpx_mock.add_response(url=_CHAT_URL, json=_make_chat_response([]))
         client = ExtractionClient(base_url=_BASE, model="qwen3:14b", api_key=_KEY)
         result = await client.extract("text")
         assert len(result) == 1
+        assert result[0].knowledge_type.value == "Entity"
         await client.close()
 
     async def test_returns_empty_list_on_empty_items(self, httpx_mock):
@@ -123,11 +146,16 @@ class TestExtract:
         """extract() should return items with original labels, not pre-normalized URIs."""
         client = ExtractionClient(base_url=_BASE, model="qwen3:14b", api_key=_KEY)
         result = await client.extract("Cold exposure increases dopamine.")
-        assert len(result) == 1
-        # Subject/predicate/object should be raw labels, NOT http:// URIs
-        assert result[0].subject == "cold_exposure"
-        assert result[0].predicate == "increases"
-        assert result[0].object == "dopamine"
+        assert len(result) == 2
+        # Entity item should have raw label
+        entity = result[0]
+        assert entity.knowledge_type.value == "Entity"
+        assert entity.label == "cold_exposure"
+        # Claim subject/predicate/object should be raw labels, NOT http:// URIs
+        claim = result[1]
+        assert claim.subject == "cold_exposure"
+        assert claim.predicate == "increases"
+        assert claim.object == "dopamine"
         await client.close()
 
     async def test_close_is_idempotent(self, mock_llm):
@@ -247,53 +275,42 @@ class TestPredicateSynonymResolution:
         assert resolve_predicate_synonym("results-in") == "causes"
 
 
-def test_extraction_prompt_includes_all_seven_types():
-    from knowledge_service.clients.llm import _build_extraction_prompt
+def test_relation_prompt_includes_relation_types():
+    from knowledge_service.clients.llm import _build_relation_extraction_prompt
 
-    prompt = _build_extraction_prompt("Some text", title=None, source_type=None)
-    for type_name in (
-        "Claim",
-        "Fact",
-        "Relationship",
-        "Event",
-        "Entity",
-        "TemporalState",
-        "Conclusion",
-    ):
-        assert type_name in prompt, f"Missing knowledge type '{type_name}' in extraction prompt"
+    prompt = _build_relation_extraction_prompt("text", None, None, ["a", "b"])
+    for t in ("Claim", "Fact", "Relationship", "TemporalState", "Conclusion"):
+        assert t in prompt
 
 
-def test_extraction_prompt_includes_predicate_vocabulary():
-    from knowledge_service.clients.llm import _build_extraction_prompt
+def test_relation_prompt_includes_predicates():
+    from knowledge_service.clients.llm import _build_relation_extraction_prompt
 
-    prompt = _build_extraction_prompt("Some text", title=None, source_type=None)
-    for pred in ("causes", "increases", "decreases", "inhibits", "activates"):
-        assert pred in prompt, f"Missing predicate '{pred}' in extraction prompt"
+    prompt = _build_relation_extraction_prompt("text", None, None, ["a"])
+    for pred in ("causes", "increases", "decreases"):
+        assert pred in prompt
 
 
-def test_extraction_prompt_includes_naming_rules():
-    from knowledge_service.clients.llm import _build_extraction_prompt
+def test_relation_prompt_includes_object_type():
+    from knowledge_service.clients.llm import _build_relation_extraction_prompt
 
-    prompt = _build_extraction_prompt("Some text", title=None, source_type=None)
+    prompt = _build_relation_extraction_prompt("text", None, None, ["a"])
+    assert "object_type" in prompt
+
+
+def test_entity_prompt_includes_naming_rules():
+    from knowledge_service.clients.llm import _build_entity_extraction_prompt
+
+    prompt = _build_entity_extraction_prompt("text", None, None)
     assert "snake_case" in prompt
     assert "singular" in prompt.lower()
-    assert "canonical" in prompt.lower()
 
 
-def test_extraction_prompt_includes_example():
-    from knowledge_service.clients.llm import _build_extraction_prompt
+def test_entity_prompt_includes_example():
+    from knowledge_service.clients.llm import _build_entity_extraction_prompt
 
-    prompt = _build_extraction_prompt("Some text", title=None, source_type=None)
+    prompt = _build_entity_extraction_prompt("text", None, None)
     assert "Example:" in prompt
-    assert "cold_water_immersion" in prompt
-
-
-def test_extraction_prompt_includes_object_type():
-    from knowledge_service.clients.llm import _build_extraction_prompt
-
-    prompt = _build_extraction_prompt("Some text", title=None, source_type=None)
-    assert "object_type" in prompt
-    assert '"entity"' in prompt or "'entity'" in prompt
 
 
 class TestEntityExtractionPrompt:
@@ -337,6 +354,116 @@ class TestRelationExtractionPrompt:
         )
         assert "entity_a" in prompt
         assert "Only use" in prompt or "only use" in prompt
+
+
+class TestTwoPhaseExtract:
+    async def test_makes_two_llm_calls(self, httpx_mock):
+        httpx_mock.add_response(
+            url=_CHAT_URL,
+            json=_make_chat_response(
+                [
+                    {
+                        "knowledge_type": "Entity",
+                        "uri": "dopamine",
+                        "rdf_type": "schema:Thing",
+                        "label": "dopamine",
+                        "properties": {},
+                        "confidence": 0.9,
+                    },
+                ]
+            ),
+        )
+        httpx_mock.add_response(
+            url=_CHAT_URL,
+            json=_make_chat_response(
+                [
+                    {
+                        "knowledge_type": "Claim",
+                        "subject": "cold_exposure",
+                        "predicate": "increases",
+                        "object": "dopamine",
+                        "confidence": 0.7,
+                    },
+                ]
+            ),
+        )
+        client = ExtractionClient(base_url=_BASE, model="qwen3:14b", api_key=_KEY)
+        result = await client.extract("Cold exposure increases dopamine.")
+        assert len(httpx_mock.get_requests()) == 2
+        assert len(result) == 2
+        await client.close()
+
+    async def test_returns_entities_only_when_phase2_fails(self, httpx_mock):
+        httpx_mock.add_response(
+            url=_CHAT_URL,
+            json=_make_chat_response(
+                [
+                    {
+                        "knowledge_type": "Entity",
+                        "uri": "x",
+                        "rdf_type": "schema:Thing",
+                        "label": "x",
+                        "properties": {},
+                        "confidence": 0.9,
+                    },
+                ]
+            ),
+        )
+        httpx_mock.add_response(url=_CHAT_URL, status_code=500)
+        client = ExtractionClient(base_url=_BASE, model="qwen3:14b", api_key=_KEY)
+        result = await client.extract("text")
+        assert len(result) == 1
+        assert result[0].knowledge_type.value == "Entity"
+        await client.close()
+
+    async def test_returns_empty_when_phase1_fails(self, httpx_mock):
+        httpx_mock.add_response(url=_CHAT_URL, status_code=500)
+        client = ExtractionClient(base_url=_BASE, model="qwen3:14b", api_key=_KEY)
+        result = await client.extract("text")
+        assert result == []
+        assert len(httpx_mock.get_requests()) == 1
+        await client.close()
+
+    async def test_phase2_prompt_contains_phase1_entities(self, httpx_mock):
+        httpx_mock.add_response(
+            url=_CHAT_URL,
+            json=_make_chat_response(
+                [
+                    {
+                        "knowledge_type": "Entity",
+                        "uri": "cold_exposure",
+                        "rdf_type": "schema:Thing",
+                        "label": "cold_exposure",
+                        "properties": {},
+                        "confidence": 0.9,
+                    },
+                    {
+                        "knowledge_type": "Entity",
+                        "uri": "dopamine",
+                        "rdf_type": "schema:Thing",
+                        "label": "dopamine",
+                        "properties": {},
+                        "confidence": 0.95,
+                    },
+                ]
+            ),
+        )
+        httpx_mock.add_response(url=_CHAT_URL, json=_make_chat_response([]))
+        client = ExtractionClient(base_url=_BASE, model="qwen3:14b", api_key=_KEY)
+        await client.extract("Cold exposure increases dopamine.")
+        phase2_body = json.loads(httpx_mock.get_requests()[1].content)
+        phase2_prompt = phase2_body["messages"][0]["content"]
+        assert "cold_exposure" in phase2_prompt
+        assert "dopamine" in phase2_prompt
+        await client.close()
+
+    async def test_skips_phase2_when_no_entities(self, httpx_mock):
+        httpx_mock.add_response(url=_CHAT_URL, json=_make_chat_response([]))
+        client = ExtractionClient(base_url=_BASE, model="qwen3:14b", api_key=_KEY)
+        result = await client.extract("text")
+        assert result == []
+        assert len(httpx_mock.get_requests()) == 1
+        await client.close()
 
 
 class TestNoAuth:
