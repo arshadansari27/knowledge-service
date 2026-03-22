@@ -324,6 +324,7 @@ class SearchResult(BaseModel):
     ingested_at: datetime
     chunk_text: str
     chunk_index: int
+    section_header: str | None = None
 
 
 class HealthResponse(BaseModel):

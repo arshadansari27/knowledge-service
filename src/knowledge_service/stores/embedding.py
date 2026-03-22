@@ -153,15 +153,17 @@ class EmbeddingStore:
         """Insert chunk rows. Returns list of (chunk_index, chunk_id).
 
         Each dict must have: chunk_index, chunk_text, embedding, char_start, char_end.
+        Optional: section_header.
         """
         if not chunks:
             return []
 
         sql = """
             INSERT INTO content (
-                content_id, chunk_index, chunk_text, embedding, char_start, char_end
+                content_id, chunk_index, chunk_text, embedding,
+                char_start, char_end, section_header
             )
-            VALUES ($1, $2, $3, $4::vector(768), $5, $6)
+            VALUES ($1, $2, $3, $4::vector(768), $5, $6, $7)
             RETURNING id
         """
 
@@ -177,6 +179,7 @@ class EmbeddingStore:
                     embedding_str,
                     chunk["char_start"],
                     chunk["char_end"],
+                    chunk.get("section_header"),
                 )
                 results.append((chunk["chunk_index"], str(row["id"])))
         return results
