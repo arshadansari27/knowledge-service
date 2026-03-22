@@ -132,6 +132,10 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     app.state.pg_pool = await asyncpg.create_pool(settings.database_url)
     await run_migrations(app.state.pg_pool)
 
+    from knowledge_service.stores.graph_migration import migrate_to_named_graphs  # noqa: PLC0415
+
+    await migrate_to_named_graphs(app.state.knowledge_store.store, app.state.pg_pool)
+
     app.state.embedding_client = EmbeddingClient(
         base_url=settings.llm_base_url,
         model=settings.llm_embed_model,
