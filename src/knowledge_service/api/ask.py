@@ -29,12 +29,21 @@ class ContradictionInfo(BaseModel):
     confidence: float | None
 
 
+class EvidenceSnippet(BaseModel):
+    triple_subject: str
+    triple_predicate: str
+    triple_object: str
+    chunk_text: str
+    source_url: str
+
+
 class AskResponse(BaseModel):
     answer: str
     confidence: float | None
     sources: list[SourceInfo]
     knowledge_types_used: list[str]
     contradictions: list[ContradictionInfo]
+    evidence: list[EvidenceSnippet] = []
 
 
 @router.post("/ask", response_model=AskResponse)
@@ -92,10 +101,50 @@ async def post_ask(body: AskRequest, request: Request) -> AskResponse:
         for c in context.contradictions
     ]
 
+    # Evidence snippets: link triples back to their source chunks
+    evidence: list[EvidenceSnippet] = []
+    pg_pool = getattr(request.app.state, "pg_pool", None)
+    embedding_store = getattr(request.app.state, "embedding_store", None)
+
+    if pg_pool and embedding_store and context.knowledge_triples:
+        from knowledge_service._utils import _triple_hash
+        from knowledge_service.stores.provenance import ProvenanceStore
+
+        provenance_store = ProvenanceStore(pg_pool)
+
+        chunk_ids_to_fetch: list[str] = []
+        triple_prov_map: dict[str, list[dict]] = {}
+
+        for t in context.knowledge_triples:
+            th = _triple_hash(t["subject"], t["predicate"], t["object"])
+            prov_rows = await provenance_store.get_by_triple(th)
+            for row in prov_rows:
+                if row.get("chunk_id"):
+                    chunk_ids_to_fetch.append(str(row["chunk_id"]))
+            triple_prov_map[th] = prov_rows
+
+        if chunk_ids_to_fetch:
+            chunk_texts = await embedding_store.get_chunks_by_ids(chunk_ids_to_fetch)
+            for t in context.knowledge_triples:
+                th = _triple_hash(t["subject"], t["predicate"], t["object"])
+                for row in triple_prov_map.get(th, []):
+                    cid = str(row["chunk_id"]) if row.get("chunk_id") else None
+                    if cid and cid in chunk_texts:
+                        evidence.append(
+                            EvidenceSnippet(
+                                triple_subject=t["subject"],
+                                triple_predicate=t["predicate"],
+                                triple_object=t["object"],
+                                chunk_text=chunk_texts[cid],
+                                source_url=row.get("source_url", ""),
+                            )
+                        )
+
     return AskResponse(
         answer=raw_answer.answer,
         confidence=confidence,
         sources=sources,
         knowledge_types_used=knowledge_types_used,
         contradictions=contradictions,
+        evidence=evidence,
     )
