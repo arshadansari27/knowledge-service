@@ -52,6 +52,7 @@ async def get_search(
             ingested_at=row["ingested_at"],
             chunk_text=row["chunk_text"],
             chunk_index=row["chunk_index"],
+            section_header=row.get("section_header"),
         )
         for row in rows
     ]

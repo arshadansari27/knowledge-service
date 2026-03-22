@@ -240,7 +240,7 @@ class EmbeddingStore:
 
         sql = f"""
             SELECT
-                c.id, c.chunk_text, c.chunk_index,
+                c.id, c.chunk_text, c.chunk_index, c.section_header,
                 m.id AS content_id, m.url, m.title, m.summary,
                 m.source_type, m.tags, m.ingested_at,
                 1 - (c.embedding::halfvec(768) <=> $1::halfvec(768)) AS similarity
@@ -301,7 +301,7 @@ class EmbeddingStore:
 
         sql = f"""
             SELECT
-                c.id, c.chunk_text, c.chunk_index,
+                c.id, c.chunk_text, c.chunk_index, c.section_header,
                 m.id AS content_id, m.url, m.title, m.summary,
                 m.source_type, m.tags, m.ingested_at,
                 ts_rank(c.tsv, plainto_tsquery('english', $1)) AS similarity

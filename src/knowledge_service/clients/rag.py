@@ -39,7 +39,12 @@ def build_rag_prompt(question: str, context: RetrievalContext) -> str:
             source_type = row.get("source_type", "unknown")
             similarity = row.get("similarity", 0.0)
             text = row.get("chunk_text") or row.get("summary") or "No content"
-            sections.append(f'- "{title}" ({source_type}, similarity: {similarity:.2f}): {text}')
+            section = (
+                f" [Section: {row.get('section_header')}]" if row.get("section_header") else ""
+            )
+            sections.append(
+                f'- "{title}" ({source_type}, similarity: {similarity:.2f}){section}: {text}'
+            )
         sections.append("")
 
     # Knowledge triples section

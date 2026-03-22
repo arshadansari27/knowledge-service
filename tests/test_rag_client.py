@@ -84,6 +84,27 @@ class TestBuildPrompt:
         prompt = build_rag_prompt("q", RetrievalContext())
         assert "q" in prompt
 
+    def test_includes_section_header_when_present(self):
+        ctx = RetrievalContext(
+            content_results=[
+                {
+                    "id": "uuid-2",
+                    "url": "https://example.com/article",
+                    "title": "My Article",
+                    "source_type": "article",
+                    "similarity": 0.9,
+                    "chunk_text": "Some text",
+                    "section_header": "Title > Methods",
+                }
+            ]
+        )
+        prompt = build_rag_prompt("q", ctx)
+        assert "[Section: Title > Methods]" in prompt
+
+    def test_no_section_tag_when_header_absent(self):
+        prompt = build_rag_prompt("q", _sample_context())
+        assert "[Section:" not in prompt
+
 
 class TestRAGClientAnswer:
     async def test_returns_rag_answer(self, httpx_mock):
