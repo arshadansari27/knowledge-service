@@ -132,6 +132,10 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     app.state.pg_pool = await asyncpg.create_pool(settings.database_url)
     await run_migrations(app.state.pg_pool)
 
+    from knowledge_service.stores.graph_migration import migrate_to_named_graphs  # noqa: PLC0415
+
+    await migrate_to_named_graphs(app.state.knowledge_store.store, app.state.pg_pool)
+
     app.state.embedding_client = EmbeddingClient(
         base_url=settings.llm_base_url,
         model=settings.llm_embed_model,
@@ -145,6 +149,17 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     )
 
     app.state.reasoning_engine = ReasoningEngine(rules_dir=settings.problog_rules_dir)
+
+    # Load inverse predicate pairs from ontology for inverse_holds rule
+    from knowledge_service.ontology.namespaces import KS_INVERSE_PREDICATE  # noqa: PLC0415
+
+    inverse_quads = list(
+        app.state.knowledge_store.store.quads_for_pattern(None, KS_INVERSE_PREDICATE, None, None)
+    )
+    inverse_pairs = [
+        (q.subject.value.split("/")[-1], q.object.value.split("/")[-1]) for q in inverse_quads
+    ]
+    app.state.reasoning_engine.set_inverse_pairs(inverse_pairs)
 
     # Federation client (optional)
     federation_client = None

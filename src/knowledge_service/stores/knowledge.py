@@ -4,6 +4,12 @@ Provides triple storage with RDF-star annotations for confidence scores,
 knowledge types, and temporal validity ranges. Uses pyoxigraph (Rust-based
 RDF triplestore) for fast in-memory or disk-backed storage with full
 SPARQL 1.2 support.
+
+All data triples are stored in named graphs for trust-tier separation:
+- ks:graph/ontology  — schema, class hierarchy, predicate metadata
+- ks:graph/asserted  — user-provided / high-trust triples
+- ks:graph/extracted — LLM-extracted triples (default)
+- ks:graph/inferred  — reasoning-engine derived triples
 """
 
 from __future__ import annotations
@@ -23,6 +29,7 @@ from pyoxigraph import (
 from knowledge_service.ontology.namespaces import (
     KS,
     KS_CONFIDENCE,
+    KS_GRAPH_EXTRACTED,
     KS_KNOWLEDGE_TYPE,
     KS_OPPOSITE_PREDICATE,
     KS_VALID_FROM,
@@ -71,6 +78,7 @@ class KnowledgeStore:
     - Temporal validity ranges (validFrom / validUntil)
     - Contradiction detection
     - Content-addressed triple hashing (SHA-256)
+    - Named graph separation for trust tiers
     """
 
     def __init__(self, data_dir: str | None = None):
@@ -98,16 +106,17 @@ class KnowledgeStore:
         knowledge_type: str,
         valid_from: date | datetime | None = None,
         valid_until: date | datetime | None = None,
+        graph: str | None = None,
     ) -> tuple[str, bool]:
-        """Insert a triple with RDF-star annotations.
+        """Insert a triple with RDF-star annotations into a named graph.
 
-        The base triple (subject, predicate, object) is stored in the default
-        graph. Metadata (confidence, knowledge_type, temporal bounds) is attached
-        via RDF-star quoted triple annotations using pyoxigraph's SPARQL 1.2
-        reification support.
+        The base triple (subject, predicate, object) is stored in the specified
+        named graph (defaults to ks:graph/extracted). Metadata (confidence,
+        knowledge_type, temporal bounds) is attached via RDF-star quoted triple
+        annotations using pyoxigraph's SPARQL 1.2 reification support.
 
-        If the triple already exists, its annotations are left unchanged and
-        the same hash is returned (idempotent).
+        If the triple already exists (in any graph), its annotations are left
+        unchanged and the same hash is returned (idempotent).
 
         Args:
             subject: URI of the subject.
@@ -117,6 +126,7 @@ class KnowledgeStore:
             knowledge_type: One of Claim, Fact, Event, Entity, etc.
             valid_from: Optional start of temporal validity.
             valid_until: Optional end of temporal validity.
+            graph: Named graph URI. Defaults to KS_GRAPH_EXTRACTED.
 
         Returns:
             Tuple of (SHA-256 hex digest of the canonical triple form, is_new).
@@ -129,26 +139,31 @@ class KnowledgeStore:
         triple = Triple(s, p, o)
         triple_hash = hashlib.sha256(str(triple).encode()).hexdigest()
 
-        # Insert base triple (idempotent — pyoxigraph deduplicates quads)
-        self._store.add(Quad(s, p, o))
+        graph_uri = graph or KS_GRAPH_EXTRACTED
+        graph_node = NamedNode(graph_uri)
 
-        # Check if annotations already exist for this triple
+        # Insert base triple into named graph (idempotent — pyoxigraph deduplicates quads)
+        self._store.add(Quad(s, p, o, graph_node))
+
+        # Check if annotations already exist for this triple (across all graphs)
         existing_reifications = list(self._store.quads_for_pattern(None, RDF_REIFIES, triple, None))
         if existing_reifications:
             # Annotations already exist; skip to preserve idempotency
             return triple_hash, False
 
-        # Insert RDF-star annotations via SPARQL UPDATE
+        # Insert RDF-star annotations via SPARQL UPDATE into the same named graph
         obj_sparql = _sparql_object(object_)
         conf_literal = f'"{confidence}"^^<{XSD}float>'
         type_uri = f"<{KS}{knowledge_type}>"
 
         sparql = f"""
             INSERT DATA {{
-                << <{subject}> <{predicate}> {obj_sparql} >>
-                    <{KS_CONFIDENCE.value}> {conf_literal} .
-                << <{subject}> <{predicate}> {obj_sparql} >>
-                    <{KS_KNOWLEDGE_TYPE.value}> {type_uri} .
+                GRAPH <{graph_uri}> {{
+                    << <{subject}> <{predicate}> {obj_sparql} >>
+                        <{KS_CONFIDENCE.value}> {conf_literal} .
+                    << <{subject}> <{predicate}> {obj_sparql} >>
+                        <{KS_KNOWLEDGE_TYPE.value}> {type_uri} .
+                }}
             }}
         """
         self._store.update(sparql)
@@ -161,8 +176,10 @@ class KnowledgeStore:
                 vf = f'"{valid_from.isoformat()}"^^<{XSD}dateTime>'
             self._store.update(f"""
                 INSERT DATA {{
-                    << <{subject}> <{predicate}> {obj_sparql} >>
-                        <{KS_VALID_FROM.value}> {vf} .
+                    GRAPH <{graph_uri}> {{
+                        << <{subject}> <{predicate}> {obj_sparql} >>
+                            <{KS_VALID_FROM.value}> {vf} .
+                    }}
                 }}
             """)
 
@@ -173,8 +190,10 @@ class KnowledgeStore:
                 vu = f'"{valid_until.isoformat()}"^^<{XSD}dateTime>'
             self._store.update(f"""
                 INSERT DATA {{
-                    << <{subject}> <{predicate}> {obj_sparql} >>
-                        <{KS_VALID_UNTIL.value}> {vu} .
+                    GRAPH <{graph_uri}> {{
+                        << <{subject}> <{predicate}> {obj_sparql} >>
+                            <{KS_VALID_UNTIL.value}> {vu} .
+                    }}
                 }}
             """)
 
@@ -200,37 +219,58 @@ class KnowledgeStore:
             results.append(row)
         return results
 
-    def get_triples_by_subject(self, subject: str) -> list[dict]:
+    def get_triples_by_subject(
+        self,
+        subject: str,
+        graphs: list[str] | None = None,
+    ) -> list[dict]:
         """Get all annotated triples for a given subject.
 
         Returns only triples that have RDF-star annotations (filters out
         bare schema/ontology triples). Each result contains:
-        predicate, object, confidence, knowledge_type, valid_from, valid_until.
+        graph, predicate, object, confidence, knowledge_type, valid_from, valid_until.
 
         Args:
             subject: URI of the subject to look up.
+            graphs: Optional list of graph URIs to restrict the search to.
 
         Returns:
             List of dicts with triple data and annotations.
         """
+        graph_filter = ""
+        if graphs:
+            values = " ".join(f"<{g}>" for g in graphs)
+            graph_filter = f"VALUES ?g {{ {values} }}"
+
         sparql = f"""
-            SELECT ?p ?o ?conf ?ktype ?vfrom ?vuntil WHERE {{
-                <{subject}> ?p ?o .
-                OPTIONAL {{
-                    << <{subject}> ?p ?o >>
-                        <{KS_CONFIDENCE.value}> ?conf .
+            SELECT ?g ?p ?o ?conf ?ktype ?vfrom ?vuntil WHERE {{
+                {graph_filter}
+                GRAPH ?g {{
+                    <{subject}> ?p ?o .
                 }}
                 OPTIONAL {{
-                    << <{subject}> ?p ?o >>
-                        <{KS_KNOWLEDGE_TYPE.value}> ?ktype .
+                    GRAPH ?g {{
+                        << <{subject}> ?p ?o >>
+                            <{KS_CONFIDENCE.value}> ?conf .
+                    }}
                 }}
                 OPTIONAL {{
-                    << <{subject}> ?p ?o >>
-                        <{KS_VALID_FROM.value}> ?vfrom .
+                    GRAPH ?g {{
+                        << <{subject}> ?p ?o >>
+                            <{KS_KNOWLEDGE_TYPE.value}> ?ktype .
+                    }}
                 }}
                 OPTIONAL {{
-                    << <{subject}> ?p ?o >>
-                        <{KS_VALID_UNTIL.value}> ?vuntil .
+                    GRAPH ?g {{
+                        << <{subject}> ?p ?o >>
+                            <{KS_VALID_FROM.value}> ?vfrom .
+                    }}
+                }}
+                OPTIONAL {{
+                    GRAPH ?g {{
+                        << <{subject}> ?p ?o >>
+                            <{KS_VALID_UNTIL.value}> ?vuntil .
+                    }}
                 }}
                 FILTER(BOUND(?conf))
             }}
@@ -239,6 +279,7 @@ class KnowledgeStore:
         results = []
         for solution in query_result:
             row = {
+                "graph": solution["g"].value,
                 "predicate": solution["p"],
                 "object": solution["o"],
                 "confidence": float(solution["conf"].value) if solution["conf"] else None,
@@ -251,33 +292,54 @@ class KnowledgeStore:
             results.append(row)
         return results
 
-    def get_triples_by_predicate(self, predicate: str) -> list[dict]:
+    def get_triples_by_predicate(
+        self,
+        predicate: str,
+        graphs: list[str] | None = None,
+    ) -> list[dict]:
         """Get all annotated triples for a given predicate.
 
         Args:
             predicate: URI of the predicate to look up.
+            graphs: Optional list of graph URIs to restrict the search to.
 
         Returns:
             List of dicts with triple data and annotations.
         """
+        graph_filter = ""
+        if graphs:
+            values = " ".join(f"<{g}>" for g in graphs)
+            graph_filter = f"VALUES ?g {{ {values} }}"
+
         sparql = f"""
-            SELECT ?s ?o ?conf ?ktype ?vfrom ?vuntil WHERE {{
-                ?s <{predicate}> ?o .
-                OPTIONAL {{
-                    << ?s <{predicate}> ?o >>
-                        <{KS_CONFIDENCE.value}> ?conf .
+            SELECT ?g ?s ?o ?conf ?ktype ?vfrom ?vuntil WHERE {{
+                {graph_filter}
+                GRAPH ?g {{
+                    ?s <{predicate}> ?o .
                 }}
                 OPTIONAL {{
-                    << ?s <{predicate}> ?o >>
-                        <{KS_KNOWLEDGE_TYPE.value}> ?ktype .
+                    GRAPH ?g {{
+                        << ?s <{predicate}> ?o >>
+                            <{KS_CONFIDENCE.value}> ?conf .
+                    }}
                 }}
                 OPTIONAL {{
-                    << ?s <{predicate}> ?o >>
-                        <{KS_VALID_FROM.value}> ?vfrom .
+                    GRAPH ?g {{
+                        << ?s <{predicate}> ?o >>
+                            <{KS_KNOWLEDGE_TYPE.value}> ?ktype .
+                    }}
                 }}
                 OPTIONAL {{
-                    << ?s <{predicate}> ?o >>
-                        <{KS_VALID_UNTIL.value}> ?vuntil .
+                    GRAPH ?g {{
+                        << ?s <{predicate}> ?o >>
+                            <{KS_VALID_FROM.value}> ?vfrom .
+                    }}
+                }}
+                OPTIONAL {{
+                    GRAPH ?g {{
+                        << ?s <{predicate}> ?o >>
+                            <{KS_VALID_UNTIL.value}> ?vuntil .
+                    }}
                 }}
                 FILTER(BOUND(?conf))
             }}
@@ -286,6 +348,7 @@ class KnowledgeStore:
         results = []
         for solution in query_result:
             row = {
+                "graph": solution["g"].value,
                 "subject": solution["s"],
                 "predicate": NamedNode(predicate),
                 "object": solution["o"],
@@ -323,24 +386,25 @@ class KnowledgeStore:
         o = _to_rdf_term(object_)
         target_triple = Triple(s, p, o)
 
-        # Find blank nodes that reify this triple
+        # Find blank nodes that reify this triple (across all graphs)
         reification_quads = list(
             self._store.quads_for_pattern(None, RDF_REIFIES, target_triple, None)
         )
 
         for rq in reification_quads:
             bnode = rq.subject
+            graph_node = rq.graph_name  # preserve the named graph
             # Find existing confidence quads for this blank node
             conf_quads = list(self._store.quads_for_pattern(bnode, KS_CONFIDENCE, None, None))
             # Remove old confidence values
             for cq in conf_quads:
                 self._store.remove(cq)
-            # Add new confidence
+            # Add new confidence in the same named graph
             new_val = Literal(
                 str(new_confidence),
                 datatype=NamedNode(f"{XSD}float"),
             )
-            self._store.add(Quad(bnode, KS_CONFIDENCE, new_val))
+            self._store.add(Quad(bnode, KS_CONFIDENCE, new_val, graph_node))
 
     def find_contradictions(
         self,
@@ -352,6 +416,7 @@ class KnowledgeStore:
 
         Searches for triples with the same subject and predicate but a
         different object. Returns them with their confidence annotations.
+        Searches across all named graphs.
 
         Args:
             subject: URI of the subject.
@@ -365,11 +430,15 @@ class KnowledgeStore:
 
         sparql = f"""
             SELECT ?o ?conf WHERE {{
-                <{subject}> <{predicate}> ?o .
+                GRAPH ?g {{
+                    <{subject}> <{predicate}> ?o .
+                }}
                 FILTER(?o != {obj_sparql})
                 OPTIONAL {{
-                    << <{subject}> <{predicate}> ?o >>
-                        <{KS_CONFIDENCE.value}> ?conf .
+                    GRAPH ?g {{
+                        << <{subject}> <{predicate}> ?o >>
+                            <{KS_CONFIDENCE.value}> ?conf .
+                    }}
                 }}
             }}
         """
@@ -394,21 +463,29 @@ class KnowledgeStore:
         Returns triples with the same subject and object but an opposite predicate.
         Each result dict has: predicate_in_store, confidence.
 
-        Uses UNION to cover both directions of oppositePredicate (A→B and B→A).
+        Uses UNION to cover both directions of oppositePredicate (A->B and B->A).
+        The oppositePredicate declarations live in the ontology graph while
+        data triples may be in any graph.
         """
         obj_sparql = _sparql_object(object_)
 
         sparql = f"""
             SELECT DISTINCT ?p_stored ?conf WHERE {{
-                {{
-                    <{predicate}> <{KS_OPPOSITE_PREDICATE.value}> ?p_stored .
-                }} UNION {{
-                    ?p_stored <{KS_OPPOSITE_PREDICATE.value}> <{predicate}> .
+                GRAPH ?gont {{
+                    {{
+                        <{predicate}> <{KS_OPPOSITE_PREDICATE.value}> ?p_stored .
+                    }} UNION {{
+                        ?p_stored <{KS_OPPOSITE_PREDICATE.value}> <{predicate}> .
+                    }}
                 }}
-                <{subject}> ?p_stored {obj_sparql} .
+                GRAPH ?g {{
+                    <{subject}> ?p_stored {obj_sparql} .
+                }}
                 OPTIONAL {{
-                    << <{subject}> ?p_stored {obj_sparql} >>
-                        <{KS_CONFIDENCE.value}> ?conf .
+                    GRAPH ?g {{
+                        << <{subject}> ?p_stored {obj_sparql} >>
+                            <{KS_CONFIDENCE.value}> ?conf .
+                    }}
                 }}
             }}
         """

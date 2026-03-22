@@ -38,8 +38,12 @@ async def get_counts(request: Request) -> dict:
 
     sparql = f"""
         SELECT (COUNT(*) AS ?cnt) WHERE {{
-            ?s ?p ?o .
-            << ?s ?p ?o >> <{KS_CONFIDENCE.value}> ?conf .
+            GRAPH ?g {{
+                ?s ?p ?o .
+            }}
+            GRAPH ?g {{
+                << ?s ?p ?o >> <{KS_CONFIDENCE.value}> ?conf .
+            }}
         }}
     """
     triple_rows = await asyncio.to_thread(knowledge_store.query, sparql)
@@ -64,8 +68,12 @@ async def get_confidence_distribution(request: Request) -> dict:
 
     sparql = f"""
         SELECT ?conf WHERE {{
-            ?s ?p ?o .
-            << ?s ?p ?o >> <{KS_CONFIDENCE.value}> ?conf .
+            GRAPH ?g {{
+                ?s ?p ?o .
+            }}
+            GRAPH ?g {{
+                << ?s ?p ?o >> <{KS_CONFIDENCE.value}> ?conf .
+            }}
         }}
     """
     rows = await asyncio.to_thread(knowledge_store.query, sparql)
@@ -89,8 +97,12 @@ async def get_type_breakdown(request: Request) -> dict:
 
     sparql = f"""
         SELECT ?ktype (COUNT(*) AS ?cnt) WHERE {{
-            ?s ?p ?o .
-            << ?s ?p ?o >> <{KS_KNOWLEDGE_TYPE.value}> ?ktype .
+            GRAPH ?g {{
+                ?s ?p ?o .
+            }}
+            GRAPH ?g {{
+                << ?s ?p ?o >> <{KS_KNOWLEDGE_TYPE.value}> ?ktype .
+            }}
         }}
         GROUP BY ?ktype
     """
@@ -211,9 +223,15 @@ async def browse_triples(
     count_sparql = f"""
         PREFIX xsd: <http://www.w3.org/2001/XMLSchema#>
         SELECT (COUNT(*) AS ?cnt) WHERE {{
-            ?s ?p ?o .
-            << ?s ?p ?o >> <{KS_CONFIDENCE.value}> ?conf .
-            OPTIONAL {{ << ?s ?p ?o >> <{KS_KNOWLEDGE_TYPE.value}> ?ktype . }}
+            GRAPH ?g {{
+                ?s ?p ?o .
+            }}
+            GRAPH ?g {{
+                << ?s ?p ?o >> <{KS_CONFIDENCE.value}> ?conf .
+            }}
+            OPTIONAL {{
+                GRAPH ?g {{ << ?s ?p ?o >> <{KS_KNOWLEDGE_TYPE.value}> ?ktype . }}
+            }}
             {filter_clause}
         }}
     """
@@ -221,11 +239,21 @@ async def browse_triples(
     data_sparql = f"""
         PREFIX xsd: <http://www.w3.org/2001/XMLSchema#>
         SELECT ?s ?p ?o ?conf ?ktype ?vfrom ?vuntil WHERE {{
-            ?s ?p ?o .
-            << ?s ?p ?o >> <{KS_CONFIDENCE.value}> ?conf .
-            OPTIONAL {{ << ?s ?p ?o >> <{KS_KNOWLEDGE_TYPE.value}> ?ktype . }}
-            OPTIONAL {{ << ?s ?p ?o >> <{KS_VALID_FROM.value}> ?vfrom . }}
-            OPTIONAL {{ << ?s ?p ?o >> <{KS_VALID_UNTIL.value}> ?vuntil . }}
+            GRAPH ?g {{
+                ?s ?p ?o .
+            }}
+            GRAPH ?g {{
+                << ?s ?p ?o >> <{KS_CONFIDENCE.value}> ?conf .
+            }}
+            OPTIONAL {{
+                GRAPH ?g {{ << ?s ?p ?o >> <{KS_KNOWLEDGE_TYPE.value}> ?ktype . }}
+            }}
+            OPTIONAL {{
+                GRAPH ?g {{ << ?s ?p ?o >> <{KS_VALID_FROM.value}> ?vfrom . }}
+            }}
+            OPTIONAL {{
+                GRAPH ?g {{ << ?s ?p ?o >> <{KS_VALID_UNTIL.value}> ?vuntil . }}
+            }}
             {filter_clause}
         }}
         {order_clause}

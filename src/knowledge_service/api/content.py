@@ -157,16 +157,28 @@ async def _process_one_content_request(body: ContentRequest, request: Request) -
 
     # Delete old chunks (re-ingestion) and insert new
     await embedding_store.delete_chunks(content_id)
-    await embedding_store.insert_chunks(content_id, chunk_records)
+    chunk_id_pairs = await embedding_store.insert_chunks(content_id, chunk_records)
+    chunk_id_map = dict(chunk_id_pairs) if chunk_id_pairs else {}  # {chunk_index: chunk_id}
 
-    # Step 2.5: Auto-extract knowledge from raw_text if none provided
+    # Step 2.5: Auto-extract knowledge per chunk if none provided
     if not body.knowledge and body.raw_text:
-        knowledge = await extraction_client.extract(
-            body.raw_text, title=body.title, source_type=body.source_type
-        )
+        knowledge_by_chunk: list[tuple[list, str | None]] = []
+        for chunk in chunk_records:
+            items = await extraction_client.extract(
+                chunk["chunk_text"], title=body.title, source_type=body.source_type
+            )
+            cid = chunk_id_map.get(chunk["chunk_index"])
+            knowledge_by_chunk.append((items, cid))
+        knowledge = []
+        chunk_ids_for_items: list[str | None] = []
+        for items, cid in knowledge_by_chunk:
+            for item in items:
+                knowledge.append(item)
+                chunk_ids_for_items.append(cid)
         extracted_by_llm = bool(knowledge)
     else:
         knowledge = list(body.knowledge)
+        chunk_ids_for_items = [None] * len(knowledge)
         extracted_by_llm = False
 
     extractor = f"llm_{settings.llm_chat_model}" if extracted_by_llm else "api"
@@ -186,8 +198,9 @@ async def _process_one_content_request(body: ContentRequest, request: Request) -
     triples_created = 0
     contradictions_all: list[dict] = []
 
-    for item in knowledge:
+    for i, item in enumerate(knowledge):
         for t in expand_to_triples(item):
+            cid = chunk_ids_for_items[i] if i < len(chunk_ids_for_items) else None
             is_new, contras = await process_triple(
                 t,
                 knowledge_store,
@@ -196,6 +209,7 @@ async def _process_one_content_request(body: ContentRequest, request: Request) -
                 body.url,
                 body.source_type,
                 extractor,
+                chunk_id=cid,
             )
             if is_new:
                 triples_created += 1

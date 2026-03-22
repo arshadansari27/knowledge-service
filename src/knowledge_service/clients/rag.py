@@ -51,7 +51,8 @@ def build_rag_prompt(question: str, context: RetrievalContext) -> str:
             o = t.get("object", "?")
             ktype = t.get("knowledge_type", "?")
             conf = t.get("confidence", "?")
-            sections.append(f"- {s} -> {p} -> {o} ({ktype}, confidence: {conf})")
+            trust = t.get("trust_tier", "unknown")
+            sections.append(f"- [{trust}] {s} -> {p} -> {o} ({ktype}, confidence: {conf})")
         sections.append("")
 
     # Contradictions section

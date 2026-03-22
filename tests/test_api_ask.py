@@ -295,3 +295,12 @@ class TestAskConfidence:
             response = await c.post("/api/ask", json={"question": "test?"})
 
         assert response.json()["confidence"] is None
+
+
+class TestAskEvidence:
+    async def test_ask_returns_evidence_field(self, client):
+        response = await client.post("/api/ask", json={"question": "test question"})
+        assert response.status_code == 200
+        data = response.json()
+        assert "evidence" in data
+        assert isinstance(data["evidence"], list)

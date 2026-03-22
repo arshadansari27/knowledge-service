@@ -39,17 +39,17 @@ Content arrives via `/api/content` or `/api/claims` → text is chunked (short =
 
 ### Key Components
 
-- **KnowledgeStore** (`stores/knowledge.py`): pyoxigraph wrapper. All triples are content-addressed via SHA-256 hash. RDF-star annotations attach confidence, knowledge type, and temporal validity. Uses SPARQL `INSERT DATA` for annotations (not DELETE WHERE — pyoxigraph doesn't support DELETE with RDF-star). Confidence updates use the Python API to find reification blank nodes.
+- **KnowledgeStore** (`stores/knowledge.py`): pyoxigraph wrapper with **named graph support**. Triples are stored in 4 trust-tiered named graphs: `ks:graph/ontology` (schema), `ks:graph/asserted` (human-provided), `ks:graph/extracted` (LLM-derived), `ks:graph/inferred` (computed). All triples are content-addressed via SHA-256 hash. RDF-star annotations attach confidence, knowledge type, and temporal validity. All SPARQL queries use `GRAPH ?g { ... }` patterns. Confidence updates use the Python API to find reification blank nodes and preserve the named graph.
 
-- **ReasoningEngine** (`reasoning/engine.py`): ProbLog wrapper. Noisy-OR evidence combination: `P = 1 - product(1 - ci)`. Loads rules from `reasoning/rules/base.pl`.
+- **ReasoningEngine** (`reasoning/engine.py`): ProbLog wrapper. Noisy-OR evidence combination: `P = 1 - product(1 - ci)`. Glob-loads all `.pl` rule files from `reasoning/rules/`. Supports 5-tuple claims with metadata dict (knowledge_type, valid_from, valid_until). 12 domain-agnostic rules across 5 files: base (contradicts, value_conflict, supported, inverse_holds, corroborated), inference_chains (indirect_link, causal_propagation), confidence (high_confidence, contested, authoritative), temporal (expired, currently_valid, supersedes), knowledge_types.
 
-- **EmbeddingStore** (`stores/embedding.py`): PostgreSQL + pgvector. Manages `content_metadata` (document metadata), `content` (chunks with embeddings), and `entity_embeddings`. Uses `halfvec(768)` for nomic-embed-text embeddings. Search JOINs chunks with metadata — single query, no fallback. Methods: `insert_content_metadata()`, `delete_chunks()`, `insert_chunks()`, `search()`.
+- **EmbeddingStore** (`stores/embedding.py`): PostgreSQL + pgvector. Manages `content_metadata` (document metadata), `content` (chunks with embeddings), `entity_embeddings`, and `predicate_embeddings`. Uses `halfvec(768)` for nomic-embed-text embeddings. `insert_chunks()` returns `(chunk_index, chunk_id)` pairs for provenance linking. `get_chunks_by_ids()` supports batch chunk text lookup.
 
-- **ProvenanceStore** (`stores/provenance.py`): PostgreSQL. One row per source per triple, keyed by triple SHA-256 hash. Tracks source_url, source_type, extractor, confidence, timestamps, temporal validity.
+- **ProvenanceStore** (`stores/provenance.py`): PostgreSQL. One row per source per triple, keyed by triple SHA-256 hash. Tracks source_url, source_type, extractor, confidence, timestamps, temporal validity, and **chunk_id** (FK to content table) for chunk-level evidence tracing.
 
-- **EntityResolver** (`stores/entity_resolver.py`): Embedding-based entity deduplication + optional DBpedia/Wikidata federation.
+- **EntityResolver** (`stores/entity_resolver.py`): Embedding-based entity deduplication + predicate resolution + optional DBpedia/Wikidata federation. Entity threshold 0.85, predicate threshold 0.90.
 
-- **RAGRetriever** (`stores/rag.py`): Hybrid retrieval — combines chunk-level semantic search (pgvector) with knowledge graph triples for RAG context. Prefers `chunk_text` over `summary` when building LLM prompts.
+- **RAGRetriever** (`stores/rag.py`): Hybrid retrieval — combines chunk-level semantic search (pgvector) with knowledge graph triples for RAG context. Triples include **trust tier** labels (verified/extracted). `/api/ask` returns **evidence snippets** with exact source chunk text.
 
 ### App Lifecycle
 

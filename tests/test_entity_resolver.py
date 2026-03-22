@@ -152,10 +152,12 @@ class TestFederationFallback:
             "description": "PostgreSQL is a database.",
         }
         uri = await resolver_with_federation.resolve("PostgreSQL")
-        # Check owl:sameAs triple was stored
+        # Check owl:sameAs triple was stored (in a named graph)
         triples = store.query(f"""
             SELECT ?o WHERE {{
-                <{uri}> <http://www.w3.org/2002/07/owl#sameAs> ?o .
+                GRAPH ?g {{
+                    <{uri}> <http://www.w3.org/2002/07/owl#sameAs> ?o .
+                }}
             }}
         """)
         assert len(triples) == 1

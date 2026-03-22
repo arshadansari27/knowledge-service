@@ -67,11 +67,15 @@ async def get_contradictions(
 
     sparql = f"""
         SELECT ?s ?p ?o1 ?o2 ?conf1 ?conf2 WHERE {{
-            ?s ?p ?o1 .
-            ?s ?p ?o2 .
+            GRAPH ?g {{
+                ?s ?p ?o1 .
+                ?s ?p ?o2 .
+            }}
             FILTER(?o1 != ?o2 && STR(?o1) < STR(?o2))
-            << ?s ?p ?o1 >> <{KS_CONFIDENCE.value}> ?conf1 .
-            << ?s ?p ?o2 >> <{KS_CONFIDENCE.value}> ?conf2 .
+            GRAPH ?g {{
+                << ?s ?p ?o1 >> <{KS_CONFIDENCE.value}> ?conf1 .
+                << ?s ?p ?o2 >> <{KS_CONFIDENCE.value}> ?conf2 .
+            }}
         }}
     """
 
@@ -80,11 +84,17 @@ async def get_contradictions(
     # Pattern B: opposite predicates (e.g., increases vs decreases)
     opposite_sparql = f"""
         SELECT ?s ?p1 ?o ?p2 ?conf1 ?conf2 WHERE {{
-            ?p1 <{KS_OPPOSITE_PREDICATE.value}> ?p2 .
-            ?s ?p1 ?o .
-            ?s ?p2 ?o .
-            << ?s ?p1 ?o >> <{KS_CONFIDENCE.value}> ?conf1 .
-            << ?s ?p2 ?o >> <{KS_CONFIDENCE.value}> ?conf2 .
+            GRAPH ?gont {{
+                ?p1 <{KS_OPPOSITE_PREDICATE.value}> ?p2 .
+            }}
+            GRAPH ?g {{
+                ?s ?p1 ?o .
+                ?s ?p2 ?o .
+            }}
+            GRAPH ?g {{
+                << ?s ?p1 ?o >> <{KS_CONFIDENCE.value}> ?conf1 .
+                << ?s ?p2 ?o >> <{KS_CONFIDENCE.value}> ?conf2 .
+            }}
             FILTER(STR(?p1) < STR(?p2))
         }}
     """

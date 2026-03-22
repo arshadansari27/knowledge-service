@@ -5,7 +5,14 @@ from __future__ import annotations
 import asyncio
 
 from knowledge_service._utils import _rdf_value_to_str
+from knowledge_service.ontology.namespaces import KS_GRAPH_ASSERTED, KS_GRAPH_EXTRACTED
 from knowledge_service.stores.provenance import ProvenanceStore
+
+
+def _extractor_to_graph(extractor: str) -> str:
+    if extractor.startswith("llm_"):
+        return KS_GRAPH_EXTRACTED
+    return KS_GRAPH_ASSERTED
 
 
 async def process_triple(
@@ -16,6 +23,7 @@ async def process_triple(
     source_url: str,
     source_type: str,
     extractor: str,
+    chunk_id: str | None = None,
 ) -> tuple[bool, list[dict]]:
     """Insert one triple, detect contradictions, record provenance, combine evidence.
 
@@ -23,6 +31,8 @@ async def process_triple(
         (is_new, contradictions): is_new=True if this triple did not already exist.
     """
     provenance_store = ProvenanceStore(pg_pool)
+
+    graph = _extractor_to_graph(extractor)
 
     triple_hash, is_new = await asyncio.to_thread(
         knowledge_store.insert_triple,
@@ -33,6 +43,7 @@ async def process_triple(
         t["knowledge_type"],
         t["valid_from"],
         t["valid_until"],
+        graph,
     )
 
     contradictions_raw: list[dict] = await asyncio.to_thread(
@@ -83,6 +94,7 @@ async def process_triple(
         metadata={},
         valid_from=t["valid_from"],
         valid_until=t["valid_until"],
+        chunk_id=chunk_id,
     )
 
     prov_rows = await provenance_store.get_by_triple(triple_hash)
