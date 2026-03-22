@@ -8,8 +8,6 @@ from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse
 from pydantic import ValidationError
 
-from langchain_text_splitters import RecursiveCharacterTextSplitter
-
 from knowledge_service._utils import _is_uri
 from knowledge_service.api._ingest import process_triple
 from knowledge_service.clients.llm import (
@@ -17,6 +15,7 @@ from knowledge_service.clients.llm import (
     to_predicate_uri,
     resolve_predicate_synonym,
 )
+from knowledge_service.chunking import chunk_text as split_into_chunks
 from knowledge_service.config import settings
 from knowledge_service.models import ContentRequest, ContentResponse, expand_to_triples
 
@@ -24,11 +23,6 @@ router = APIRouter()
 
 _CHUNK_SIZE = 4000
 _CHUNK_OVERLAP = 200
-_splitter = RecursiveCharacterTextSplitter(
-    chunk_size=_CHUNK_SIZE,
-    chunk_overlap=_CHUNK_OVERLAP,
-    separators=["\n\n", "\n", ". ", " ", ""],
-)
 
 
 async def _resolve_labels(item, entity_resolver) -> tuple[int, object]:
@@ -122,28 +116,19 @@ async def _process_one_content_request(body: ContentRequest, request: Request) -
         metadata=body.metadata,
     )
 
-    # Step 2: Always chunk and embed
+    # Step 2: Chunk and embed
     text = body.raw_text or body.summary or body.title
-    if len(text) >= _CHUNK_SIZE:
-        chunks_text = _splitter.split_text(text)
-    else:
-        chunks_text = [text]
+    raw_chunks = split_into_chunks(text, chunk_size=_CHUNK_SIZE, chunk_overlap=_CHUNK_OVERLAP)
 
-    # Track char offsets
     chunk_records: list[dict] = []
-    search_start = 0
-    for i, ct in enumerate(chunks_text):
-        char_start = text.find(ct[:100], search_start)
-        if char_start == -1:
-            char_start = search_start
-        char_end = char_start + len(ct)
-        search_start = max(search_start, char_start + 1)
+    for i, rc in enumerate(raw_chunks):
         chunk_records.append(
             {
                 "chunk_index": i,
-                "chunk_text": ct,
-                "char_start": char_start,
-                "char_end": char_end,
+                "chunk_text": rc["chunk_text"],
+                "char_start": rc["char_start"],
+                "char_end": rc["char_end"],
+                "section_header": rc.get("section_header"),
             }
         )
 
