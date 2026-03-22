@@ -25,6 +25,7 @@ ks:occurredAt          rdf:type rdf:Property ; rdfs:label "occurred at" .
 ks:amount              rdf:type rdf:Property ; rdfs:label "amount" .
 ks:currency            rdf:type rdf:Property ; rdfs:label "currency" .
 ks:oppositePredicate   rdf:type rdf:Property ; rdfs:label "opposite predicate" .
+ks:inversePredicate    rdf:type rdf:Property ; rdfs:label "inverse predicate" .
 
 # Domain predicates (canonical vocabulary for extraction)
 ks:causes          rdf:type rdf:Property ; rdfs:label "causes" .
@@ -50,4 +51,4 @@ ks:associated_with rdf:type rdf:Property ; rdfs:label "associated with" .
 ks:increases       ks:oppositePredicate ks:decreases .
 ks:activates       ks:oppositePredicate ks:inhibits .
 ks:precedes        ks:oppositePredicate ks:follows .
-ks:contains        ks:oppositePredicate ks:part_of .
+ks:contains        ks:inversePredicate ks:part_of .
