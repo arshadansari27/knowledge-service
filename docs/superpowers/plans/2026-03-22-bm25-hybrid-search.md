@@ -1,6 +1,6 @@
 # BM25 Hybrid Search Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [x]`) syntax for tracking.
 
 **Goal:** Add PostgreSQL full-text search alongside existing pgvector vector search, fused via Reciprocal Rank Fusion, for both `/api/search` and `RAGRetriever`.
 
@@ -9,6 +9,8 @@
 **Tech Stack:** PostgreSQL tsvector/tsquery, GIN index, ts_rank, Reciprocal Rank Fusion
 
 **Spec:** `docs/superpowers/specs/2026-03-22-bm25-hybrid-search-design.md`
+
+**Status:** COMPLETE — merged as PR #13, version 0.1.20. 410 tests passing. Deployed to production.
 
 ---
 
@@ -29,7 +31,7 @@
 **Files:**
 - Create: `migrations/005_add_fts.sql`
 
-- [ ] **Step 1: Create migration file**
+- [x] **Step 1: Create migration file**
 
 ```sql
 -- Full-text search: tsvector column on content (chunks) table
@@ -52,7 +54,7 @@ CREATE TRIGGER trg_content_tsv
 UPDATE content SET tsv = to_tsvector('english', COALESCE(chunk_text, ''));
 ```
 
-- [ ] **Step 2: Commit**
+- [x] **Step 2: Commit**
 
 ```bash
 git add migrations/005_add_fts.sql
@@ -67,7 +69,7 @@ git commit -m "feat: add tsvector column with GIN index and trigger for FTS"
 - Modify: `src/knowledge_service/stores/embedding.py` (add module-level function after imports)
 - Create: `tests/test_hybrid_search.py`
 
-- [ ] **Step 1: Write failing tests for RRF**
+- [x] **Step 1: Write failing tests for RRF**
 
 Create `tests/test_hybrid_search.py`:
 
@@ -116,12 +118,12 @@ class TestReciprocalRankFusion:
         assert fused[0]["similarity"] == pytest.approx(2.0 / 61, rel=1e-3)
 ```
 
-- [ ] **Step 2: Run tests to verify they fail**
+- [x] **Step 2: Run tests to verify they fail**
 
 Run: `uv run pytest tests/test_hybrid_search.py -v`
 Expected: FAIL — `ImportError: cannot import name 'reciprocal_rank_fusion'`
 
-- [ ] **Step 3: Implement RRF function**
+- [x] **Step 3: Implement RRF function**
 
 Add to `src/knowledge_service/stores/embedding.py` after the imports (before the class):
 
@@ -154,12 +156,12 @@ def reciprocal_rank_fusion(
     return fused
 ```
 
-- [ ] **Step 4: Run tests to verify they pass**
+- [x] **Step 4: Run tests to verify they pass**
 
 Run: `uv run pytest tests/test_hybrid_search.py -v`
 Expected: ALL PASS
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add src/knowledge_service/stores/embedding.py tests/test_hybrid_search.py
@@ -174,7 +176,7 @@ git commit -m "feat: add reciprocal rank fusion function"
 - Modify: `src/knowledge_service/stores/embedding.py` (add method to EmbeddingStore)
 - Modify: `tests/test_hybrid_search.py`
 
-- [ ] **Step 1: Write failing tests for search_bm25**
+- [x] **Step 1: Write failing tests for search_bm25**
 
 Add to `tests/test_hybrid_search.py`:
 
@@ -255,12 +257,12 @@ class TestSearchBM25:
         assert "source_type" in sql
 ```
 
-- [ ] **Step 2: Run tests to verify they fail**
+- [x] **Step 2: Run tests to verify they fail**
 
 Run: `uv run pytest tests/test_hybrid_search.py::TestSearchBM25 -v`
 Expected: FAIL — `AttributeError: 'EmbeddingStore' object has no attribute 'search_bm25'`
 
-- [ ] **Step 3: Implement search_bm25**
+- [x] **Step 3: Implement search_bm25**
 
 Add to `EmbeddingStore` class in `embedding.py`, after the `search()` method (after line 216):
 
@@ -319,12 +321,12 @@ async def search_bm25(
     return [dict(row) for row in rows]
 ```
 
-- [ ] **Step 4: Run tests to verify they pass**
+- [x] **Step 4: Run tests to verify they pass**
 
 Run: `uv run pytest tests/test_hybrid_search.py -v`
 Expected: ALL PASS
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add src/knowledge_service/stores/embedding.py tests/test_hybrid_search.py
@@ -339,7 +341,7 @@ git commit -m "feat: add search_bm25 method with tsvector full-text search"
 - Modify: `src/knowledge_service/stores/embedding.py:165-216` (modify `search()`)
 - Modify: `tests/test_hybrid_search.py`
 
-- [ ] **Step 1: Write failing test for hybrid mode**
+- [x] **Step 1: Write failing test for hybrid mode**
 
 Add to `tests/test_hybrid_search.py`:
 
@@ -415,12 +417,12 @@ class TestHybridSearch:
         assert conn.fetch.call_count == 1
 ```
 
-- [ ] **Step 2: Run tests to verify they fail**
+- [x] **Step 2: Run tests to verify they fail**
 
 Run: `uv run pytest tests/test_hybrid_search.py::TestHybridSearch -v`
 Expected: FAIL — `search() got an unexpected keyword argument 'query_text'`
 
-- [ ] **Step 3: Modify search() for hybrid mode**
+- [x] **Step 3: Modify search() for hybrid mode**
 
 In `embedding.py`, update `search()` signature and body. Add `query_text: str | None = None` parameter. At the end of the method, before returning:
 
@@ -498,17 +500,17 @@ async def search(
     )
 ```
 
-- [ ] **Step 4: Run tests to verify they pass**
+- [x] **Step 4: Run tests to verify they pass**
 
 Run: `uv run pytest tests/test_hybrid_search.py -v`
 Expected: ALL PASS
 
-- [ ] **Step 5: Run full test suite to verify backward compatibility**
+- [x] **Step 5: Run full test suite to verify backward compatibility**
 
 Run: `uv run pytest tests/ -v`
 Expected: ALL PASS (existing tests don't pass `query_text`, so they get vector-only behavior)
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add src/knowledge_service/stores/embedding.py tests/test_hybrid_search.py
@@ -523,7 +525,7 @@ git commit -m "feat: hybrid search mode in search() — vector + BM25 via RRF"
 - Modify: `src/knowledge_service/api/search.py:35-40`
 - Modify: `src/knowledge_service/stores/rag.py:49-51`
 
-- [ ] **Step 1: Update /api/search endpoint**
+- [x] **Step 1: Update /api/search endpoint**
 
 In `src/knowledge_service/api/search.py`, change line 35-40:
 
@@ -537,7 +539,7 @@ rows = await embedding_store.search(
 )
 ```
 
-- [ ] **Step 2: Update RAGRetriever**
+- [x] **Step 2: Update RAGRetriever**
 
 In `src/knowledge_service/stores/rag.py`, change line 49-51:
 
@@ -547,17 +549,17 @@ content_results = await self._embedding_store.search(
 )
 ```
 
-- [ ] **Step 3: Run full test suite**
+- [x] **Step 3: Run full test suite**
 
 Run: `uv run pytest tests/ -v`
 Expected: ALL PASS
 
-- [ ] **Step 4: Run lint**
+- [x] **Step 4: Run lint**
 
 Run: `uv run ruff check . && uv run ruff format --check .`
 Expected: Clean
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add src/knowledge_service/api/search.py src/knowledge_service/stores/rag.py
@@ -568,17 +570,17 @@ git commit -m "feat: wire /api/search and RAGRetriever to use hybrid search"
 
 ## Task 6: Final integration test and lint
 
-- [ ] **Step 1: Run full test suite**
+- [x] **Step 1: Run full test suite**
 
 Run: `uv run pytest tests/ -v`
 Expected: ALL PASS
 
-- [ ] **Step 2: Run lint and format**
+- [x] **Step 2: Run lint and format**
 
 Run: `uv run ruff check . && uv run ruff format --check .`
 Expected: Clean. If not: `uv run ruff format .`
 
-- [ ] **Step 3: Fix any issues and commit**
+- [x] **Step 3: Fix any issues and commit**
 
 ```bash
 git add -A && git commit -m "chore: lint fixes for BM25 hybrid search"

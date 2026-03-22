@@ -1,6 +1,6 @@
 # Ingestion Improvements Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [x]`) syntax for tracking.
 
 **Goal:** Improve extraction quality via entity-first two-phase LLM extraction and improve chunking quality via markdown-aware splitting with section metadata.
 
@@ -9,6 +9,13 @@
 **Tech Stack:** OpenAI-compatible chat API (qwen3:14b via LiteLLM), langchain_text_splitters (MarkdownHeaderTextSplitter, RecursiveCharacterTextSplitter), PostgreSQL
 
 **Spec:** `docs/superpowers/specs/2026-03-22-ingestion-improvements-design.md`
+
+**Status:** COMPLETE — merged as PR #14, version 0.1.21. Hotfix for Entity URI normalization (v0.1.22). 439 tests passing. Deployed to production.
+
+**Implementation notes:**
+- Entity items from two-phase extraction need URI normalization in both `expand_to_triples()` and `_apply_uri_fallback()` — discovered in production (fixed in hotfix)
+- `MarkdownHeaderTextSplitter` used with `strip_headers=False` to keep heading text in chunks for accurate offset tracking
+- Two-phase extraction doubles LLM calls per chunk (6 calls for 3-chunk document) — ~2 min ingestion latency is expected
 
 ---
 
@@ -44,7 +51,7 @@
 - Modify: `src/knowledge_service/clients/llm.py:236-282`
 - Modify: `tests/test_extraction_client.py`
 
-- [ ] **Step 1: Write failing tests for entity extraction prompt**
+- [x] **Step 1: Write failing tests for entity extraction prompt**
 
 Add to `tests/test_extraction_client.py`:
 
@@ -70,12 +77,12 @@ def test_entity_extraction_prompt_includes_text():
     assert "Title: Test" in prompt
 ```
 
-- [ ] **Step 2: Run tests to verify they fail**
+- [x] **Step 2: Run tests to verify they fail**
 
 Run: `uv run pytest tests/test_extraction_client.py::test_entity_extraction_prompt_focuses_on_entities -v`
 Expected: FAIL — `ImportError: cannot import name '_build_entity_extraction_prompt'`
 
-- [ ] **Step 3: Implement _build_entity_extraction_prompt**
+- [x] **Step 3: Implement _build_entity_extraction_prompt**
 
 In `clients/llm.py`, add before the `ExtractionClient` class (replace `_build_extraction_prompt`):
 
@@ -114,12 +121,12 @@ Text:
 ---"""
 ```
 
-- [ ] **Step 4: Run tests to verify they pass**
+- [x] **Step 4: Run tests to verify they pass**
 
 Run: `uv run pytest tests/test_extraction_client.py::test_entity_extraction_prompt_focuses_on_entities tests/test_extraction_client.py::test_entity_extraction_prompt_includes_text -v`
 Expected: PASS
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add src/knowledge_service/clients/llm.py tests/test_extraction_client.py
@@ -132,7 +139,7 @@ git commit -m "feat: add entity extraction prompt (phase 1 of two-phase extracti
 - Modify: `src/knowledge_service/clients/llm.py`
 - Modify: `tests/test_extraction_client.py`
 
-- [ ] **Step 1: Write failing tests for relation extraction prompt**
+- [x] **Step 1: Write failing tests for relation extraction prompt**
 
 ```python
 def test_relation_extraction_prompt_includes_entity_list():
@@ -163,12 +170,12 @@ def test_relation_extraction_prompt_constrains_to_entities():
     assert "Only use" in prompt or "only use" in prompt
 ```
 
-- [ ] **Step 2: Run tests to verify they fail**
+- [x] **Step 2: Run tests to verify they fail**
 
 Run: `uv run pytest tests/test_extraction_client.py::test_relation_extraction_prompt_includes_entity_list -v`
 Expected: FAIL
 
-- [ ] **Step 3: Implement _build_relation_extraction_prompt**
+- [x] **Step 3: Implement _build_relation_extraction_prompt**
 
 ```python
 def _build_relation_extraction_prompt(
@@ -216,12 +223,12 @@ Text:
 ---"""
 ```
 
-- [ ] **Step 4: Run tests to verify they pass**
+- [x] **Step 4: Run tests to verify they pass**
 
 Run: `uv run pytest tests/test_extraction_client.py::test_relation_extraction_prompt_includes_entity_list tests/test_extraction_client.py::test_relation_extraction_prompt_constrains_to_entities -v`
 Expected: PASS
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add src/knowledge_service/clients/llm.py tests/test_extraction_client.py
@@ -234,7 +241,7 @@ git commit -m "feat: add relation extraction prompt (phase 2 of two-phase extrac
 - Modify: `src/knowledge_service/clients/llm.py:285-343`
 - Modify: `tests/test_extraction_client.py`
 
-- [ ] **Step 1: Write failing tests for two-phase extract()**
+- [x] **Step 1: Write failing tests for two-phase extract()**
 
 ```python
 class TestTwoPhaseExtract:
@@ -317,12 +324,12 @@ class TestTwoPhaseExtract:
         await client.close()
 ```
 
-- [ ] **Step 2: Run tests to verify they fail**
+- [x] **Step 2: Run tests to verify they fail**
 
 Run: `uv run pytest tests/test_extraction_client.py::TestTwoPhaseExtract -v`
 Expected: FAIL — extract() still makes 1 call
 
-- [ ] **Step 3: Rewrite extract() method**
+- [x] **Step 3: Rewrite extract() method**
 
 Extract a helper `_call_llm` to avoid duplication, then rewrite `extract()`:
 
@@ -411,11 +418,11 @@ async def extract(
     return phase1_items + phase2_items
 ```
 
-- [ ] **Step 4: Remove old `_build_extraction_prompt` function**
+- [x] **Step 4: Remove old `_build_extraction_prompt` function**
 
 Delete lines 236-282 (the old single prompt function). It's now replaced by the two new functions.
 
-- [ ] **Step 5: Update mock_llm fixture and rewrite old prompt tests**
+- [x] **Step 5: Update mock_llm fixture and rewrite old prompt tests**
 
 The `mock_llm` fixture only mocks 1 response but two-phase extract needs 2. Update it:
 
@@ -477,12 +484,12 @@ def test_entity_prompt_includes_example():
     assert "Example:" in prompt
 ```
 
-- [ ] **Step 6: Run full test suite**
+- [x] **Step 6: Run full test suite**
 
 Run: `uv run pytest tests/ -v`
 Expected: ALL PASS
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```bash
 git add src/knowledge_service/clients/llm.py tests/test_extraction_client.py
@@ -499,7 +506,7 @@ git commit -m "feat: two-phase extraction — entities first, relations second"
 - Create: `src/knowledge_service/chunking.py`
 - Create: `tests/test_chunking.py`
 
-- [ ] **Step 1: Write failing tests for chunking module**
+- [x] **Step 1: Write failing tests for chunking module**
 
 Create `tests/test_chunking.py`:
 
@@ -565,12 +572,12 @@ class TestChunkTextPlain:
         assert chunks[0]["chunk_text"] == "Short text."
 ```
 
-- [ ] **Step 2: Run tests to verify they fail**
+- [x] **Step 2: Run tests to verify they fail**
 
 Run: `uv run pytest tests/test_chunking.py -v`
 Expected: FAIL — `ModuleNotFoundError: No module named 'knowledge_service.chunking'`
 
-- [ ] **Step 3: Implement chunking module**
+- [x] **Step 3: Implement chunking module**
 
 Create `src/knowledge_service/chunking.py`:
 
@@ -690,12 +697,12 @@ def _chunk_plain(
     return results
 ```
 
-- [ ] **Step 4: Run tests to verify they pass**
+- [x] **Step 4: Run tests to verify they pass**
 
 Run: `uv run pytest tests/test_chunking.py -v`
 Expected: ALL PASS
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add src/knowledge_service/chunking.py tests/test_chunking.py
@@ -709,13 +716,13 @@ git commit -m "feat: markdown-aware chunking module with section headers"
 - Modify: `src/knowledge_service/stores/embedding.py:120-154` (insert_chunks)
 - Modify: `src/knowledge_service/models.py:316-326` (SearchResult)
 
-- [ ] **Step 1: Create migration**
+- [x] **Step 1: Create migration**
 
 ```sql
 ALTER TABLE content ADD COLUMN section_header TEXT;
 ```
 
-- [ ] **Step 2: Update insert_chunks to include section_header**
+- [x] **Step 2: Update insert_chunks to include section_header**
 
 In `embedding.py`, update the SQL in `insert_chunks()`:
 
@@ -742,7 +749,7 @@ row = await conn.fetchrow(
 )
 ```
 
-- [ ] **Step 3: Add section_header to SearchResult model**
+- [x] **Step 3: Add section_header to SearchResult model**
 
 In `models.py`, add to `SearchResult`:
 
@@ -761,12 +768,12 @@ class SearchResult(BaseModel):
     section_header: str | None = None
 ```
 
-- [ ] **Step 4: Run tests**
+- [x] **Step 4: Run tests**
 
 Run: `uv run pytest tests/ -v`
 Expected: ALL PASS
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add migrations/006_add_section_header.sql src/knowledge_service/stores/embedding.py src/knowledge_service/models.py
@@ -780,7 +787,7 @@ git commit -m "feat: section_header column, insert_chunks support, SearchResult 
 - Modify: `src/knowledge_service/api/search.py:42-55`
 - Modify: `src/knowledge_service/clients/rag.py:37-42`
 
-- [ ] **Step 1: Add c.section_header to search() SQL**
+- [x] **Step 1: Add c.section_header to search() SQL**
 
 In `embedding.py`, in the `search()` method's SQL SELECT clause, add `c.section_header` after `c.chunk_index`:
 
@@ -790,7 +797,7 @@ SELECT
     m.id AS content_id, ...
 ```
 
-- [ ] **Step 2: Add c.section_header to search_bm25() SQL**
+- [x] **Step 2: Add c.section_header to search_bm25() SQL**
 
 Same change in `search_bm25()`:
 
@@ -800,7 +807,7 @@ SELECT
     m.id AS content_id, ...
 ```
 
-- [ ] **Step 3: Update /api/search to pass section_header**
+- [x] **Step 3: Update /api/search to pass section_header**
 
 In `api/search.py`, add `section_header` to the SearchResult construction:
 
@@ -812,7 +819,7 @@ SearchResult(
 )
 ```
 
-- [ ] **Step 4: Update RAG prompt to show section header**
+- [x] **Step 4: Update RAG prompt to show section header**
 
 In `clients/rag.py`, update the content section (around line 42):
 
@@ -821,12 +828,12 @@ section = f" [Section: {row.get('section_header')}]" if row.get("section_header"
 sections.append(f'- "{title}" ({source_type}, similarity: {similarity:.2f}){section}: {text}')
 ```
 
-- [ ] **Step 5: Run full test suite**
+- [x] **Step 5: Run full test suite**
 
 Run: `uv run pytest tests/ -v`
 Expected: ALL PASS
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add src/knowledge_service/stores/embedding.py src/knowledge_service/api/search.py src/knowledge_service/clients/rag.py
@@ -838,7 +845,7 @@ git commit -m "feat: propagate section_header through search and RAG prompt"
 **Files:**
 - Modify: `src/knowledge_service/api/content.py:125-148`
 
-- [ ] **Step 1: Replace chunking logic with new module**
+- [x] **Step 1: Replace chunking logic with new module**
 
 In `content.py`, replace the chunking block (lines 125-148) with:
 
@@ -862,17 +869,17 @@ for i, rc in enumerate(raw_chunks):
 
 Remove the old `_splitter` module-level constant and the `langchain_text_splitters` import from content.py (it's now in `chunking.py`).
 
-- [ ] **Step 2: Run full test suite**
+- [x] **Step 2: Run full test suite**
 
 Run: `uv run pytest tests/ -v`
 Expected: ALL PASS
 
-- [ ] **Step 3: Run lint**
+- [x] **Step 3: Run lint**
 
 Run: `uv run ruff check . && uv run ruff format --check .`
 Expected: Clean
 
-- [ ] **Step 4: Commit**
+- [x] **Step 4: Commit**
 
 ```bash
 git add src/knowledge_service/api/content.py
@@ -881,17 +888,17 @@ git commit -m "feat: wire markdown-aware chunking into content ingestion"
 
 ### Task 8: Final integration test and lint
 
-- [ ] **Step 1: Run full test suite**
+- [x] **Step 1: Run full test suite**
 
 Run: `uv run pytest tests/ -v`
 Expected: ALL PASS
 
-- [ ] **Step 2: Run lint and format**
+- [x] **Step 2: Run lint and format**
 
 Run: `uv run ruff check . && uv run ruff format --check .`
 Expected: Clean
 
-- [ ] **Step 3: Fix any issues and commit**
+- [x] **Step 3: Fix any issues and commit**
 
 ```bash
 git add -A && git commit -m "chore: lint fixes for ingestion improvements"
