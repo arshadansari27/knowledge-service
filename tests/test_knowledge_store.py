@@ -1,6 +1,12 @@
 import pytest
-from pyoxigraph import Quad
+from pyoxigraph import NamedNode, Quad
 from knowledge_service.stores.knowledge import KnowledgeStore
+from knowledge_service.ontology.namespaces import (
+    KS_GRAPH_EXTRACTED,
+    KS_GRAPH_ASSERTED,
+    KS_GRAPH_ONTOLOGY,
+    KS_OPPOSITE_PREDICATE,
+)
 
 
 @pytest.fixture
@@ -54,6 +60,7 @@ class TestInsertTriple:
         assert len(results) == 1
         assert results[0]["confidence"] == pytest.approx(0.75)
         assert results[0]["knowledge_type"] == "Claim"
+        assert results[0]["graph"] == KS_GRAPH_EXTRACTED
 
 
 class TestQuery:
@@ -65,10 +72,13 @@ class TestQuery:
             confidence=0.99,
             knowledge_type="Fact",
         )
+        # Triples are now in named graphs — use GRAPH ?g to find them
         results = store.query("""
             SELECT ?o WHERE {
-                <http://knowledge.local/data/aegis>
-                <http://knowledge.local/schema/uses> ?o .
+                GRAPH ?g {
+                    <http://knowledge.local/data/aegis>
+                    <http://knowledge.local/schema/uses> ?o .
+                }
             }
         """)
         assert len(results) == 1
@@ -114,16 +124,14 @@ class TestFindContradictions:
 
 class TestFindOppositePredContradictions:
     def test_finds_opposite_predicate_conflict(self):
-        from pyoxigraph import NamedNode
-        from knowledge_service.ontology.namespaces import KS_OPPOSITE_PREDICATE
-
         store = KnowledgeStore(data_dir=None)
-        # Register that 'increases' and 'decreases' are opposites
+        # Register that 'increases' and 'decreases' are opposites in the ontology graph
         store._store.add(
             Quad(
                 NamedNode("http://ks/increases"),
                 KS_OPPOSITE_PREDICATE,
                 NamedNode("http://ks/decreases"),
+                NamedNode(KS_GRAPH_ONTOLOGY),
             )
         )
         # Insert a triple: dopamine increases serotonin
@@ -145,3 +153,87 @@ class TestFindOppositePredContradictions:
             "http://ks/a", "http://ks/bar", "http://ks/b"
         )
         assert results == []
+
+
+class TestNamedGraphs:
+    def test_insert_into_named_graph(self, store):
+        """Insert with explicit graph, verify it appears in results."""
+        store.insert_triple(
+            subject="http://knowledge.local/data/x",
+            predicate="http://knowledge.local/schema/y",
+            object_="http://knowledge.local/data/z",
+            confidence=0.9,
+            knowledge_type="Fact",
+            graph=KS_GRAPH_ASSERTED,
+        )
+        results = store.get_triples_by_subject("http://knowledge.local/data/x")
+        assert len(results) == 1
+        assert results[0]["graph"] == KS_GRAPH_ASSERTED
+
+    def test_insert_default_graph_is_extracted(self, store):
+        """Insert without graph, verify KS_GRAPH_EXTRACTED is used."""
+        store.insert_triple(
+            subject="http://knowledge.local/data/a",
+            predicate="http://knowledge.local/schema/b",
+            object_="http://knowledge.local/data/c",
+            confidence=0.7,
+            knowledge_type="Claim",
+        )
+        results = store.get_triples_by_subject("http://knowledge.local/data/a")
+        assert len(results) == 1
+        assert results[0]["graph"] == KS_GRAPH_EXTRACTED
+
+    def test_get_triples_filters_by_graph(self, store):
+        """Insert in different graphs, verify graph filter works."""
+        store.insert_triple(
+            subject="http://knowledge.local/data/thing",
+            predicate="http://knowledge.local/schema/p1",
+            object_="http://knowledge.local/data/o1",
+            confidence=0.8,
+            knowledge_type="Claim",
+            graph=KS_GRAPH_ASSERTED,
+        )
+        store.insert_triple(
+            subject="http://knowledge.local/data/thing",
+            predicate="http://knowledge.local/schema/p2",
+            object_="http://knowledge.local/data/o2",
+            confidence=0.6,
+            knowledge_type="Claim",
+            graph=KS_GRAPH_EXTRACTED,
+        )
+        # No filter — both returned
+        all_results = store.get_triples_by_subject("http://knowledge.local/data/thing")
+        assert len(all_results) == 2
+
+        # Filter to asserted only
+        asserted = store.get_triples_by_subject(
+            "http://knowledge.local/data/thing", graphs=[KS_GRAPH_ASSERTED]
+        )
+        assert len(asserted) == 1
+        assert asserted[0]["graph"] == KS_GRAPH_ASSERTED
+
+        # Filter to extracted only
+        extracted = store.get_triples_by_subject(
+            "http://knowledge.local/data/thing", graphs=[KS_GRAPH_EXTRACTED]
+        )
+        assert len(extracted) == 1
+        assert extracted[0]["graph"] == KS_GRAPH_EXTRACTED
+
+    def test_contradictions_span_graphs(self, store):
+        """Contradictions are detected across different named graphs."""
+        store.insert_triple(
+            subject="http://knowledge.local/data/person",
+            predicate="http://knowledge.local/schema/born_in",
+            object_="http://knowledge.local/data/london",
+            confidence=0.8,
+            knowledge_type="Claim",
+            graph=KS_GRAPH_ASSERTED,
+        )
+        # Check from extracted graph perspective
+        candidates = store.find_contradictions(
+            subject="http://knowledge.local/data/person",
+            predicate="http://knowledge.local/schema/born_in",
+            object_="http://knowledge.local/data/paris",
+        )
+        assert len(candidates) == 1
+        assert "london" in str(candidates[0]["object"])
