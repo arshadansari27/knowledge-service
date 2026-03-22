@@ -5,7 +5,14 @@ from __future__ import annotations
 import asyncio
 
 from knowledge_service._utils import _rdf_value_to_str
+from knowledge_service.ontology.namespaces import KS_GRAPH_ASSERTED, KS_GRAPH_EXTRACTED
 from knowledge_service.stores.provenance import ProvenanceStore
+
+
+def _extractor_to_graph(extractor: str) -> str:
+    if extractor.startswith("llm_"):
+        return KS_GRAPH_EXTRACTED
+    return KS_GRAPH_ASSERTED
 
 
 async def process_triple(
@@ -24,6 +31,8 @@ async def process_triple(
     """
     provenance_store = ProvenanceStore(pg_pool)
 
+    graph = _extractor_to_graph(extractor)
+
     triple_hash, is_new = await asyncio.to_thread(
         knowledge_store.insert_triple,
         t["subject"],
@@ -33,6 +42,7 @@ async def process_triple(
         t["knowledge_type"],
         t["valid_from"],
         t["valid_until"],
+        graph,
     )
 
     contradictions_raw: list[dict] = await asyncio.to_thread(
