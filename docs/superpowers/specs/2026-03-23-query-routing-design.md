@@ -76,51 +76,128 @@ Same as today but entity discovery reduced from 5 → 3 since content chunks are
 #### `entity` strategy
 
 1. Embed question
-2. Use entity names from classifier to resolve URIs directly:
-   - Try exact match via `search_entities()` with embedding of each entity name
-   - Fall back to URI slug lookup
+2. Resolve entity names from classifier to URIs:
+   - Batch-embed entity names via `embedding_client.embed_batch(entity_names)` (1 network call)
+   - For each embedding, call `embedding_store.search_entities(embedding, limit=1)`
+   - Accept match only if similarity >= 0.80 (slightly lower than EntityResolver's 0.85 to be more permissive at query time)
+   - For unmatched names, construct URI slug via `to_entity_uri()` from `clients/llm.py` and check `get_triples_by_subject()` — if non-empty, use it
+   - Skip entities that can't be resolved
 3. Get all triples for resolved entities (`get_triples_by_subject`)
 4. Light hybrid search (top 3 chunks) for supporting text
 5. Contradiction detection
 
 Key difference: graph triples are primary context, content chunks are secondary.
 
+**Latency:** 1 embed_batch call + N search_entities calls + graph lookups. ~2-4s total.
+
 #### `graph` strategy
 
 1. Embed question
-2. Resolve entity names from classifier to URIs (same as entity strategy)
+2. Resolve entity names to URIs (same as entity strategy above)
 3. For each entity, get triples as **both subject and object** (bidirectional):
    - `get_triples_by_subject(entity)` — what does this entity do?
    - `get_triples_by_object(entity)` — what affects this entity? (NEW method)
-4. If 2+ entities found, find connecting triples via SPARQL path query (1-2 hop)
+4. If 2+ entities resolved, find connecting path via `find_connecting_triples()` (NEW method, see below)
 5. Light hybrid search (top 3 chunks) for supporting text
 6. Contradiction detection
 
-Key difference: relationship traversal is primary. Requires new `get_triples_by_object()` method.
+Key difference: relationship traversal is primary. Requires new `get_triples_by_object()` and `find_connecting_triples()` methods.
 
-### New KnowledgeStore method: `get_triples_by_object()`
+**Latency:** Same as entity strategy + bidirectional lookups + optional path query. ~3-5s total.
 
-For graph mode, need to find triples where an entity appears as the **object**. Same pattern as `get_triples_by_subject()` but matching `?s ?p <entity>`:
+### New KnowledgeStore methods
+
+#### `get_triples_by_object(object_uri, graphs=None)`
+
+Find triples where an entity appears as the **object**. Same pattern as `get_triples_by_subject()` but matching `?s ?p <entity>`:
 
 ```sparql
 SELECT ?g ?s ?p ?conf ?ktype ?vfrom ?vuntil WHERE {
+    {graph_filter}
     GRAPH ?g {
         ?s ?p <{object_uri}> .
     }
     OPTIONAL {
         GRAPH ?g {
             << ?s ?p <{object_uri}> >>
-                <ks:confidence> ?conf .
+                <{KS_CONFIDENCE}> ?conf .
         }
     }
-    ... (same OPTIONAL pattern for ktype, vfrom, vuntil)
+    OPTIONAL {
+        GRAPH ?g {
+            << ?s ?p <{object_uri}> >>
+                <{KS_KNOWLEDGE_TYPE}> ?ktype .
+        }
+    }
+    OPTIONAL {
+        GRAPH ?g {
+            << ?s ?p <{object_uri}> >>
+                <{KS_VALID_FROM}> ?vfrom .
+        }
+    }
+    OPTIONAL {
+        GRAPH ?g {
+            << ?s ?p <{object_uri}> >>
+                <{KS_VALID_UNTIL}> ?vuntil .
+        }
+    }
     FILTER(BOUND(?conf))
+}
+ORDER BY DESC(?conf)
+LIMIT 20
+```
+
+Returns dict with keys: `graph`, `subject`, `predicate`, `confidence`, `knowledge_type`, `valid_from`, `valid_until`. Note: `subject` and `predicate` are pyoxigraph terms — callers must apply `_rdf_value_to_str()` before passing to downstream consumers.
+
+Gains optional `graphs: list[str] | None` filter via `VALUES ?g { ... }` (same as other methods).
+
+#### `find_connecting_triples(entity_a_uri, entity_b_uri, graphs=None)`
+
+Find 1-2 hop paths between two entities. Returns connecting triples.
+
+**1-hop query** (A directly relates to B):
+```sparql
+SELECT ?g ?p ?conf WHERE {
+    GRAPH ?g {
+        { <{entity_a}> ?p <{entity_b}> . }
+        UNION
+        { <{entity_b}> ?p <{entity_a}> . }
+    }
+    OPTIONAL {
+        GRAPH ?g {
+            << <{entity_a}> ?p <{entity_b}> >>
+                <{KS_CONFIDENCE}> ?conf .
+        }
+    }
+    FILTER(BOUND(?conf) || true)
 }
 ```
 
-Returns same dict shape as `get_triples_by_subject()` with `graph`, `subject`, `predicate`, `confidence`, `knowledge_type`, etc.
+**2-hop query** (A → intermediate → B, only if 1-hop returns nothing):
+```sparql
+SELECT ?g ?mid ?p1 ?p2 ?conf1 ?conf2 WHERE {
+    GRAPH ?g {
+        <{entity_a}> ?p1 ?mid .
+        ?mid ?p2 <{entity_b}> .
+    }
+    FILTER(?mid != <{entity_a}> && ?mid != <{entity_b}>)
+    OPTIONAL {
+        GRAPH ?g {
+            << <{entity_a}> ?p1 ?mid >> <{KS_CONFIDENCE}> ?conf1 .
+        }
+    }
+    OPTIONAL {
+        GRAPH ?g {
+            << ?mid ?p2 <{entity_b}> >> <{KS_CONFIDENCE}> ?conf2 .
+        }
+    }
+}
+LIMIT 10
+```
 
-Gains optional `graphs: list[str] | None` filter (same as `get_triples_by_subject()`).
+Returns a list of connecting triple dicts. For 1-hop: `{"subject": A, "predicate": p, "object": B, "confidence": conf}`. For 2-hop: two triple dicts per path (A→mid, mid→B).
+
+If both queries return nothing, returns empty list (entities are not connected within 2 hops).
 
 ### Integration
 
@@ -180,7 +257,7 @@ app.state.query_classifier = QueryClassifier(
 | `src/knowledge_service/stores/knowledge.py` | Add `get_triples_by_object()` |
 | `src/knowledge_service/api/ask.py` | Classify before retrieve, add `intent` to response |
 | `src/knowledge_service/main.py` | Initialize QueryClassifier at startup |
-| `src/knowledge_service/models.py` | `AskResponse` gains `intent` field (or update in ask.py) |
+| `src/knowledge_service/api/ask.py` | `AskResponse` gains `intent` field (model is defined in ask.py, not models.py) |
 | `tests/test_classifier.py` | NEW: classifier tests |
 | `tests/test_rag_retriever.py` | Strategy dispatch tests |
 | `tests/test_knowledge_store.py` | `get_triples_by_object` tests |
@@ -192,7 +269,10 @@ app.state.query_classifier = QueryClassifier(
 - No training/fine-tuning — prompt-based classification only
 - `semantic` is always the safe fallback
 - No new API endpoints — classification is internal to `/api/ask`
-- `get_triples_by_object()` may return many results for popular entities — limit to top 20 by confidence
+- `get_triples_by_object()` may return many results for popular entities — limited to top 20 by confidence (ORDER BY DESC + LIMIT in SPARQL)
+- RAG prompt (`build_rag_prompt`) works unchanged — all strategies produce the same `RetrievalContext` shape. The ratio of triples-to-content differs by intent but the prompt handles both uniformly. No intent-specific prompt changes needed.
+- Classification result is logged at INFO level for observability (helps debug misclassification)
+- Entity names from classifier go through `_rdf_value_to_str()` after graph lookups, same as existing retriever code
 
 ## Tests
 
@@ -208,3 +288,7 @@ app.state.query_classifier = QueryClassifier(
 - Test `retrieve()` with None intent defaults to semantic
 - Test `/api/ask` response includes `intent` field
 - Test `/api/ask` works when classifier is not set on app.state
+- Test graph strategy with single entity (skips path query)
+- Test graph strategy when no connecting path exists (returns empty connections)
+- Test `get_triples_by_object()` with no matching triples (returns empty)
+- Test entity resolution with low similarity (below 0.80 threshold, skipped)
