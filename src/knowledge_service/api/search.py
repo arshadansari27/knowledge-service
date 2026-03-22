@@ -37,6 +37,7 @@ async def get_search(
         limit=limit,
         source_type=source_type,
         tags=tags,
+        query_text=q,
     )
 
     return [
