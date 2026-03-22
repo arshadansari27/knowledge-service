@@ -47,7 +47,7 @@ class RAGRetriever:
 
         # Step 2: Content search
         content_results = await self._embedding_store.search(
-            query_embedding=embedding, limit=max_sources
+            query_embedding=embedding, limit=max_sources, query_text=question
         )
 
         # Step 3: Entity discovery

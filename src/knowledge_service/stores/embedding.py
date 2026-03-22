@@ -41,6 +41,34 @@ import json
 from typing import Any
 
 
+def reciprocal_rank_fusion(
+    *result_lists: list[dict],
+    key: str = "id",
+    k: int = 60,
+    limit: int = 10,
+) -> list[dict]:
+    """Fuse multiple ranked result lists via Reciprocal Rank Fusion.
+
+    Each item's score = sum(1 / (k + rank + 1)) across all lists it appears in.
+    Items appearing in multiple lists score higher than single-list items.
+    The fused RRF score replaces the 'similarity' field in the returned dicts.
+    """
+    scores: dict[str, float] = {}
+    items: dict[str, dict] = {}
+    for results in result_lists:
+        for rank, item in enumerate(results):
+            item_key = str(item[key])
+            scores[item_key] = scores.get(item_key, 0.0) + 1.0 / (k + rank + 1)
+            items[item_key] = item
+    ranked = sorted(scores.items(), key=lambda x: x[1], reverse=True)[:limit]
+    fused = []
+    for item_key, score in ranked:
+        result = dict(items[item_key])
+        result["similarity"] = score
+        fused.append(result)
+    return fused
+
+
 class EmbeddingStore:
     """Wraps an asyncpg connection pool for pgvector embedding operations."""
 
@@ -169,13 +197,22 @@ class EmbeddingStore:
         source_type: str | None = None,
         tags: list[str] | None = None,
         min_date: Any | None = None,
+        query_text: str | None = None,
     ) -> list[dict]:
         """Return chunk rows ranked by cosine similarity, joined with content metadata.
+
+        When query_text is provided, also runs BM25 full-text search and fuses
+        both result sets via Reciprocal Rank Fusion (RRF). Vector search is
+        overfetched (limit * 3) to give RRF a richer candidate pool.
 
         Optional filters:
           source_type — restrict to a single source type
           tags        — restrict to rows that contain ALL given tags
+          min_date    — restrict to rows ingested on or after this date
+          query_text  — enable hybrid mode (vector + BM25 via RRF)
         """
+        overfetch = limit * 3 if query_text else limit
+
         embedding_str = self._vector_to_str(query_embedding)
 
         conditions: list[str] = []
@@ -193,7 +230,7 @@ class EmbeddingStore:
             params.append(min_date)
             conditions.append(f"m.ingested_at >= ${len(params)}")
 
-        params.append(limit)
+        params.append(overfetch)
         limit_placeholder = f"${len(params)}"
 
         where_clause = f"WHERE {' AND '.join(conditions)}" if conditions else ""
@@ -208,6 +245,67 @@ class EmbeddingStore:
             JOIN content_metadata m ON c.content_id = m.id
             {where_clause}
             ORDER BY c.embedding::halfvec(768) <=> $1::halfvec(768)
+            LIMIT {limit_placeholder}
+        """
+
+        async with self._pool.acquire() as conn:
+            rows = await conn.fetch(sql, *params)
+        vector_results = [dict(row) for row in rows]
+
+        if query_text:
+            bm25_results = await self.search_bm25(
+                query_text, overfetch, source_type, tags, min_date
+            )
+            return reciprocal_rank_fusion(vector_results, bm25_results, key="id", k=60, limit=limit)
+
+        return vector_results
+
+    async def search_bm25(
+        self,
+        query_text: str,
+        limit: int,
+        source_type: str | None = None,
+        tags: list[str] | None = None,
+        min_date: Any | None = None,
+    ) -> list[dict]:
+        """Full-text search using PostgreSQL tsvector/tsquery.
+
+        Returns the same dict shape as search() for RRF compatibility.
+        Uses plainto_tsquery for safe natural-language query parsing.
+        """
+        if not query_text or not query_text.strip():
+            return []
+
+        conditions: list[str] = ["c.tsv @@ plainto_tsquery('english', $1)"]
+        params: list[Any] = [query_text]
+
+        if source_type is not None:
+            params.append(source_type)
+            conditions.append(f"m.source_type = ${len(params)}")
+
+        if tags is not None:
+            params.append(tags)
+            conditions.append(f"m.tags @> ${len(params)}")
+
+        if min_date is not None:
+            params.append(min_date)
+            conditions.append(f"m.ingested_at >= ${len(params)}")
+
+        params.append(limit)
+        limit_placeholder = f"${len(params)}"
+
+        where_clause = f"WHERE {' AND '.join(conditions)}"
+
+        sql = f"""
+            SELECT
+                c.id, c.chunk_text, c.chunk_index,
+                m.id AS content_id, m.url, m.title, m.summary,
+                m.source_type, m.tags, m.ingested_at,
+                ts_rank(c.tsv, plainto_tsquery('english', $1)) AS similarity
+            FROM content c
+            JOIN content_metadata m ON c.content_id = m.id
+            {where_clause}
+            ORDER BY ts_rank(c.tsv, plainto_tsquery('english', $1)) DESC
             LIMIT {limit_placeholder}
         """
 
