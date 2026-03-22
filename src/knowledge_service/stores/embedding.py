@@ -243,6 +243,59 @@ class EmbeddingStore:
             rows = await conn.fetch(sql, *params)
         return [dict(row) for row in rows]
 
+    async def search_bm25(
+        self,
+        query_text: str,
+        limit: int,
+        source_type: str | None = None,
+        tags: list[str] | None = None,
+        min_date: Any | None = None,
+    ) -> list[dict]:
+        """Full-text search using PostgreSQL tsvector/tsquery.
+
+        Returns the same dict shape as search() for RRF compatibility.
+        Uses plainto_tsquery for safe natural-language query parsing.
+        """
+        if not query_text or not query_text.strip():
+            return []
+
+        conditions: list[str] = ["c.tsv @@ plainto_tsquery('english', $1)"]
+        params: list[Any] = [query_text]
+
+        if source_type is not None:
+            params.append(source_type)
+            conditions.append(f"m.source_type = ${len(params)}")
+
+        if tags is not None:
+            params.append(tags)
+            conditions.append(f"m.tags @> ${len(params)}")
+
+        if min_date is not None:
+            params.append(min_date)
+            conditions.append(f"m.ingested_at >= ${len(params)}")
+
+        params.append(limit)
+        limit_placeholder = f"${len(params)}"
+
+        where_clause = f"WHERE {' AND '.join(conditions)}"
+
+        sql = f"""
+            SELECT
+                c.id, c.chunk_text, c.chunk_index,
+                m.id AS content_id, m.url, m.title, m.summary,
+                m.source_type, m.tags, m.ingested_at,
+                ts_rank(c.tsv, plainto_tsquery('english', $1)) AS similarity
+            FROM content c
+            JOIN content_metadata m ON c.content_id = m.id
+            {where_clause}
+            ORDER BY ts_rank(c.tsv, plainto_tsquery('english', $1)) DESC
+            LIMIT {limit_placeholder}
+        """
+
+        async with self._pool.acquire() as conn:
+            rows = await conn.fetch(sql, *params)
+        return [dict(row) for row in rows]
+
     # ------------------------------------------------------------------
     # Entity embeddings table operations
     # ------------------------------------------------------------------

@@ -1,4 +1,6 @@
 import pytest
+from unittest.mock import AsyncMock, MagicMock
+
 from knowledge_service.stores.embedding import reciprocal_rank_fusion
 
 
@@ -38,9 +40,6 @@ class TestReciprocalRankFusion:
         assert fused[0]["similarity"] == pytest.approx(2.0 / 61, rel=1e-3)
 
 
-from unittest.mock import AsyncMock, MagicMock
-
-
 @pytest.fixture
 def mock_pool():
     pool = MagicMock()
@@ -55,6 +54,7 @@ def mock_pool():
 @pytest.fixture
 def store(mock_pool):
     from knowledge_service.stores.embedding import EmbeddingStore
+
     pool, _ = mock_pool
     return EmbeddingStore(pool)
 
@@ -64,10 +64,17 @@ class TestSearchBM25:
         _, conn = mock_pool
         conn.fetch.return_value = [
             {
-                "id": "chunk-1", "chunk_text": "cold exposure increases dopamine",
-                "chunk_index": 0, "content_id": "meta-1", "url": "http://example.com",
-                "title": "Test", "summary": None, "source_type": "article",
-                "tags": [], "ingested_at": "2026-01-01", "similarity": 0.5,
+                "id": "chunk-1",
+                "chunk_text": "cold exposure increases dopamine",
+                "chunk_index": 0,
+                "content_id": "meta-1",
+                "url": "http://example.com",
+                "title": "Test",
+                "summary": None,
+                "source_type": "article",
+                "tags": [],
+                "ingested_at": "2026-01-01",
+                "similarity": 0.5,
             }
         ]
         results = await store.search_bm25("dopamine", limit=10)
