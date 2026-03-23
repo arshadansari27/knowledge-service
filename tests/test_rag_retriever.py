@@ -246,7 +246,8 @@ class TestIntentDispatch:
         await retriever.retrieve("some question")
         es.search.assert_called_once()
 
-    async def test_graph_intent_uses_bidirectional_lookup(self):
+    async def test_graph_intent_uses_traverser(self):
+        """Graph intent should use multi-hop traversal."""
         ec = _make_embedding_client()
         ec.embed_batch.return_value = [[0.1] * 768, [0.2] * 768]
         es = _make_embedding_store()
@@ -254,13 +255,11 @@ class TestIntentDispatch:
             {"uri": "http://knowledge.local/data/cortisol", "similarity": 0.9}
         ]
         ks = _make_knowledge_store()
-        ks.get_triples_by_object.return_value = []
-        ks.find_connecting_triples.return_value = []
         retriever = RAGRetriever(ec, es, ks)
         intent = QueryIntent(intent="graph", entities=["cortisol", "inflammation"])
         await retriever.retrieve("how is cortisol connected to inflammation?", intent=intent)
-        # Should call get_triples_by_object (bidirectional)
-        ks.get_triples_by_object.assert_called()
+        # GraphTraverser calls get_triples_by_subject internally
+        ks.get_triples_by_subject.assert_called()
 
     async def test_entity_below_threshold_skipped(self):
         """Entity with similarity < 0.80 is skipped, falls back to semantic."""
@@ -277,8 +276,8 @@ class TestIntentDispatch:
         # Low similarity entity skipped → falls back to semantic
         es.search.assert_called_once()
 
-    async def test_graph_single_entity_skips_path_query(self):
-        """Graph intent with single entity should NOT call find_connecting_triples."""
+    async def test_graph_intent_returns_traversal_metadata(self):
+        """Graph intent should populate traversal_depth and inferred_triples on context."""
         ec = _make_embedding_client()
         ec.embed_batch.return_value = [[0.1] * 768]
         es = _make_embedding_store()
@@ -288,5 +287,6 @@ class TestIntentDispatch:
         ks = _make_knowledge_store()
         retriever = RAGRetriever(ec, es, ks)
         intent = QueryIntent(intent="graph", entities=["dopamine"])
-        await retriever.retrieve("what affects dopamine?", intent=intent)
-        ks.find_connecting_triples.assert_not_called()
+        context = await retriever.retrieve("what affects dopamine?", intent=intent)
+        assert context.traversal_depth is not None
+        assert context.inferred_triples is not None
