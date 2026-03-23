@@ -1,6 +1,6 @@
 # Multi-Hop Graph Retrieval Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [x]`) syntax for tracking.
 
 **Goal:** Add BFS graph traversal up to 4 hops with Bayesian confidence propagation (multiplicative per-path, Noisy-OR across paths) and optional ProbLog inference on discovered subgraphs.
 
@@ -9,6 +9,13 @@
 **Tech Stack:** pyoxigraph SPARQL, ProbLog, ReasoningEngine (Noisy-OR)
 
 **Spec:** `docs/superpowers/specs/2026-03-23-multihop-retrieval-design.md`
+
+**Status:** COMPLETE — merged as PR #16. 471 tests passing.
+
+**Implementation notes:**
+- ProbLog URI-to-atom fix: `_uri_to_local()` strips full URIs to local names before passing to ProbLog so rules like `causal_propagation(A, causes, B)` can match graph data
+- GraphTraverser `_maybe_add_neighbor` includes an early max_nodes guard to prevent node_paths from exceeding the cap during high fan-out
+- Only the first path's confidence propagates downstream during BFS expansion (design trade-off to prevent combinatorial explosion); all paths still combine via Noisy-OR at the node level
 
 ---
 
@@ -32,7 +39,7 @@
 - Modify: `src/knowledge_service/stores/knowledge.py:366-421`
 - Modify: `tests/test_knowledge_store.py`
 
-- [ ] **Step 1: Update `get_triples_by_object` signature and SPARQL**
+- [x] **Step 1: Update `get_triples_by_object` signature and SPARQL**
 
 Add `limit: int | None = 20` parameter. When `None`, omit the `LIMIT` clause:
 
@@ -57,12 +64,12 @@ sparql = f"""
 """
 ```
 
-- [ ] **Step 2: Run existing tests**
+- [x] **Step 2: Run existing tests**
 
 Run: `uv run pytest tests/test_knowledge_store.py -v`
 Expected: ALL PASS (default limit=20 preserves behavior)
 
-- [ ] **Step 3: Commit**
+- [x] **Step 3: Commit**
 
 ```bash
 git add src/knowledge_service/stores/knowledge.py
@@ -77,7 +84,7 @@ git commit -m "feat: add configurable limit to get_triples_by_object"
 - Create: `src/knowledge_service/stores/graph_traversal.py`
 - Create: `tests/test_graph_traversal.py`
 
-- [ ] **Step 1: Write failing tests**
+- [x] **Step 1: Write failing tests**
 
 Create `tests/test_graph_traversal.py`:
 
@@ -266,12 +273,12 @@ class TestHopDistance:
         assert target["hop_distance"] == 1
 ```
 
-- [ ] **Step 2: Run tests to verify they fail**
+- [x] **Step 2: Run tests to verify they fail**
 
 Run: `uv run pytest tests/test_graph_traversal.py -v`
 Expected: FAIL — `ModuleNotFoundError`
 
-- [ ] **Step 3: Implement GraphTraverser**
+- [x] **Step 3: Implement GraphTraverser**
 
 Create `src/knowledge_service/stores/graph_traversal.py`:
 
@@ -465,17 +472,17 @@ class GraphTraverser:
         return 1.0 - failure_product
 ```
 
-- [ ] **Step 4: Run tests to verify they pass**
+- [x] **Step 4: Run tests to verify they pass**
 
 Run: `uv run pytest tests/test_graph_traversal.py -v`
 Expected: ALL PASS
 
-- [ ] **Step 5: Run full test suite**
+- [x] **Step 5: Run full test suite**
 
 Run: `uv run pytest tests/ -v`
 Expected: ALL PASS
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add src/knowledge_service/stores/graph_traversal.py tests/test_graph_traversal.py
@@ -490,7 +497,7 @@ git commit -m "feat: GraphTraverser — BFS with Bayesian confidence propagation
 - Modify: `src/knowledge_service/stores/rag.py:100-133`
 - Modify: `tests/test_rag_retriever.py`
 
-- [ ] **Step 1: Update `_retrieve_graph` to use GraphTraverser**
+- [x] **Step 1: Update `_retrieve_graph` to use GraphTraverser**
 
 In `rag.py`, add to `__init__`:
 
@@ -598,7 +605,7 @@ inferred_triples=getattr(context, "inferred_triples", None),
 
 This uses `getattr` so existing callers that don't set these fields get `None` safely.
 
-- [ ] **Step 2: Update mock in test_rag_retriever.py**
+- [x] **Step 2: Update mock in test_rag_retriever.py**
 
 In `_make_knowledge_store`, the mock already has `get_triples_by_object` and `find_connecting_triples`. No change needed — `GraphTraverser` calls the real methods on the mock.
 
@@ -621,12 +628,12 @@ async def test_graph_intent_uses_traverser(self):
     ks.get_triples_by_subject.assert_called()
 ```
 
-- [ ] **Step 3: Run full test suite**
+- [x] **Step 3: Run full test suite**
 
 Run: `uv run pytest tests/ -v`
 Expected: ALL PASS
 
-- [ ] **Step 4: Commit**
+- [x] **Step 4: Commit**
 
 ```bash
 git add src/knowledge_service/stores/rag.py tests/test_rag_retriever.py
@@ -642,7 +649,7 @@ git commit -m "feat: replace shallow graph lookups with multi-hop GraphTraverser
 - Modify: `src/knowledge_service/stores/rag.py`
 - Modify: `tests/test_api_ask.py`
 
-- [ ] **Step 1: Add `use_reasoning` to AskRequest, metadata to AskResponse**
+- [x] **Step 1: Add `use_reasoning` to AskRequest, metadata to AskResponse**
 
 In `ask.py`:
 
@@ -666,7 +673,7 @@ class AskResponse(BaseModel):
     inferred_triples: int | None = None  # NEW
 ```
 
-- [ ] **Step 2: Pass `use_reasoning` through to retriever**
+- [x] **Step 2: Pass `use_reasoning` through to retriever**
 
 In `post_ask()`, pass to retrieve and capture traversal metadata:
 
@@ -683,7 +690,7 @@ context = await retriever.retrieve(
 
 Add `traversal_depth` and `inferred_triples` to the response from `context` metadata (stored as attributes on RetrievalContext or returned separately).
 
-- [ ] **Step 3: Add ProbLog integration to RAGRetriever**
+- [x] **Step 3: Add ProbLog integration to RAGRetriever**
 
 In `rag.py`, update `_retrieve_graph` to accept `use_reasoning` and `reasoning_engine`:
 
@@ -735,7 +742,7 @@ async def _run_problog_inference(self, edges, seed_uris, reasoning_engine):
     return inferred
 ```
 
-- [ ] **Step 4: Add tests**
+- [x] **Step 4: Add tests**
 
 In `tests/test_api_ask.py`:
 
@@ -754,16 +761,16 @@ class TestAskTraversalMetadata:
         assert response.status_code == 200
 ```
 
-- [ ] **Step 5: Run full test suite**
+- [x] **Step 5: Run full test suite**
 
 Run: `uv run pytest tests/ -v`
 Expected: ALL PASS
 
-- [ ] **Step 6: Lint and format**
+- [x] **Step 6: Lint and format**
 
 Run: `uv run ruff check . && uv run ruff format --check .`
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```bash
 git add src/knowledge_service/api/ask.py src/knowledge_service/stores/rag.py tests/test_api_ask.py
@@ -774,17 +781,17 @@ git commit -m "feat: optional ProbLog inference on traversed subgraph, traversal
 
 ## Task 5: Final integration test and lint
 
-- [ ] **Step 1: Run full test suite**
+- [x] **Step 1: Run full test suite**
 
 Run: `uv run pytest tests/ -v`
 Expected: ALL PASS
 
-- [ ] **Step 2: Lint and format**
+- [x] **Step 2: Lint and format**
 
 Run: `uv run ruff check . && uv run ruff format --check .`
 If needed: `uv run ruff format .`
 
-- [ ] **Step 3: Commit if needed**
+- [x] **Step 3: Commit if needed**
 
 ```bash
 git add -A && git commit -m "chore: lint fixes for multi-hop retrieval"

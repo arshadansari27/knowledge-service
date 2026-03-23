@@ -14,6 +14,7 @@ class AskRequest(BaseModel):
     question: str = Field(..., min_length=1, max_length=_MAX_QUESTION_LEN)
     max_sources: int = Field(5, ge=1, le=100)
     min_confidence: float = Field(0.0, ge=0.0, le=1.0)
+    use_reasoning: bool = Field(False)
 
 
 class SourceInfo(BaseModel):
@@ -45,6 +46,8 @@ class AskResponse(BaseModel):
     contradictions: list[ContradictionInfo]
     evidence: list[EvidenceSnippet] = []
     intent: str | None = None
+    traversal_depth: int | None = None
+    inferred_triples: int | None = None
 
 
 @router.post("/ask", response_model=AskResponse)
@@ -65,6 +68,8 @@ async def post_ask(body: AskRequest, request: Request) -> AskResponse:
         max_sources=body.max_sources,
         min_confidence=body.min_confidence,
         intent=intent,
+        use_reasoning=body.use_reasoning,
+        reasoning_engine=reasoning_engine,
     )
 
     try:
@@ -156,4 +161,6 @@ async def post_ask(body: AskRequest, request: Request) -> AskResponse:
         contradictions=contradictions,
         evidence=evidence,
         intent=intent.intent if intent else None,
+        traversal_depth=getattr(context, "traversal_depth", None),
+        inferred_triples=getattr(context, "inferred_triples", None),
     )

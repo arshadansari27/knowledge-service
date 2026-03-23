@@ -367,6 +367,7 @@ class KnowledgeStore:
         self,
         object_uri: str,
         graphs: list[str] | None = None,
+        limit: int | None = 20,
     ) -> list[dict]:
         """Get all annotated triples where the given URI appears as the object.
 
@@ -383,6 +384,7 @@ class KnowledgeStore:
             graph_filter = f"VALUES ?g {{ {values} }}"
 
         obj_sparql = _sparql_object(object_uri)
+        limit_clause = f"LIMIT {limit}" if limit is not None else ""
 
         sparql = f"""
             SELECT ?g ?s ?p ?conf ?ktype ?vfrom ?vuntil WHERE {{
@@ -417,7 +419,7 @@ class KnowledgeStore:
                 FILTER(BOUND(?conf))
             }}
             ORDER BY DESC(?conf)
-            LIMIT 20
+            {limit_clause}
         """
         query_result = self._store.query(sparql)
         results = []
