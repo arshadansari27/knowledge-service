@@ -167,6 +167,18 @@ class RAGRetriever:
 
     # --- ProbLog inference ---
 
+    @staticmethod
+    def _uri_to_local(uri: str) -> str:
+        """Strip URI to local name for ProbLog atom compatibility.
+
+        ProbLog rules use short predicate names (causes, increases) but graph
+        data uses full URIs (http://knowledge.local/schema/causes). This
+        extracts the local name so ProbLog rules can match.
+        """
+        if "/" in uri:
+            return uri.rsplit("/", 1)[-1]
+        return uri
+
     async def _run_problog_inference(self, edges, seed_uris, reasoning_engine):
         """Run ProbLog causal/indirect inference on discovered subgraph."""
         from knowledge_service.reasoning.engine import _to_atom
@@ -175,9 +187,9 @@ class RAGRetriever:
         for e in edges:
             claims.append(
                 (
-                    e["subject"],
-                    e["predicate"],
-                    e["object"],
+                    self._uri_to_local(e["subject"]),
+                    self._uri_to_local(e["predicate"]),
+                    self._uri_to_local(e["object"]),
                     e.get("confidence") or 0.5,
                     {"knowledge_type": e.get("knowledge_type", "Claim")},
                 )
@@ -185,7 +197,7 @@ class RAGRetriever:
 
         inferred = []
         for seed in seed_uris:
-            seed_atom = _to_atom(seed)
+            seed_atom = _to_atom(self._uri_to_local(seed))
             for query_template in [
                 f"causal_propagation({seed_atom}, C)",
                 f"indirect_link({seed_atom}, P, C)",
