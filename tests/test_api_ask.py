@@ -304,3 +304,11 @@ class TestAskEvidence:
         data = response.json()
         assert "evidence" in data
         assert isinstance(data["evidence"], list)
+
+
+class TestAskIntent:
+    async def test_response_includes_intent_field(self, client):
+        response = await client.post("/api/ask", json={"question": "test question"})
+        assert response.status_code == 200
+        data = response.json()
+        assert "intent" in data
