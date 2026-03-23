@@ -6,6 +6,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 from pyoxigraph import Literal, NamedNode
 
+from knowledge_service.clients.classifier import QueryIntent
 from knowledge_service.stores.rag import RAGRetriever, RetrievalContext
 
 
@@ -25,7 +26,9 @@ def _make_embedding_store(content_rows=None, entity_rows=None):
 def _make_knowledge_store(triples=None, contradictions=None):
     mock = MagicMock()
     mock.get_triples_by_subject.return_value = triples or []
+    mock.get_triples_by_object.return_value = []
     mock.find_contradictions.return_value = contradictions or []
+    mock.find_connecting_triples.return_value = []
     return mock
 
 
@@ -210,3 +213,51 @@ class TestRetrieveTripleSerialization:
         assert isinstance(t["object"], str), f"Expected str, got {type(t['object'])}"
         assert t["predicate"] == "http://ks/increases"
         assert t["object"] == "serotonin"
+
+
+class TestIntentDispatch:
+    async def test_semantic_intent_uses_full_search(self):
+        ec = _make_embedding_client()
+        es = _make_embedding_store(content_rows=[_CONTENT_ROW])
+        ks = _make_knowledge_store()
+        retriever = RAGRetriever(ec, es, ks)
+        intent = QueryIntent(intent="semantic", entities=[])
+        await retriever.retrieve("find articles about stress", intent=intent)
+        es.search.assert_called_once()
+
+    async def test_entity_intent_resolves_entities(self):
+        ec = _make_embedding_client()
+        ec.embed_batch.return_value = [[0.1] * 768]
+        es = _make_embedding_store()
+        es.search_entities.return_value = [
+            {"uri": "http://knowledge.local/data/dopamine", "similarity": 0.9}
+        ]
+        ks = _make_knowledge_store()
+        retriever = RAGRetriever(ec, es, ks)
+        intent = QueryIntent(intent="entity", entities=["dopamine"])
+        context = await retriever.retrieve("what is dopamine?", intent=intent)
+        assert len(context.entities_found) >= 1
+
+    async def test_none_intent_defaults_to_semantic(self):
+        ec = _make_embedding_client()
+        es = _make_embedding_store(content_rows=[_CONTENT_ROW])
+        ks = _make_knowledge_store()
+        retriever = RAGRetriever(ec, es, ks)
+        await retriever.retrieve("some question")
+        es.search.assert_called_once()
+
+    async def test_graph_intent_uses_bidirectional_lookup(self):
+        ec = _make_embedding_client()
+        ec.embed_batch.return_value = [[0.1] * 768, [0.2] * 768]
+        es = _make_embedding_store()
+        es.search_entities.return_value = [
+            {"uri": "http://knowledge.local/data/cortisol", "similarity": 0.9}
+        ]
+        ks = _make_knowledge_store()
+        ks.get_triples_by_object.return_value = []
+        ks.find_connecting_triples.return_value = []
+        retriever = RAGRetriever(ec, es, ks)
+        intent = QueryIntent(intent="graph", entities=["cortisol", "inflammation"])
+        await retriever.retrieve("how is cortisol connected to inflammation?", intent=intent)
+        # Should call get_triples_by_object (bidirectional)
+        ks.get_triples_by_object.assert_called()
