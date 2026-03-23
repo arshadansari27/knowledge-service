@@ -10,6 +10,7 @@ from knowledge_service._utils import _rdf_value_to_str
 from knowledge_service.clients.classifier import QueryIntent
 from knowledge_service.clients.llm import to_entity_uri
 from knowledge_service.ontology.namespaces import KS_GRAPH_ASSERTED
+from knowledge_service.stores.graph_traversal import GraphTraverser
 
 logger = logging.getLogger(__name__)
 
@@ -22,6 +23,8 @@ class RetrievalContext:
     knowledge_triples: list[dict] = field(default_factory=list)
     contradictions: list[dict] = field(default_factory=list)
     entities_found: list[str] = field(default_factory=list)
+    traversal_depth: int | None = None
+    inferred_triples: int | None = None
 
 
 class RAGRetriever:
@@ -29,6 +32,7 @@ class RAGRetriever:
         self._embedding_client = embedding_client
         self._embedding_store = embedding_store
         self._knowledge_store = knowledge_store
+        self._graph_traverser = GraphTraverser(knowledge_store)
 
     async def retrieve(
         self,
@@ -36,6 +40,8 @@ class RAGRetriever:
         max_sources: int = 5,
         min_confidence: float = 0.0,
         intent: QueryIntent | None = None,
+        use_reasoning: bool = False,
+        reasoning_engine=None,
     ) -> RetrievalContext:
         embedding = await self._embedding_client.embed(question)
 
@@ -47,7 +53,13 @@ class RAGRetriever:
             )
         elif intent.intent == "graph":
             return await self._retrieve_graph(
-                question, embedding, intent.entities, max_sources, min_confidence
+                question,
+                embedding,
+                intent.entities,
+                max_sources,
+                min_confidence,
+                use_reasoning=use_reasoning,
+                reasoning_engine=reasoning_engine,
             )
         else:
             return await self._retrieve_semantic(question, embedding, max_sources, min_confidence)
@@ -100,37 +112,98 @@ class RAGRetriever:
     # --- Strategy: graph ---
 
     async def _retrieve_graph(
-        self, question, embedding, entity_names, max_sources, min_confidence
+        self,
+        question,
+        embedding,
+        entity_names,
+        max_sources,
+        min_confidence,
+        use_reasoning=False,
+        reasoning_engine=None,
     ) -> RetrievalContext:
         resolved_uris = await self._resolve_entity_names(entity_names)
         if not resolved_uris:
             return await self._retrieve_semantic(question, embedding, max_sources, min_confidence)
-        # Bidirectional triple lookup
-        triples = await self._lookup_triples_by_subject(resolved_uris)
-        obj_triples = await self._lookup_triples_by_object(resolved_uris)
-        all_triples = triples + obj_triples
-        # Connecting paths between entities (if 2+)
-        if len(resolved_uris) >= 2:
-            connections = await asyncio.to_thread(
-                self._knowledge_store.find_connecting_triples,
-                resolved_uris[0],
-                resolved_uris[1],
-            )
-            for c in connections:
-                c["knowledge_type"] = c.get("knowledge_type", "Relationship")
-                c["trust_tier"] = "extracted"
-            all_triples.extend(connections)
-        filtered = self._filter_by_confidence(all_triples, min_confidence)
+
+        # Multi-hop BFS traversal with confidence propagation
+        traversal = await asyncio.to_thread(
+            self._graph_traverser.expand,
+            resolved_uris,
+            max_hops=4,
+            min_confidence=max(min_confidence, 0.1),
+        )
+
+        # Use traversal edges as knowledge triples
+        filtered = self._filter_by_confidence(traversal.edges, min_confidence)
+
+        # Use traversal node URIs as entities found
+        entities_found = resolved_uris + [n["uri"] for n in traversal.nodes[:10]]
+
         contradictions = await self._detect_contradictions(filtered)
         content_results = await self._embedding_store.search(
             query_embedding=embedding, limit=3, query_text=question
         )
+
+        # Traversal metadata
+        traversal_depth = max((n["hop_distance"] for n in traversal.nodes), default=0)
+
+        # Optional ProbLog inference
+        inferred_count = 0
+        if use_reasoning and reasoning_engine and filtered:
+            inferred = await self._run_problog_inference(
+                filtered[:50], resolved_uris, reasoning_engine
+            )
+            filtered.extend(inferred)
+            inferred_count = len(inferred)
+
         return RetrievalContext(
             content_results=content_results,
             knowledge_triples=filtered,
             contradictions=contradictions,
-            entities_found=resolved_uris,
+            entities_found=entities_found,
+            traversal_depth=traversal_depth,
+            inferred_triples=inferred_count,
         )
+
+    # --- ProbLog inference ---
+
+    async def _run_problog_inference(self, edges, seed_uris, reasoning_engine):
+        """Run ProbLog causal/indirect inference on discovered subgraph."""
+        from knowledge_service.reasoning.engine import _to_atom
+
+        claims = []
+        for e in edges:
+            claims.append(
+                (
+                    e["subject"],
+                    e["predicate"],
+                    e["object"],
+                    e.get("confidence") or 0.5,
+                    {"knowledge_type": e.get("knowledge_type", "Claim")},
+                )
+            )
+
+        inferred = []
+        for seed in seed_uris:
+            seed_atom = _to_atom(seed)
+            for query_template in [
+                f"causal_propagation({seed_atom}, C)",
+                f"indirect_link({seed_atom}, P, C)",
+            ]:
+                results = await asyncio.to_thread(reasoning_engine.infer, query_template, claims)
+                for r in results:
+                    if r.probability > 0.05:
+                        inferred.append(
+                            {
+                                "subject": seed,
+                                "predicate": r.query,
+                                "object": str(r.probability),
+                                "confidence": r.probability,
+                                "knowledge_type": "Conclusion",
+                                "trust_tier": "inferred",
+                            }
+                        )
+        return inferred
 
     # --- Shared helpers ---
 
