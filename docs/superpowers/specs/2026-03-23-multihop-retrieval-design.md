@@ -36,20 +36,23 @@ def expand(
 
 **Algorithm:**
 1. Initialize frontier = seed URIs (hop 0, path confidence 1.0)
-2. Maintain visited set to prevent cycles (each node expanded only once)
-3. For each hop (1 to max_hops):
+2. Maintain visited set (strings) to prevent cycles (each node expanded only once)
+3. For each hop (1 to `min(max_hops, 4)`):
    - For each node in current frontier:
      - Get outgoing triples via `knowledge_store.get_triples_by_subject(uri)`
      - Get incoming triples via `knowledge_store.get_triples_by_object(uri)`
-   - For each discovered edge:
-     - Compute path confidence = parent_path_confidence x edge_confidence
-     - If path_confidence < min_confidence, prune (don't add to next frontier)
+     - **Normalize pyoxigraph terms:** `subject`, `predicate`, `object` fields from KnowledgeStore are pyoxigraph `NamedNode`/`Literal` objects. Apply `_rdf_value_to_str()` to convert to plain strings before use in visited set, frontier, and edge dicts.
+     - **Filter out literal objects:** Only URI-valued objects go into the BFS frontier. Literal values (measurements, dates, strings) are recorded as edges but not expanded.
+   - For each discovered edge to a URI neighbor:
+     - For each known path to the current node, compute: new_path_confidence = path_confidence x edge_confidence
+     - If new_path_confidence < min_confidence, prune (don't add to next frontier)
      - Add target node to next frontier (if not in visited)
-     - Record the edge and path
+     - Record the edge and all new paths
    - Stop early if max_nodes reached
 4. After all hops, for each discovered node:
    - Collect all paths that reach it from any seed
    - Combine via Noisy-OR: `propagated_confidence = 1 - product(1 - path_conf)`
+   - Set `hop_distance` to the minimum hop count across all paths to this node
 5. Rank nodes by propagated confidence
 6. Return TraversalResult
 
@@ -58,6 +61,12 @@ def expand(
 **Cycle handling:** Visited set prevents infinite loops. A node can be reached via multiple paths (all paths tracked for Noisy-OR) but expanded only once.
 
 **Max nodes:** Safety cap at 50 nodes to bound traversal cost. Once reached, expansion stops regardless of remaining hops.
+
+**Max hops cap:** `max_hops` is clamped to 4 inside `expand()`: `max_hops = min(max_hops, 4)`. Prevents callers from requesting unbounded traversal.
+
+**LIMIT 20 on `get_triples_by_object`:** The existing method has `LIMIT 20` in SPARQL. For traversal, this limit should be removed or raised. Add a `limit: int | None = None` parameter to `get_triples_by_object()` — when `None`, no LIMIT clause. `GraphTraverser` calls with `limit=None`; existing callers continue to get the default 20.
+
+**Latency estimate:** Worst case: 50 nodes x 2 SPARQL queries each = 100 queries. pyoxigraph in-memory queries take ~0.1-0.5ms each. Total: ~10-50ms for traversal. ProbLog inference on 50 facts: ~50-200ms. Total worst case: ~250ms — well within acceptable latency.
 
 #### TraversalResult dataclass
 
@@ -119,9 +128,11 @@ When `use_reasoning=True` on the `/api/ask` request and intent is `graph`:
 
 1. Take top 50 edges from `TraversalResult` (by propagated confidence)
 2. Convert to ProbLog 5-tuples: `(subject, predicate, object, confidence, {"knowledge_type": ...})`
-3. Run `ReasoningEngine.infer()` with queries:
-   - `causal_propagation(seed, ?)` for each seed entity
-   - `indirect_link(seed, ?, ?)` for each seed entity
+3. Run `ReasoningEngine.infer()` with ProbLog queries (uppercase variables for unknowns):
+   - `causal_propagation({_to_atom(seed_uri)}, C)` for each seed entity
+   - `indirect_link({_to_atom(seed_uri)}, P, C)` for each seed entity
+
+   Example: for seed `http://knowledge.local/data/cold_exposure`, the query is `causal_propagation('http://knowledge.local/data/cold_exposure', C)`. ProbLog will ground `C` against all matching facts and return each grounding with its probability.
 4. Append inference results as additional triples with:
    - `knowledge_type: "Conclusion"`
    - `trust_tier: "inferred"`
@@ -174,7 +185,7 @@ Both nullable with defaults. Backward compatible.
 - ProbLog inference limited to top 50 edges (ProbLog doesn't scale beyond ~1000 facts)
 - `use_reasoning` defaults to False (opt-in due to latency)
 - `GraphTraverser` is synchronous — called via `asyncio.to_thread` from RAGRetriever
-- Existing `find_connecting_triples()` remains on KnowledgeStore (used by other code)
+- Existing `find_connecting_triples()` remains on KnowledgeStore (not removed — keeps backward compatibility, may be used by future callers)
 
 ## Tests
 
