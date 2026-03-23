@@ -180,6 +180,15 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     # Seed canonical predicate embeddings (idempotent — upserts)
     await _seed_predicate_embeddings(embedding_store, app.state.embedding_client)
 
+    # Query classifier
+    from knowledge_service.clients.classifier import QueryClassifier  # noqa: PLC0415
+
+    app.state.query_classifier = QueryClassifier(
+        base_url=settings.llm_base_url,
+        model=settings.llm_chat_model,
+        api_key=settings.llm_api_key,
+    )
+
     # RAG components
     rag_model = settings.llm_rag_model or settings.llm_chat_model
     app.state.rag_client = RAGClient(
@@ -200,6 +209,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     await app.state.pg_pool.close()
     if app.state.federation_client is not None:
         await app.state.federation_client.close()
+    await app.state.query_classifier.close()
     await app.state.rag_client.close()
     await app.state.embedding_client.close()
     await app.state.extraction_client.close()

@@ -26,6 +26,7 @@ from pyoxigraph import (
     Triple,
 )
 
+from knowledge_service._utils import _rdf_value_to_str
 from knowledge_service.ontology.namespaces import (
     KS,
     KS_CONFIDENCE,
@@ -360,6 +361,185 @@ class KnowledgeStore:
                 "valid_until": solution["vuntil"].value if solution["vuntil"] else None,
             }
             results.append(row)
+        return results
+
+    def get_triples_by_object(
+        self,
+        object_uri: str,
+        graphs: list[str] | None = None,
+    ) -> list[dict]:
+        """Get all annotated triples where the given URI appears as the object.
+
+        Args:
+            object_uri: URI of the object to look up.
+            graphs: Optional list of graph URIs to restrict the search to.
+
+        Returns:
+            List of dicts with triple data and annotations (subject, predicate, object, etc.).
+        """
+        graph_filter = ""
+        if graphs:
+            values = " ".join(f"<{g}>" for g in graphs)
+            graph_filter = f"VALUES ?g {{ {values} }}"
+
+        obj_sparql = _sparql_object(object_uri)
+
+        sparql = f"""
+            SELECT ?g ?s ?p ?conf ?ktype ?vfrom ?vuntil WHERE {{
+                {graph_filter}
+                GRAPH ?g {{
+                    ?s ?p {obj_sparql} .
+                }}
+                OPTIONAL {{
+                    GRAPH ?g {{
+                        << ?s ?p {obj_sparql} >>
+                            <{KS_CONFIDENCE.value}> ?conf .
+                    }}
+                }}
+                OPTIONAL {{
+                    GRAPH ?g {{
+                        << ?s ?p {obj_sparql} >>
+                            <{KS_KNOWLEDGE_TYPE.value}> ?ktype .
+                    }}
+                }}
+                OPTIONAL {{
+                    GRAPH ?g {{
+                        << ?s ?p {obj_sparql} >>
+                            <{KS_VALID_FROM.value}> ?vfrom .
+                    }}
+                }}
+                OPTIONAL {{
+                    GRAPH ?g {{
+                        << ?s ?p {obj_sparql} >>
+                            <{KS_VALID_UNTIL.value}> ?vuntil .
+                    }}
+                }}
+                FILTER(BOUND(?conf))
+            }}
+            ORDER BY DESC(?conf)
+            LIMIT 20
+        """
+        query_result = self._store.query(sparql)
+        results = []
+        for solution in query_result:
+            row = {
+                "graph": solution["g"].value,
+                "subject": solution["s"],
+                "predicate": solution["p"],
+                "object": NamedNode(object_uri) if _is_uri(object_uri) else Literal(object_uri),
+                "confidence": float(solution["conf"].value) if solution["conf"] else None,
+                "knowledge_type": _strip_ks_prefix(solution["ktype"].value)
+                if solution["ktype"]
+                else None,
+                "valid_from": solution["vfrom"].value if solution["vfrom"] else None,
+                "valid_until": solution["vuntil"].value if solution["vuntil"] else None,
+            }
+            results.append(row)
+        return results
+
+    def find_connecting_triples(
+        self,
+        entity_a: str,
+        entity_b: str,
+        graphs: list[str] | None = None,
+    ) -> list[dict]:
+        """Find 1-hop or 2-hop connecting triples between two entities.
+
+        Tries 1-hop first (A directly relates to B in either direction).
+        If nothing found, falls back to 2-hop (A -> mid -> B).
+
+        Args:
+            entity_a: URI of the first entity.
+            entity_b: URI of the second entity.
+            graphs: Optional list of graph URIs to restrict the search to.
+
+        Returns:
+            List of dicts with subject, predicate, object, confidence.
+        """
+        graph_filter = ""
+        if graphs:
+            values = " ".join(f"<{g}>" for g in graphs)
+            graph_filter = f"VALUES ?g {{ {values} }}"
+
+        # 1-hop: A directly relates to B (either direction)
+        sparql_1hop = f"""
+            SELECT ?g ?s ?p ?o ?conf WHERE {{
+                {graph_filter}
+                GRAPH ?g {{
+                    {{
+                        <{entity_a}> ?p <{entity_b}> .
+                        BIND(<{entity_a}> AS ?s) BIND(<{entity_b}> AS ?o)
+                    }}
+                    UNION
+                    {{
+                        <{entity_b}> ?p <{entity_a}> .
+                        BIND(<{entity_b}> AS ?s) BIND(<{entity_a}> AS ?o)
+                    }}
+                }}
+                OPTIONAL {{
+                    GRAPH ?g {{
+                        << ?s ?p ?o >> <{KS_CONFIDENCE.value}> ?conf .
+                    }}
+                }}
+            }}
+        """
+        results_1hop = self._store.query(sparql_1hop)
+        results = []
+        for sol in results_1hop:
+            results.append(
+                {
+                    "subject": _rdf_value_to_str(sol["s"]),
+                    "predicate": _rdf_value_to_str(sol["p"]),
+                    "object": _rdf_value_to_str(sol["o"]),
+                    "confidence": float(sol["conf"].value) if sol["conf"] else None,
+                }
+            )
+
+        if results:
+            return results
+
+        # 2-hop: A -> mid -> B (only if 1-hop found nothing)
+        sparql_2hop = f"""
+            SELECT ?g ?mid ?p1 ?p2 ?conf1 ?conf2 WHERE {{
+                {graph_filter}
+                GRAPH ?g {{
+                    <{entity_a}> ?p1 ?mid .
+                    ?mid ?p2 <{entity_b}> .
+                }}
+                FILTER(?mid != <{entity_a}> && ?mid != <{entity_b}>)
+                OPTIONAL {{
+                    GRAPH ?g {{
+                        << <{entity_a}> ?p1 ?mid >> <{KS_CONFIDENCE.value}> ?conf1 .
+                    }}
+                }}
+                OPTIONAL {{
+                    GRAPH ?g {{
+                        << ?mid ?p2 <{entity_b}> >> <{KS_CONFIDENCE.value}> ?conf2 .
+                    }}
+                }}
+            }}
+            LIMIT 10
+        """
+        results_2hop = self._store.query(sparql_2hop)
+        for sol in results_2hop:
+            mid = _rdf_value_to_str(sol["mid"])
+            results.append(
+                {
+                    "subject": entity_a,
+                    "predicate": _rdf_value_to_str(sol["p1"]),
+                    "object": mid,
+                    "confidence": float(sol["conf1"].value) if sol["conf1"] else None,
+                }
+            )
+            results.append(
+                {
+                    "subject": mid,
+                    "predicate": _rdf_value_to_str(sol["p2"]),
+                    "object": entity_b,
+                    "confidence": float(sol["conf2"].value) if sol["conf2"] else None,
+                }
+            )
+
         return results
 
     def update_confidence(

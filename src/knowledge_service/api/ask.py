@@ -44,6 +44,7 @@ class AskResponse(BaseModel):
     knowledge_types_used: list[str]
     contradictions: list[ContradictionInfo]
     evidence: list[EvidenceSnippet] = []
+    intent: str | None = None
 
 
 @router.post("/ask", response_model=AskResponse)
@@ -53,10 +54,17 @@ async def post_ask(body: AskRequest, request: Request) -> AskResponse:
     rag_client = request.app.state.rag_client
     reasoning_engine = request.app.state.reasoning_engine
 
+    # Classify query intent
+    classifier = getattr(request.app.state, "query_classifier", None)
+    intent = None
+    if classifier:
+        intent = await classifier.classify(body.question)
+
     context = await retriever.retrieve(
         body.question,
         max_sources=body.max_sources,
         min_confidence=body.min_confidence,
+        intent=intent,
     )
 
     try:
@@ -147,4 +155,5 @@ async def post_ask(body: AskRequest, request: Request) -> AskResponse:
         knowledge_types_used=knowledge_types_used,
         contradictions=contradictions,
         evidence=evidence,
+        intent=intent.intent if intent else None,
     )
