@@ -1,6 +1,6 @@
 # Query Routing Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [x]`) syntax for tracking.
 
 **Goal:** Classify user questions by intent (semantic/entity/graph), then route to the optimal retrieval strategy in RAGRetriever.
 
@@ -9,6 +9,14 @@
 **Tech Stack:** OpenAI-compatible chat API (qwen3:14b), pyoxigraph SPARQL, asyncpg
 
 **Spec:** `docs/superpowers/specs/2026-03-23-query-routing-design.md`
+
+**Status:** COMPLETE — merged as PR #15, version 0.1.25. 458 tests passing. Deployed and verified in production.
+
+**Production verification:**
+- `"find information about cold exposure benefits"` → classified as `semantic`
+- `"what is dopamine?"` → classified as `entity`, returned Entity knowledge type
+- `"how is cold exposure connected to dopamine?"` → classified as `graph`, returned Claim + Entity + Fact + Relationship types
+- Classifier exception handling broadened to `httpx.HTTPError` (catches ConnectError, NetworkError)
 
 ---
 
@@ -34,7 +42,7 @@
 - Create: `src/knowledge_service/clients/classifier.py`
 - Create: `tests/test_classifier.py`
 
-- [ ] **Step 1: Write failing tests**
+- [x] **Step 1: Write failing tests**
 
 Create `tests/test_classifier.py`:
 
@@ -107,12 +115,12 @@ class TestClassify:
         await c.close()
 ```
 
-- [ ] **Step 2: Run tests to verify they fail**
+- [x] **Step 2: Run tests to verify they fail**
 
 Run: `uv run pytest tests/test_classifier.py -v`
 Expected: FAIL — `ModuleNotFoundError`
 
-- [ ] **Step 3: Implement QueryClassifier**
+- [x] **Step 3: Implement QueryClassifier**
 
 Create `src/knowledge_service/clients/classifier.py`:
 
@@ -214,12 +222,12 @@ class QueryClassifier:
             await self._client.aclose()
 ```
 
-- [ ] **Step 4: Run tests to verify they pass**
+- [x] **Step 4: Run tests to verify they pass**
 
 Run: `uv run pytest tests/test_classifier.py -v`
 Expected: ALL PASS
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add src/knowledge_service/clients/classifier.py tests/test_classifier.py
@@ -234,7 +242,7 @@ git commit -m "feat: add QueryClassifier for LLM-based intent classification"
 - Modify: `src/knowledge_service/stores/knowledge.py` (after `get_triples_by_predicate`, ~line 370)
 - Modify: `tests/test_knowledge_store.py`
 
-- [ ] **Step 1: Write failing tests**
+- [x] **Step 1: Write failing tests**
 
 Add to `tests/test_knowledge_store.py`:
 
@@ -295,12 +303,12 @@ class TestFindConnectingTriples:
         assert results == []
 ```
 
-- [ ] **Step 2: Run tests to verify they fail**
+- [x] **Step 2: Run tests to verify they fail**
 
 Run: `uv run pytest tests/test_knowledge_store.py::TestGetTriplesByObject -v`
 Expected: FAIL — `AttributeError: 'KnowledgeStore' has no attribute 'get_triples_by_object'`
 
-- [ ] **Step 3: Implement get_triples_by_object**
+- [x] **Step 3: Implement get_triples_by_object**
 
 First, add the import at the top of `knowledge.py`:
 ```python
@@ -377,7 +385,7 @@ def get_triples_by_object(
     return results
 ```
 
-- [ ] **Step 4: Implement find_connecting_triples**
+- [x] **Step 4: Implement find_connecting_triples**
 
 ```python
 def find_connecting_triples(
@@ -464,12 +472,12 @@ def find_connecting_triples(
 
 Note: add `from knowledge_service._utils import _rdf_value_to_str` at the top of `knowledge.py`.
 
-- [ ] **Step 5: Run tests to verify they pass**
+- [x] **Step 5: Run tests to verify they pass**
 
 Run: `uv run pytest tests/test_knowledge_store.py -v`
 Expected: ALL PASS
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add src/knowledge_service/stores/knowledge.py tests/test_knowledge_store.py
@@ -484,7 +492,7 @@ git commit -m "feat: add get_triples_by_object and find_connecting_triples"
 - Modify: `src/knowledge_service/stores/rag.py`
 - Modify: `tests/test_rag_retriever.py`
 
-- [ ] **Step 1: Write failing tests for intent-based dispatch**
+- [x] **Step 1: Write failing tests for intent-based dispatch**
 
 Add to `tests/test_rag_retriever.py`:
 
@@ -542,12 +550,12 @@ class TestIntentDispatch:
         ks.get_triples_by_object.assert_called()
 ```
 
-- [ ] **Step 2: Run tests to verify they fail**
+- [x] **Step 2: Run tests to verify they fail**
 
 Run: `uv run pytest tests/test_rag_retriever.py::TestIntentDispatch -v`
 Expected: FAIL — `retrieve() got unexpected keyword argument 'intent'`
 
-- [ ] **Step 3: Refactor RAGRetriever with strategy dispatch**
+- [x] **Step 3: Refactor RAGRetriever with strategy dispatch**
 
 Rewrite `src/knowledge_service/stores/rag.py`. The existing `retrieve()` body becomes `_retrieve_semantic()`. Add `intent` parameter and dispatch logic:
 
@@ -776,12 +784,12 @@ class RAGRetriever:
         return contradictions
 ```
 
-- [ ] **Step 4: Run tests**
+- [x] **Step 4: Run tests**
 
 Run: `uv run pytest tests/test_rag_retriever.py -v`
 Expected: ALL PASS
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add src/knowledge_service/stores/rag.py tests/test_rag_retriever.py
@@ -797,7 +805,7 @@ git commit -m "feat: intent-based retrieval strategies in RAGRetriever"
 - Modify: `src/knowledge_service/main.py`
 - Modify: `tests/test_api_ask.py`
 
-- [ ] **Step 1: Add intent field to AskResponse**
+- [x] **Step 1: Add intent field to AskResponse**
 
 In `ask.py`, add to `AskResponse` (line 46):
 
@@ -812,7 +820,7 @@ class AskResponse(BaseModel):
     intent: str | None = None
 ```
 
-- [ ] **Step 2: Add classification to post_ask**
+- [x] **Step 2: Add classification to post_ask**
 
 In `post_ask()`, before `retriever.retrieve()` (around line 56):
 
@@ -833,7 +841,7 @@ context = await retriever.retrieve(
 
 At the return, add `intent=intent.intent if intent else None`.
 
-- [ ] **Step 3: Initialize classifier in main.py**
+- [x] **Step 3: Initialize classifier in main.py**
 
 In `main.py` lifespan, after the reasoning engine initialization, add:
 
@@ -849,7 +857,7 @@ app.state.query_classifier = QueryClassifier(
 
 Add `await app.state.query_classifier.close()` in the shutdown section.
 
-- [ ] **Step 4: Add test for intent in response**
+- [x] **Step 4: Add test for intent in response**
 
 Add to `tests/test_api_ask.py`:
 
@@ -862,16 +870,16 @@ class TestAskIntent:
         assert "intent" in data
 ```
 
-- [ ] **Step 5: Run full test suite**
+- [x] **Step 5: Run full test suite**
 
 Run: `uv run pytest tests/ -v`
 Expected: ALL PASS
 
-- [ ] **Step 6: Lint and format**
+- [x] **Step 6: Lint and format**
 
 Run: `uv run ruff check . && uv run ruff format --check .`
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```bash
 git add src/knowledge_service/api/ask.py src/knowledge_service/main.py tests/test_api_ask.py
@@ -882,17 +890,17 @@ git commit -m "feat: wire query classification into /api/ask pipeline"
 
 ## Task 5: Final integration test and lint
 
-- [ ] **Step 1: Run full test suite**
+- [x] **Step 1: Run full test suite**
 
 Run: `uv run pytest tests/ -v`
 Expected: ALL PASS
 
-- [ ] **Step 2: Lint and format**
+- [x] **Step 2: Lint and format**
 
 Run: `uv run ruff check . && uv run ruff format --check .`
 If needed: `uv run ruff format .`
 
-- [ ] **Step 3: Commit if needed**
+- [x] **Step 3: Commit if needed**
 
 ```bash
 git add -A && git commit -m "chore: lint fixes for query routing"
