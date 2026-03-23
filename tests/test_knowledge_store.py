@@ -237,3 +237,81 @@ class TestNamedGraphs:
         )
         assert len(candidates) == 1
         assert "london" in str(candidates[0]["object"])
+
+
+class TestGetTriplesByObject:
+    def test_finds_triples_where_entity_is_object(self, store):
+        store.insert_triple(
+            "http://s/a",
+            "http://p/causes",
+            "http://o/target",
+            0.8,
+            "Claim",
+            graph=KS_GRAPH_EXTRACTED,
+        )
+        results = store.get_triples_by_object("http://o/target")
+        assert len(results) == 1
+        assert "subject" in results[0]
+        assert "graph" in results[0]
+
+    def test_returns_empty_for_no_match(self, store):
+        results = store.get_triples_by_object("http://o/nonexistent")
+        assert results == []
+
+    def test_respects_graph_filter(self, store):
+        store.insert_triple(
+            "http://s/1",
+            "http://p/1",
+            "http://o/shared",
+            0.8,
+            "Claim",
+            graph=KS_GRAPH_ASSERTED,
+        )
+        store.insert_triple(
+            "http://s/2",
+            "http://p/2",
+            "http://o/shared",
+            0.7,
+            "Claim",
+            graph=KS_GRAPH_EXTRACTED,
+        )
+        results = store.get_triples_by_object("http://o/shared", graphs=[KS_GRAPH_ASSERTED])
+        assert len(results) == 1
+
+
+class TestFindConnectingTriples:
+    def test_finds_direct_connection(self, store):
+        store.insert_triple(
+            "http://e/a",
+            "http://p/causes",
+            "http://e/b",
+            0.8,
+            "Claim",
+            graph=KS_GRAPH_EXTRACTED,
+        )
+        results = store.find_connecting_triples("http://e/a", "http://e/b")
+        assert len(results) >= 1
+
+    def test_finds_reverse_connection(self, store):
+        store.insert_triple(
+            "http://e/b",
+            "http://p/causes",
+            "http://e/a",
+            0.8,
+            "Claim",
+            graph=KS_GRAPH_EXTRACTED,
+        )
+        results = store.find_connecting_triples("http://e/a", "http://e/b")
+        assert len(results) >= 1
+
+    def test_returns_empty_when_not_connected(self, store):
+        store.insert_triple(
+            "http://e/x",
+            "http://p/1",
+            "http://e/y",
+            0.8,
+            "Claim",
+            graph=KS_GRAPH_EXTRACTED,
+        )
+        results = store.find_connecting_triples("http://e/x", "http://e/z")
+        assert results == []
