@@ -261,3 +261,32 @@ class TestIntentDispatch:
         await retriever.retrieve("how is cortisol connected to inflammation?", intent=intent)
         # Should call get_triples_by_object (bidirectional)
         ks.get_triples_by_object.assert_called()
+
+    async def test_entity_below_threshold_skipped(self):
+        """Entity with similarity < 0.80 is skipped, falls back to semantic."""
+        ec = _make_embedding_client()
+        ec.embed_batch.return_value = [[0.1] * 768]
+        es = _make_embedding_store(content_rows=[_CONTENT_ROW])
+        es.search_entities.return_value = [
+            {"uri": "http://knowledge.local/data/weak_match", "similarity": 0.5}
+        ]
+        ks = _make_knowledge_store()
+        retriever = RAGRetriever(ec, es, ks)
+        intent = QueryIntent(intent="entity", entities=["weak_match"])
+        await retriever.retrieve("what is weak_match?", intent=intent)
+        # Low similarity entity skipped → falls back to semantic
+        es.search.assert_called_once()
+
+    async def test_graph_single_entity_skips_path_query(self):
+        """Graph intent with single entity should NOT call find_connecting_triples."""
+        ec = _make_embedding_client()
+        ec.embed_batch.return_value = [[0.1] * 768]
+        es = _make_embedding_store()
+        es.search_entities.return_value = [
+            {"uri": "http://knowledge.local/data/dopamine", "similarity": 0.9}
+        ]
+        ks = _make_knowledge_store()
+        retriever = RAGRetriever(ec, es, ks)
+        intent = QueryIntent(intent="graph", entities=["dopamine"])
+        await retriever.retrieve("what affects dopamine?", intent=intent)
+        ks.find_connecting_triples.assert_not_called()

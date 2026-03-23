@@ -64,7 +64,7 @@ class QueryClassifier:
                 },
             )
             response.raise_for_status()
-        except (httpx.HTTPStatusError, httpx.TimeoutException) as exc:
+        except httpx.HTTPError as exc:
             logger.warning("QueryClassifier: LLM call failed, defaulting to semantic: %s", exc)
             return QueryIntent(intent="semantic")
 
