@@ -312,3 +312,19 @@ class TestAskIntent:
         assert response.status_code == 200
         data = response.json()
         assert "intent" in data
+
+
+class TestAskTraversalMetadata:
+    async def test_response_includes_traversal_fields(self, client):
+        response = await client.post("/api/ask", json={"question": "test"})
+        data = response.json()
+        assert "traversal_depth" in data
+        assert "inferred_triples" in data
+
+    async def test_use_reasoning_parameter_accepted(self, client):
+        response = await client.post("/api/ask", json={"question": "test", "use_reasoning": False})
+        assert response.status_code == 200
+
+    async def test_use_reasoning_true_accepted(self, client):
+        response = await client.post("/api/ask", json={"question": "test", "use_reasoning": True})
+        assert response.status_code == 200
