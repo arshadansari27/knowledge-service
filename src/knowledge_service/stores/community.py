@@ -132,14 +132,14 @@ class CommunityDetector:
     def _extract_graph(self) -> list[dict]:
         """Extract entity-to-entity edges from the knowledge store.
 
-        Only includes domain-relevant edges: predicates from the ks: namespace.
-        SPARQL returns all IRI-to-IRI edges; Python filters to ks: predicates
-        (pyoxigraph STRSTARTS with RDF-star OPTIONAL is too slow).
+        Only includes edges between domain entities (ks-data: namespace).
+        Filters out ontology/external URIs in Python to avoid slow SPARQL
+        FILTER + RDF-star OPTIONAL combinations in pyoxigraph.
         """
-        from knowledge_service.ontology.namespaces import KS, KS_CONFIDENCE
+        from knowledge_service.ontology.namespaces import KS_CONFIDENCE, KS_DATA
 
         sparql = f"""
-            SELECT DISTINCT ?s ?p ?o ?conf WHERE {{
+            SELECT DISTINCT ?s ?o ?conf WHERE {{
                 GRAPH ?g {{
                     ?s ?p ?o .
                 }}
@@ -154,11 +154,11 @@ class CommunityDetector:
         rows = self._ks.query(sparql)
         edges = []
         for r in rows:
-            p = r["p"].value if hasattr(r["p"], "value") else str(r["p"])
-            if not p.startswith(KS):
-                continue
             s = r["s"].value if hasattr(r["s"], "value") else str(r["s"])
             o = r["o"].value if hasattr(r["o"], "value") else str(r["o"])
+            # Only keep edges between domain entities
+            if not s.startswith(KS_DATA) or not o.startswith(KS_DATA):
+                continue
             conf = float(r["conf"].value) if r.get("conf") and r["conf"] else 0.5
             edges.append({"source": s, "target": o, "weight": conf})
         return edges

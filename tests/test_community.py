@@ -80,25 +80,22 @@ class TestCommunityStore:
 
 
 def _make_knowledge_store_for_detection():
-    """Mock KnowledgeStore that returns a small entity graph with ks: predicates."""
+    """Mock KnowledgeStore that returns a small entity graph with ks-data: URIs."""
     ks = MagicMock()
     ks.query.return_value = [
         {
-            "s": MagicMock(value="http://e/a"),
-            "p": MagicMock(value="http://knowledge.local/schema/causes"),
-            "o": MagicMock(value="http://e/b"),
+            "s": MagicMock(value="http://knowledge.local/data/a"),
+            "o": MagicMock(value="http://knowledge.local/data/b"),
             "conf": MagicMock(value="0.8"),
         },
         {
-            "s": MagicMock(value="http://e/b"),
-            "p": MagicMock(value="http://knowledge.local/schema/increases"),
-            "o": MagicMock(value="http://e/c"),
+            "s": MagicMock(value="http://knowledge.local/data/b"),
+            "o": MagicMock(value="http://knowledge.local/data/c"),
             "conf": MagicMock(value="0.7"),
         },
         {
-            "s": MagicMock(value="http://e/d"),
-            "p": MagicMock(value="http://knowledge.local/schema/reduces"),
-            "o": MagicMock(value="http://e/e"),
+            "s": MagicMock(value="http://knowledge.local/data/d"),
+            "o": MagicMock(value="http://knowledge.local/data/e"),
             "conf": MagicMock(value="0.9"),
         },
     ]
@@ -130,42 +127,38 @@ class TestCommunityDetector:
         communities = detector.detect()
         assert communities == []
 
-    def test_filters_ontology_predicates_in_python(self):
-        """Detector should filter out non-ks: predicates from SPARQL results."""
+    def test_filters_non_domain_entities(self):
+        """Detector should only include edges between ks-data: entities."""
         ks = MagicMock()
         ks.query.return_value = [
-            # Domain edge — should be kept
+            # Domain edge — both URIs in ks-data: — should be kept
             {
-                "s": MagicMock(value="http://e/a"),
-                "p": MagicMock(value="http://knowledge.local/schema/increases"),
-                "o": MagicMock(value="http://e/b"),
+                "s": MagicMock(value="http://knowledge.local/data/exercise"),
+                "o": MagicMock(value="http://knowledge.local/data/dopamine"),
                 "conf": MagicMock(value="0.8"),
             },
-            # Ontology edge — should be filtered out
+            # External object — should be filtered out
             {
-                "s": MagicMock(value="http://e/a"),
-                "p": MagicMock(value="http://www.w3.org/2002/07/owl#sameAs"),
-                "o": MagicMock(value="http://wikidata.org/Q123"),
+                "s": MagicMock(value="http://knowledge.local/data/exercise"),
+                "o": MagicMock(value="http://www.wikidata.org/entity/Q5420020"),
                 "conf": MagicMock(value="1.0"),
             },
-            # rdf:type — should be filtered out
+            # schema:Thing target — should be filtered out
             {
-                "s": MagicMock(value="http://e/c"),
-                "p": MagicMock(value="http://www.w3.org/1999/02/22-rdf-syntax-ns#type"),
-                "o": MagicMock(value="http://schema.org/Thing"),
+                "s": MagicMock(value="http://knowledge.local/data/cortisol"),
+                "o": MagicMock(value="http://knowledge.local/schema/schema:Thing"),
                 "conf": MagicMock(value="0.9"),
             },
         ]
         detector = CommunityDetector(ks)
         communities = detector.detect()
-        # Only 1 edge (a->b), so should produce communities with just those 2 entities
         all_members = set()
         for c in communities:
             all_members.update(c["member_entities"])
-        assert "http://e/a" in all_members
-        assert "http://e/b" in all_members
-        assert "http://wikidata.org/Q123" not in all_members
-        assert "http://schema.org/Thing" not in all_members
+        assert "http://knowledge.local/data/exercise" in all_members
+        assert "http://knowledge.local/data/dopamine" in all_members
+        assert "http://www.wikidata.org/entity/Q5420020" not in all_members
+        assert "http://knowledge.local/schema/schema:Thing" not in all_members
 
 
 class TestCommunitySummarizer:
