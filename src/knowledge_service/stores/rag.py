@@ -28,10 +28,13 @@ class RetrievalContext:
 
 
 class RAGRetriever:
-    def __init__(self, embedding_client, embedding_store, knowledge_store) -> None:
+    def __init__(
+        self, embedding_client, embedding_store, knowledge_store, community_store=None
+    ) -> None:
         self._embedding_client = embedding_client
         self._embedding_store = embedding_store
         self._knowledge_store = knowledge_store
+        self._community_store = community_store
         self._graph_traverser = GraphTraverser(knowledge_store)
 
     async def retrieve(
@@ -61,6 +64,8 @@ class RAGRetriever:
                 use_reasoning=use_reasoning,
                 reasoning_engine=reasoning_engine,
             )
+        elif intent.intent == "global":
+            return await self._retrieve_global(question, embedding, max_sources, min_confidence)
         else:
             return await self._retrieve_semantic(question, embedding, max_sources, min_confidence)
 
@@ -163,6 +168,75 @@ class RAGRetriever:
             entities_found=entities_found,
             traversal_depth=traversal_depth,
             inferred_triples=inferred_count,
+        )
+
+    # --- Strategy: global ---
+
+    async def _retrieve_global(
+        self, question, embedding, max_sources, min_confidence
+    ) -> RetrievalContext:
+        """Global strategy: use community summaries for corpus-level questions."""
+        if not self._community_store:
+            return await self._retrieve_semantic(question, embedding, max_sources, min_confidence)
+
+        communities = await self._community_store.get_all()
+        if not communities:
+            return await self._retrieve_semantic(question, embedding, max_sources, min_confidence)
+
+        # Build knowledge triples from community summaries
+        question_words = set(question.lower().split())
+        triples = []
+        level0_keyword_matched = False
+
+        for c in communities:
+            # Level 1 (coarse): always include
+            # Level 0 (fine): include if keyword match
+            if c["level"] == 1:
+                include = True
+            else:
+                summary_words = set((c.get("summary") or "").lower().split())
+                matched = bool(question_words & summary_words)
+                if matched:
+                    level0_keyword_matched = True
+                include = matched
+
+            if include and c.get("summary"):
+                triples.append(
+                    {
+                        "subject": f"community_{c.get('id', 'unknown')}",
+                        "predicate": "has_summary",
+                        "object": c["summary"],
+                        "confidence": 1.0,
+                        "knowledge_type": "Community",
+                        "trust_tier": "computed",
+                    }
+                )
+
+        # If no level-0 matched by keyword, add top 5 by member count
+        if not level0_keyword_matched:
+            level0 = [c for c in communities if c["level"] == 0 and c.get("summary")]
+            for c in level0[:5]:
+                triples.append(
+                    {
+                        "subject": f"community_{c.get('id', 'unknown')}",
+                        "predicate": "has_summary",
+                        "object": c["summary"],
+                        "confidence": 1.0,
+                        "knowledge_type": "Community",
+                        "trust_tier": "computed",
+                    }
+                )
+
+        # Light content search for grounding
+        content_results = await self._embedding_store.search(
+            query_embedding=embedding, limit=3, query_text=question
+        )
+
+        return RetrievalContext(
+            content_results=content_results,
+            knowledge_triples=triples,
+            contradictions=[],
+            entities_found=[],
         )
 
     # --- ProbLog inference ---

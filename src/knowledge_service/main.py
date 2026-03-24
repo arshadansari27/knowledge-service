@@ -1,5 +1,7 @@
 """FastAPI application factory and lifespan management for the Knowledge Service."""
 
+import asyncio
+import logging
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import AsyncIterator
@@ -18,6 +20,8 @@ from knowledge_service.stores.entity_resolver import EntityResolver
 from knowledge_service.stores.knowledge import KnowledgeStore
 from knowledge_service.stores.rag import RAGRetriever
 from knowledge_service.api import health, content, claims, search, knowledge, contradictions, ask
+
+logger = logging.getLogger(__name__)
 
 
 async def run_migrations(pool: object, migrations_dir: str | Path = "migrations") -> None:
@@ -170,6 +174,11 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     # Shared EmbeddingStore and EntityResolver
     embedding_store = EmbeddingStore(app.state.pg_pool)
     app.state.embedding_store = embedding_store
+
+    # Community store for global search
+    from knowledge_service.stores.community import CommunityStore  # noqa: PLC0415
+
+    app.state.community_store = CommunityStore(app.state.pg_pool)
     app.state.entity_resolver = EntityResolver(
         app.state.knowledge_store,
         embedding_store,
@@ -200,11 +209,46 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         embedding_client=app.state.embedding_client,
         embedding_store=embedding_store,
         knowledge_store=app.state.knowledge_store,
+        community_store=app.state.community_store,
     )
+
+    # Optional periodic community rebuild
+    _rebuild_task = None
+    if settings.community_rebuild_interval > 0:
+
+        async def _community_rebuild_loop() -> None:
+            while True:
+                await asyncio.sleep(settings.community_rebuild_interval)
+                try:
+                    from knowledge_service.stores.community import (  # noqa: PLC0415
+                        CommunityDetector,
+                        CommunitySummarizer,
+                    )
+
+                    detector = CommunityDetector(app.state.knowledge_store)
+                    communities = await asyncio.to_thread(detector.detect)
+                    # Summarize each community via LLM (uses extraction model — high volume)
+                    summarizer = CommunitySummarizer(
+                        app.state.extraction_client._client,
+                        app.state.knowledge_store,
+                        model=app.state.extraction_client._model,
+                    )
+                    summarized = []
+                    for c in communities:
+                        summarized.append(await summarizer.summarize_one(c))
+                    await app.state.community_store.replace_all(summarized)
+                    logger.info("Periodic community rebuild: %d communities", len(summarized))
+                except Exception as exc:
+                    logger.warning("Periodic community rebuild failed: %s", exc)
+
+        _rebuild_task = asyncio.create_task(_community_rebuild_loop())
+        app.state._community_rebuild_task = _rebuild_task
 
     yield
 
     # --- Shutdown ---
+    if hasattr(app.state, "_community_rebuild_task") and app.state._community_rebuild_task:
+        app.state._community_rebuild_task.cancel()
     app.state.knowledge_store.flush()
     await app.state.pg_pool.close()
     if app.state.federation_client is not None:
@@ -249,10 +293,12 @@ def create_app(use_lifespan: bool = True) -> FastAPI:
     app.state.secret_key = settings.secret_key
 
     from knowledge_service.admin.stats import router as stats_router
+    from knowledge_service.admin.communities import router as communities_router
 
     app.include_router(login_router)
     app.include_router(admin_router)
     app.include_router(stats_router, prefix="/api/admin")
+    app.include_router(communities_router, prefix="/api/admin")
 
     app.add_middleware(
         AuthMiddleware,

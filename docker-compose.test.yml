@@ -1,0 +1,45 @@
+# Standalone compose for local integration testing — uses non-default ports.
+# Usage: docker compose -f docker-compose.test.yml -p ks-test up --build
+services:
+  knowledge-service:
+    build: .
+    ports:
+      - "8321:8000"
+    environment:
+      DATABASE_URL: postgresql://knowledge:knowledge@postgres:5432/knowledge
+      LLM_BASE_URL: https://litellm.hikmahtech.in
+      LLM_API_KEY: sk-litellm-master-Jamil123
+      LLM_EMBED_MODEL: nomic-embed-text
+      LLM_CHAT_MODEL: qwen3:14b
+      OXIGRAPH_DATA_DIR: /app/data/oxigraph
+      ADMIN_PASSWORD: test-local-123
+    depends_on:
+      postgres:
+        condition: service_healthy
+    volumes:
+      - oxigraph-data:/app/data/oxigraph
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  postgres:
+    image: pgvector/pgvector:pg16
+    environment:
+      POSTGRES_DB: knowledge
+      POSTGRES_USER: knowledge
+      POSTGRES_PASSWORD: knowledge
+    ports:
+      - "5434:5432"
+    volumes:
+      - pg-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U knowledge"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  pg-data:
+  oxigraph-data:

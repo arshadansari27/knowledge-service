@@ -2,13 +2,12 @@
 
 from __future__ import annotations
 
-import json
 import logging
-import re
 from dataclasses import dataclass, field
 
 import httpx
 
+from knowledge_service._utils import _extract_json
 from knowledge_service.stores.rag import RetrievalContext
 
 logger = logging.getLogger(__name__)
@@ -100,26 +99,20 @@ class RAGClient:
             json={
                 "model": self._model,
                 "messages": [{"role": "user", "content": prompt}],
-                "response_format": {"type": "json_object"},
             },
         )
         response.raise_for_status()
 
         raw = response.json()["choices"][0]["message"]["content"]
+        parsed = _extract_json(raw)
 
-        # Strip markdown fences (same as ExtractionClient)
-        stripped = re.sub(r"^```(?:json)?\s*\n?", "", raw.strip())
-        stripped = re.sub(r"\n?```\s*$", "", stripped)
-
-        try:
-            parsed = json.loads(stripped)
+        if parsed and isinstance(parsed, dict):
             return RAGAnswer(
-                answer=parsed.get("answer", stripped),
+                answer=parsed.get("answer", raw),
                 source_urls_cited=parsed.get("source_urls_cited", []),
             )
-        except json.JSONDecodeError:
-            logger.warning("RAGClient: could not parse JSON response, using raw text")
-            return RAGAnswer(answer=raw, source_urls_cited=[])
+        logger.warning("RAGClient: could not parse JSON response, using raw text")
+        return RAGAnswer(answer=raw, source_urls_cited=[])
 
     async def close(self) -> None:
         """Close the underlying HTTP client."""

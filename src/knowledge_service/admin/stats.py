@@ -287,3 +287,43 @@ async def browse_triples(
         )
 
     return {"items": items, "total": total, "limit": limit, "offset": offset}
+
+
+@router.get("/stats/gaps")
+async def get_gaps(request: Request):
+    """Detect knowledge gaps: isolated entities and thin communities."""
+    community_store = getattr(request.app.state, "community_store", None)
+    pg_pool = getattr(request.app.state, "pg_pool", None)
+
+    if not community_store or not pg_pool:
+        return {"error": "Community or embedding store not available"}
+
+    # All entities in the system (direct SQL, not similarity search)
+    async with pg_pool.acquire() as conn:
+        rows = await conn.fetch("SELECT uri FROM entity_embeddings")
+    all_entities = {r["uri"] for r in rows}
+
+    # Entities in communities
+    community_entities = await community_store.get_member_entities()
+
+    isolated = sorted(all_entities - community_entities)
+
+    # Thin communities (<=2 members)
+    all_communities = await community_store.get_all()
+    thin = [
+        {"id": str(c.get("id", "")), "label": c.get("label", ""), "member_count": c["member_count"]}
+        for c in all_communities
+        if c["member_count"] <= 2
+    ]
+
+    total = len(all_entities)
+    in_communities = len(all_entities & community_entities)
+    coverage = in_communities / total if total > 0 else 0.0
+
+    return {
+        "isolated_entities": isolated,
+        "thin_communities": thin,
+        "total_entities": total,
+        "entities_in_communities": in_communities,
+        "community_coverage": round(coverage, 2),
+    }
