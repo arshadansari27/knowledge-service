@@ -170,6 +170,11 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     # Shared EmbeddingStore and EntityResolver
     embedding_store = EmbeddingStore(app.state.pg_pool)
     app.state.embedding_store = embedding_store
+
+    # Community store for global search
+    from knowledge_service.stores.community import CommunityStore  # noqa: PLC0415
+
+    app.state.community_store = CommunityStore(app.state.pg_pool)
     app.state.entity_resolver = EntityResolver(
         app.state.knowledge_store,
         embedding_store,
@@ -200,6 +205,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         embedding_client=app.state.embedding_client,
         embedding_store=embedding_store,
         knowledge_store=app.state.knowledge_store,
+        community_store=app.state.community_store,
     )
 
     yield
@@ -249,10 +255,12 @@ def create_app(use_lifespan: bool = True) -> FastAPI:
     app.state.secret_key = settings.secret_key
 
     from knowledge_service.admin.stats import router as stats_router
+    from knowledge_service.admin.communities import router as communities_router
 
     app.include_router(login_router)
     app.include_router(admin_router)
     app.include_router(stats_router, prefix="/api/admin")
+    app.include_router(communities_router, prefix="/api/admin")
 
     app.add_middleware(
         AuthMiddleware,

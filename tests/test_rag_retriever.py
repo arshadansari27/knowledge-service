@@ -324,7 +324,7 @@ class TestGlobalIntent:
         community_store.get_all.return_value = []
         retriever = RAGRetriever(ec, es, ks, community_store=community_store)
         intent = QueryIntent(intent="global", entities=[])
-        context = await retriever.retrieve("what are the main themes?", intent=intent)
+        await retriever.retrieve("what are the main themes?", intent=intent)
         # Falls back to semantic -- search called
         es.search.assert_called_once()
 
@@ -334,7 +334,7 @@ class TestGlobalIntent:
         ks = _make_knowledge_store()
         retriever = RAGRetriever(ec, es, ks, community_store=None)
         intent = QueryIntent(intent="global", entities=[])
-        context = await retriever.retrieve("what are the main themes?", intent=intent)
+        await retriever.retrieve("what are the main themes?", intent=intent)
         # Falls back to semantic -- search called
         es.search.assert_called_once()
 

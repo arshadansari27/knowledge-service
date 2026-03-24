@@ -28,7 +28,9 @@ class RetrievalContext:
 
 
 class RAGRetriever:
-    def __init__(self, embedding_client, embedding_store, knowledge_store, community_store=None) -> None:
+    def __init__(
+        self, embedding_client, embedding_store, knowledge_store, community_store=None
+    ) -> None:
         self._embedding_client = embedding_client
         self._embedding_store = embedding_store
         self._knowledge_store = knowledge_store
