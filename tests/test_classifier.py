@@ -1,5 +1,7 @@
 import json
-from knowledge_service.clients.classifier import QueryClassifier, _extract_json
+
+from knowledge_service._utils import _extract_json
+from knowledge_service.clients.classifier import QueryClassifier
 
 _BASE = "http://llm-test"
 _KEY = "sk-test"

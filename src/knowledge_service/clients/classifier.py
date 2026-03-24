@@ -2,39 +2,14 @@
 
 from __future__ import annotations
 
-import json
 import logging
-import re
 from dataclasses import dataclass, field
 
 import httpx
 
+from knowledge_service._utils import _extract_json
+
 logger = logging.getLogger(__name__)
-
-
-def _extract_json(text: str) -> dict | None:
-    """Extract the first JSON object from freeform LLM output.
-
-    Handles markdown fences, thinking tags, and trailing text.
-    """
-    # Strip markdown code fences
-    stripped = re.sub(r"^```(?:json)?\s*\n?", "", text.strip())
-    stripped = re.sub(r"\n?```\s*$", "", stripped)
-    # Strip qwen3 thinking tags
-    stripped = re.sub(r"<think>.*?</think>", "", stripped, flags=re.DOTALL).strip()
-    # Try direct parse first
-    try:
-        return json.loads(stripped)
-    except (json.JSONDecodeError, ValueError):
-        pass
-    # Find the first {...} block
-    match = re.search(r"\{[^{}]*\}", stripped)
-    if match:
-        try:
-            return json.loads(match.group())
-        except (json.JSONDecodeError, ValueError):
-            pass
-    return None
 
 
 _VALID_INTENTS = {"semantic", "entity", "graph", "global"}

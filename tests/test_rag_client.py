@@ -160,10 +160,10 @@ class TestRAGClientAnswer:
         assert body["model"] == "my-model"
         await client.close()
 
-    async def test_response_format_is_json(self, httpx_mock):
+    async def test_no_response_format_constraint(self, httpx_mock):
         httpx_mock.add_response(url=_CHAT_URL, json=_make_chat_response("a"))
         client = RAGClient(base_url=_BASE, model="m", api_key=_KEY)
         await client.answer("q", _sample_context())
         body = json.loads(httpx_mock.get_requests()[0].content)
-        assert body["response_format"] == {"type": "json_object"}
+        assert "response_format" not in body
         await client.close()

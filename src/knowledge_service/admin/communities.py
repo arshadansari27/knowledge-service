@@ -24,11 +24,11 @@ async def rebuild_communities(request: Request):
     detector = CommunityDetector(knowledge_store)
     communities = await asyncio.to_thread(detector.detect)
 
-    # Step 2: Summarize each community via LLM
+    # Step 2: Summarize each community via LLM (uses RAG model for quality)
     summarizer = CommunitySummarizer(
-        request.app.state.extraction_client._client,
+        request.app.state.rag_client._client,
         knowledge_store,
-        model=request.app.state.extraction_client._model,
+        model=request.app.state.rag_client._model,
     )
 
     summarized = []

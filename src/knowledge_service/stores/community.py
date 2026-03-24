@@ -2,35 +2,15 @@
 
 from __future__ import annotations
 
-import json
 import logging
-import re
 from typing import Any
 
 import httpx
 import igraph
 
-from knowledge_service._utils import _rdf_value_to_str
+from knowledge_service._utils import _extract_json, _rdf_value_to_str
 
 logger = logging.getLogger(__name__)
-
-
-def _extract_json(text: str) -> dict | None:
-    """Extract the first JSON object from freeform LLM output."""
-    stripped = re.sub(r"^```(?:json)?\s*\n?", "", text.strip())
-    stripped = re.sub(r"\n?```\s*$", "", stripped)
-    stripped = re.sub(r"<think>.*?</think>", "", stripped, flags=re.DOTALL).strip()
-    try:
-        return json.loads(stripped)
-    except (json.JSONDecodeError, ValueError):
-        pass
-    match = re.search(r"\{[^{}]*\}", stripped)
-    if match:
-        try:
-            return json.loads(match.group())
-        except (json.JSONDecodeError, ValueError):
-            pass
-    return None
 
 
 class CommunityStore:

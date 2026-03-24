@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 import logging
 import re
 
@@ -359,7 +358,6 @@ class ExtractionClient:
                 json={
                     "model": self._model,
                     "messages": [{"role": "user", "content": prompt}],
-                    "response_format": {"type": "json_object"},
                 },
             )
             response.raise_for_status()
@@ -371,13 +369,11 @@ class ExtractionClient:
             return []
 
         raw = response.json()["choices"][0]["message"]["content"]
-        # Strip markdown fences that some models wrap around JSON
-        stripped = re.sub(r"^```(?:json)?\s*\n?", "", raw.strip())
-        stripped = re.sub(r"\n?```\s*$", "", stripped)
-        try:
-            parsed = json.loads(stripped)
-        except json.JSONDecodeError as exc:
-            logger.warning("ExtractionClient: could not parse JSON response: %s", exc)
+        from knowledge_service._utils import _extract_json
+
+        parsed = _extract_json(raw)
+        if parsed is None:
+            logger.warning("ExtractionClient: could not parse JSON from response")
             return []
 
         return parsed.get("items", [])

@@ -1,7 +1,11 @@
-"""Shared RDF utility helpers reused across API and store modules."""
+"""Shared utility helpers reused across API and store modules."""
 
 from __future__ import annotations
+
 import hashlib
+import json
+import re
+
 from pyoxigraph import Literal, NamedNode, Triple
 
 
@@ -31,3 +35,25 @@ def _rdf_value_to_str(value: object) -> str:
     if hasattr(value, "value"):
         return str(value.value)
     return str(value)
+
+
+def _extract_json(text: str) -> dict | None:
+    """Extract the first JSON object from freeform LLM output.
+
+    Handles markdown code fences, qwen3 <think> tags, and trailing text.
+    Returns None if no valid JSON object is found.
+    """
+    stripped = re.sub(r"^```(?:json)?\s*\n?", "", text.strip())
+    stripped = re.sub(r"\n?```\s*$", "", stripped)
+    stripped = re.sub(r"<think>.*?</think>", "", stripped, flags=re.DOTALL).strip()
+    try:
+        return json.loads(stripped)
+    except (json.JSONDecodeError, ValueError):
+        pass
+    match = re.search(r"\{[^{}]*\}", stripped)
+    if match:
+        try:
+            return json.loads(match.group())
+        except (json.JSONDecodeError, ValueError):
+            pass
+    return None
