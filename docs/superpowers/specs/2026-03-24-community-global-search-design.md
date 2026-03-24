@@ -42,7 +42,7 @@ class Community:
     member_count: int
 ```
 
-**New dependency:** `igraph` (add to `pyproject.toml` dependencies)
+**New dependency:** `python-igraph` (add to `pyproject.toml` dependencies — NOT the deprecated `igraph` package). Requires C library `libigraph`; pre-built wheels are available for most platforms. Dockerfile may need `cmake` and `build-essential` if no wheel is available.
 
 **Graph extraction SPARQL:**
 ```sparql
@@ -56,11 +56,10 @@ SELECT DISTINCT ?s ?o ?conf WHERE {
         }
     }
     FILTER(isIRI(?o))
-    FILTER(BOUND(?conf))
 }
 ```
 
-This gives all entity-to-entity edges with confidence weights.
+This gives all entity-to-entity edges. Edges without confidence annotations get a default confidence of 0.5 in Python (no `FILTER(BOUND(?conf))` — we want the broadest possible connectivity for community detection). Note: the community graph is a subset of all entities — entities with only literal-valued triples won't appear in the graph or in communities. The gaps endpoint addresses this by comparing against `entity_embeddings`.
 
 #### CommunitySummarizer
 
@@ -104,7 +103,9 @@ CREATE INDEX idx_communities_level ON communities(level);
 CREATE INDEX idx_communities_built_at ON communities(built_at);
 ```
 
-Communities are **fully replaced on each rebuild**: delete all rows, insert new ones. No incremental updates — full rebuild is simple, correct, and fast at the expected scale.
+Communities are **fully replaced on each rebuild**: delete all rows, insert new ones within a single transaction (`async with conn.transaction()`) to prevent concurrent readers from seeing an empty table. No incremental updates — full rebuild is simple, correct, and fast at the expected scale.
+
+Individual community summarization failures are logged and skipped (partial rebuild is better than no rebuild). The admin endpoint returns the actual count of successfully summarized communities.
 
 #### CommunityStore
 
@@ -115,7 +116,7 @@ class CommunityStore:
     async def replace_all(self, communities: list[dict]) -> int
     async def get_by_level(self, level: int) -> list[dict]
     async def get_all(self) -> list[dict]
-    async def get_member_entities(self) -> set[str]
+    async def get_member_entities(self) -> set[str]  # Used by gaps endpoint
 ```
 
 ### Global Search Strategy
@@ -138,10 +139,11 @@ Update `_VALID_INTENTS` to include `"global"`. Update the classification prompt 
 New strategy method triggered when intent is `global`:
 
 1. Query `communities` table via `CommunityStore.get_all()`
-2. For level 1 (coarse) communities: include full summaries in context
-3. For level 0 (fine) communities matching the question: include summaries
-   - Match by checking if any community member entity names appear in the question
-   - Or if none match, include top 5 level-0 communities by member count
+2. For level 1 (coarse) communities: include all summaries in context (broad themes)
+3. For level 0 (fine) communities: filter by relevance to the question:
+   - Embed the question, then compare against each community's `summary` text via simple keyword overlap (check if any word from the question appears in the summary, case-insensitive)
+   - If no keyword matches, include top 5 level-0 communities by member count
+   - This avoids the complexity of embedding community summaries while still being selective
 4. Light hybrid search (top 3 chunks) for grounding
 5. Return `RetrievalContext` with community summaries as knowledge triples:
    ```python
@@ -178,7 +180,7 @@ Requires admin auth (existing session/API-key middleware).
 
 #### Periodic rebuild (optional)
 
-Config setting: `COMMUNITY_REBUILD_INTERVAL` (integer seconds, default `0` = disabled).
+Config setting in `config.py`: `community_rebuild_interval: int = 0` (seconds, env var `COMMUNITY_REBUILD_INTERVAL`, default `0` = disabled).
 
 When > 0, a background `asyncio.Task` starts in `lifespan()`:
 
@@ -192,7 +194,7 @@ async def _community_rebuild_loop(app, interval):
             logger.warning("Community rebuild failed: %s", exc)
 ```
 
-Started in `lifespan()` if interval > 0. Cancelled on shutdown. Errors logged, never crash the app.
+Started in `lifespan()` if interval > 0. Store the task handle as `app.state._community_rebuild_task`. In shutdown: `app.state._community_rebuild_task.cancel()`. Errors within the loop are logged, never crash the app.
 
 ### Knowledge Gap Detection
 
