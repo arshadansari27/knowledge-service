@@ -15,6 +15,24 @@ from knowledge_service._utils import _rdf_value_to_str
 logger = logging.getLogger(__name__)
 
 
+def _extract_json(text: str) -> dict | None:
+    """Extract the first JSON object from freeform LLM output."""
+    stripped = re.sub(r"^```(?:json)?\s*\n?", "", text.strip())
+    stripped = re.sub(r"\n?```\s*$", "", stripped)
+    stripped = re.sub(r"<think>.*?</think>", "", stripped, flags=re.DOTALL).strip()
+    try:
+        return json.loads(stripped)
+    except (json.JSONDecodeError, ValueError):
+        pass
+    match = re.search(r"\{[^{}]*\}", stripped)
+    if match:
+        try:
+            return json.loads(match.group())
+        except (json.JSONDecodeError, ValueError):
+            pass
+    return None
+
+
 class CommunityStore:
     """Asyncpg-backed store for community data."""
 
@@ -132,8 +150,20 @@ class CommunityDetector:
         return communities
 
     def _extract_graph(self) -> list[dict]:
-        """Extract entity-to-entity edges from the knowledge store."""
-        from knowledge_service.ontology.namespaces import KS_CONFIDENCE
+        """Extract entity-to-entity edges from the knowledge store.
+
+        Only includes domain-relevant edges: filters out ontology namespace
+        predicates (rdf:, rdfs:, owl:, skos:, schema:) and the ontology graph.
+        """
+        from knowledge_service.ontology.namespaces import (
+            KS_CONFIDENCE,
+            KS_GRAPH_ONTOLOGY,
+            OWL,
+            RDF,
+            RDFS,
+            SCHEMA,
+            SKOS,
+        )
 
         sparql = f"""
             SELECT DISTINCT ?s ?o ?conf WHERE {{
@@ -146,6 +176,12 @@ class CommunityDetector:
                     }}
                 }}
                 FILTER(isIRI(?o))
+                FILTER(?g != <{KS_GRAPH_ONTOLOGY}>)
+                FILTER(!STRSTARTS(STR(?p), "{RDF}"))
+                FILTER(!STRSTARTS(STR(?p), "{RDFS}"))
+                FILTER(!STRSTARTS(STR(?p), "{OWL}"))
+                FILTER(!STRSTARTS(STR(?p), "{SKOS}"))
+                FILTER(!STRSTARTS(STR(?p), "{SCHEMA}"))
             }}
         """
         rows = self._ks.query(sparql)
@@ -188,14 +224,13 @@ class CommunitySummarizer:
                 json={
                     "model": self._model,
                     "messages": [{"role": "user", "content": prompt}],
-                    "response_format": {"type": "json_object"},
                 },
             )
             response.raise_for_status()
             raw = response.json()["choices"][0]["message"]["content"]
-            stripped = re.sub(r"^```(?:json)?\s*\n?", "", raw.strip())
-            stripped = re.sub(r"\n?```\s*$", "", stripped)
-            parsed = json.loads(stripped)
+            parsed = _extract_json(raw)
+            if parsed is None:
+                raise ValueError(f"No JSON found in LLM response: {raw[:100]}")
             community["label"] = parsed.get("label")
             community["summary"] = parsed.get("summary")
         except Exception as exc:

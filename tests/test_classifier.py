@@ -1,5 +1,5 @@
 import json
-from knowledge_service.clients.classifier import QueryClassifier
+from knowledge_service.clients.classifier import QueryClassifier, _extract_json
 
 _BASE = "http://llm-test"
 _KEY = "sk-test"
@@ -70,3 +70,60 @@ class TestClassify:
         result = await c.classify("question")
         assert result.intent == "semantic"
         await c.close()
+
+    async def test_handles_freeform_response_with_trailing_text(self, httpx_mock):
+        """LLM returns JSON embedded in conversational text."""
+        freeform = (
+            "Here is the classification:\n\n```json\n"
+            '{"intent": "entity", "entities": ["dopamine"]}\n'
+            "```\n\nLet me know if you need anything else!"
+        )
+        httpx_mock.add_response(
+            url=_CHAT_URL,
+            json={"choices": [{"message": {"content": freeform}}]},
+        )
+        c = QueryClassifier(base_url=_BASE, model="qwen3:14b", api_key=_KEY)
+        result = await c.classify("what is dopamine?")
+        assert result.intent == "entity"
+        assert "dopamine" in result.entities
+        await c.close()
+
+    async def test_handles_thinking_tags(self, httpx_mock):
+        """qwen3 thinking mode wraps output in <think> tags."""
+        thinking = (
+            "<think>The user is asking about a specific entity.</think>\n"
+            '{"intent": "graph", "entities": ["cortisol", "inflammation"]}'
+        )
+        httpx_mock.add_response(
+            url=_CHAT_URL,
+            json={"choices": [{"message": {"content": thinking}}]},
+        )
+        c = QueryClassifier(base_url=_BASE, model="qwen3:14b", api_key=_KEY)
+        result = await c.classify("how is cortisol connected to inflammation?")
+        assert result.intent == "graph"
+        assert len(result.entities) == 2
+        await c.close()
+
+
+class TestExtractJson:
+    def test_clean_json(self):
+        assert _extract_json('{"intent": "entity"}') == {"intent": "entity"}
+
+    def test_markdown_fenced(self):
+        text = '```json\n{"intent": "graph"}\n```'
+        assert _extract_json(text)["intent"] == "graph"
+
+    def test_thinking_tags(self):
+        text = '<think>reasoning here</think>\n{"intent": "global"}'
+        assert _extract_json(text)["intent"] == "global"
+
+    def test_trailing_text(self):
+        text = '{"intent": "entity", "entities": ["x"]}\n\nHope this helps!'
+        result = _extract_json(text)
+        assert result["intent"] == "entity"
+
+    def test_no_json_returns_none(self):
+        assert _extract_json("no json here at all") is None
+
+    def test_empty_json_object(self):
+        assert _extract_json("{}") == {}

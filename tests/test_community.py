@@ -128,6 +128,18 @@ class TestCommunityDetector:
         communities = detector.detect()
         assert communities == []
 
+    def test_sparql_filters_ontology_namespaces(self):
+        """The SPARQL query should exclude rdf:, rdfs:, owl:, skos:, schema: predicates."""
+        ks = MagicMock()
+        ks.query.return_value = []
+        detector = CommunityDetector(ks)
+        detector.detect()
+        sparql = ks.query.call_args[0][0]
+        assert "STRSTARTS" in sparql
+        assert "rdf-syntax-ns" in sparql
+        assert "owl" in sparql
+        assert "graph/ontology" in sparql
+
 
 class TestCommunitySummarizer:
     async def test_summarize_produces_label_and_summary(self):
@@ -200,6 +212,29 @@ class TestCommunitySummarizer:
         result = await summarizer.summarize_one(original)
         assert "label" not in original  # Original not mutated
         assert result["label"] == "Test"
+
+    async def test_summarize_handles_freeform_response(self):
+        """Summarizer should extract JSON from freeform LLM output with trailing text."""
+        freeform = (
+            "<think>I should generate a label and summary.</think>\n"
+            '```json\n{"label": "Brain Science", "summary": "Covers neuroscience."}\n```\n'
+            "Hope this helps!"
+        )
+        mock_llm_client = AsyncMock()
+        mock_llm_client.post.return_value = MagicMock(
+            status_code=200,
+            json=lambda: {"choices": [{"message": {"content": freeform}}]},
+            raise_for_status=lambda: None,
+        )
+
+        mock_ks = MagicMock()
+        mock_ks.get_triples_by_subject.return_value = []
+
+        summarizer = CommunitySummarizer(mock_llm_client, mock_ks)
+        community = {"level": 0, "member_entities": ["http://e/a"], "member_count": 1}
+        result = await summarizer.summarize_one(community)
+        assert result["label"] == "Brain Science"
+        assert result["summary"] == "Covers neuroscience."
 
     async def test_summarize_builds_context_with_triples(self):
         mock_llm_client = AsyncMock()
