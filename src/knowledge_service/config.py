@@ -16,6 +16,7 @@ class Settings(BaseSettings):
     api_port: int = 8000
     federation_enabled: bool = True
     federation_timeout: float = 3.0
+    community_rebuild_interval: int = 0  # seconds, 0 = disabled
     admin_password: str  # Required — no default; also accepted as X-API-Key for m2m calls
     secret_key: str = secrets.token_hex(32)
 
