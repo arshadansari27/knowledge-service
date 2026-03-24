@@ -34,19 +34,26 @@ Single FastAPI process with embedded components. No microservices.
 
 ```
 FastAPI Process
-├── KnowledgeStore     pyoxigraph — RDF 1.2 triplestore, RDF-star, SPARQL 1.2 (disk-backed via RocksDB)
-├── ReasoningEngine    ProbLog — Bayesian inference, Noisy-OR evidence combination
-├── EmbeddingClient    LLM API (Ollama or LiteLLM) — embeddings (nomic-embed-text, 768-dim)
-├── ExtractionClient   LLM API (Ollama or LiteLLM) — knowledge extraction (qwen3:14b)
-├── EmbeddingStore     PostgreSQL + pgvector — semantic similarity search
-└── ProvenanceStore    PostgreSQL — source tracking and evidence trail
+├── KnowledgeStore     pyoxigraph — RDF 1.2, RDF-star, named graphs (4 trust tiers)
+├── ReasoningEngine    ProbLog — 12 rules, Noisy-OR evidence combination
+├── QueryClassifier    Intent routing (semantic/entity/graph/global)
+├── RAGRetriever       4 retrieval strategies with multi-hop traversal
+├── GraphTraverser     BFS up to 4 hops, Bayesian confidence propagation
+├── CommunityDetector  Leiden algorithm, 2-level hierarchy
+├── EmbeddingStore     PostgreSQL + pgvector — BM25 + vector hybrid search (RRF)
+├── ExtractionClient   Two-phase LLM extraction (entities first, then relations)
+└── ProvenanceStore    Chunk-level evidence trail (SHA-256 hash keyed)
 
 PostgreSQL
 ├── content_metadata   Document metadata (url, title, source_type, tags, raw_text)
-├── content            Chunk rows with embeddings (pgvector halfvec) — every doc has ≥1 chunk
-├── provenance         Per-source evidence rows linked to triples by SHA-256 hash
+├── content            Chunks with embeddings, section headers, full-text search
+├── provenance         Per-source evidence rows with chunk_id FK
+├── entity_embeddings  Entity URIs with embeddings for resolution
+├── communities        Leiden communities with LLM-generated summaries
 └── ingestion_events   Append-only audit log
 ```
+
+For detailed architecture, see [docs/architecture.md](docs/architecture.md).
 
 ---
 
@@ -436,7 +443,11 @@ Ask a natural language question against the knowledge base. Retrieves relevant c
     }
   ],
   "knowledge_types_used": ["Claim"],
-  "contradictions": []
+  "contradictions": [],
+  "evidence": [{"triple_subject": "...", "triple_predicate": "...", "triple_object": "...", "chunk_text": "...", "source_url": "..."}],
+  "intent": "graph",
+  "traversal_depth": 3,
+  "inferred_triples": 0
 }
 ```
 
@@ -576,6 +587,7 @@ All settings via environment variables or `.env` file:
 | `API_PORT` | `8000` | Port |
 | `ADMIN_PASSWORD` | *(required)* | Password for admin panel login |
 | `SECRET_KEY` | *(auto-generated)* | Session signing key (set for persistent sessions across restarts) |
+| `COMMUNITY_REBUILD_INTERVAL` | `0` | Periodic community rebuild (seconds, 0 = disabled) |
 
 ---
 
@@ -594,7 +606,7 @@ All tests mock external dependencies — no PostgreSQL or LLM provider required.
 GitHub Actions pipeline on every push/merge to `main`:
 
 1. **Lint** — `ruff check` + `ruff format --check`
-2. **Test** — `pytest tests/ -v` (349 tests)
+2. **Test** — `pytest tests/ -v` (502 tests)
 3. **Version bump** — auto-increments patch version in `pyproject.toml`, commits back to `main`, creates `vX.Y.Z` git tag
 4. **Docker build** — builds and pushes to Docker Hub as `arshadansari27/knowledge-service:X.Y.Z` and `:latest`
 
@@ -629,22 +641,28 @@ src/knowledge_service/
 ├── stores/
 │   ├── knowledge.py         # pyoxigraph wrapper — RDF-star inserts, SPARQL queries
 │   ├── provenance.py        # PostgreSQL provenance table (asyncpg)
-│   ├── embedding.py         # pgvector content store + cosine similarity search
+│   ├── embedding.py         # pgvector content store + BM25 hybrid search
 │   ├── entity_resolver.py   # Embedding-based entity deduplication
-│   └── rag.py               # RAGRetriever — hybrid retrieval orchestration
+│   ├── rag.py               # RAGRetriever — 4 intent-based retrieval strategies
+│   ├── graph_traversal.py   # Multi-hop BFS with confidence propagation
+│   └── community.py         # Leiden community detection, storage, summarization
 ├── reasoning/
 │   ├── engine.py            # ProbLog wrapper — Noisy-OR, contradiction detection
 │   └── rules/
-│       ├── base.pl          # Core support/confidence rules
-│       ├── knowledge_types.pl  # Type-specific inference rules
-│       └── temporal.pl      # Temporal validity rules
+│       ├── base.pl          # Core: contradicts, supported, inverse_holds, corroborated
+│       ├── inference_chains.pl  # indirect_link, causal_propagation
+│       ├── confidence.pl    # high_confidence, contested, authoritative
+│       ├── temporal.pl      # expired, currently_valid, supersedes
+│       └── knowledge_types.pl  # Type-specific inference rules
 ├── ontology/
 │   ├── namespaces.py        # ks:, schema:, dc:, skos:, prov: namespace constants
 │   └── bootstrap.py         # Loads base ontology into pyoxigraph on startup
-└── clients/
-    ├── llm.py               # EmbeddingClient + ExtractionClient (httpx → LLM API)
-    ├── rag.py               # RAGClient — LLM-powered answer generation
-    └── federation.py        # FederationClient — DBpedia/Wikidata SPARQL federation
+├── clients/
+│   ├── llm.py               # EmbeddingClient + ExtractionClient (two-phase)
+│   ├── rag.py               # RAGClient — LLM-powered answer generation
+│   ├── classifier.py        # QueryClassifier — intent routing (4 intents)
+│   └── federation.py        # FederationClient — DBpedia/Wikidata SPARQL federation
+└── chunking.py              # Markdown-aware text splitting with section headers
 ```
 
 ---
@@ -666,12 +684,34 @@ The system reuses established vocabularies and keeps the custom `ks:` namespace 
 
 ## Status
 
-| Phase | Status | What |
-|-------|--------|------|
-| **Phase 1** | ✅ Complete | Knowledge model, RDF store, probabilistic reasoning, all 7 types, Docker |
-| **Phase 2** | ✅ Complete | DBpedia/Wikidata federation (ingestion-time + query-time) |
-| **Phase 3** | ✅ Complete | RAG endpoint — hybrid retrieval + LLM answer generation |
-| **Phase 4** | ✅ Complete | Admin panel — dashboard, knowledge explorer, chat, contradictions view, password auth |
+All 9 phases complete and deployed to production (v0.1.30, 502 tests).
+
+| Phase | Version | What |
+|-------|---------|------|
+| Foundation | v0.1.0 | Knowledge model, RDF store, probabilistic reasoning, admin panel, RAG endpoint, federation |
+| 1-3 | v0.1.19 | ProbLog rules (12 domain-agnostic), named graphs (4 trust tiers), chunk-level provenance |
+| 4 | v0.1.20 | BM25 hybrid search with Reciprocal Rank Fusion |
+| 5-6 | v0.1.22 | Two-phase LLM extraction + markdown-aware chunking |
+| 7 | v0.1.25 | Query intent classification (semantic/entity/graph) |
+| 8 | v0.1.28 | Multi-hop graph retrieval with Bayesian confidence propagation |
+| 9 | v0.1.30 | Community detection (Leiden), global search, LLM robustness |
+
+See [docs/changelog.md](docs/changelog.md) for detailed phase history.
+
+---
+
+## Documentation
+
+| Document | Description |
+|----------|-------------|
+| [Architecture](docs/architecture.md) | System architecture, components, data flows |
+| [Design Decisions](docs/design-decisions.md) | Key decisions and rationale |
+| [Knowledge Model](docs/knowledge-model.md) | RDF model, 7 types, named graphs, ontology |
+| [Retrieval & Reasoning](docs/retrieval-and-reasoning.md) | Query strategies, ProbLog rules, community detection |
+| [API Reference](docs/api-reference.md) | All endpoints with examples |
+| [Development](docs/development.md) | Setup, testing, CI/CD |
+| [Deployment](docs/deployment.md) | Production AEGIS stack deployment |
+| [Changelog](docs/changelog.md) | Phase-by-phase evolution history |
 
 ---
 
