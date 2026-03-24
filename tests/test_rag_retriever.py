@@ -290,3 +290,82 @@ class TestIntentDispatch:
         context = await retriever.retrieve("what affects dopamine?", intent=intent)
         assert context.traversal_depth is not None
         assert context.inferred_triples is not None
+
+
+class TestGlobalIntent:
+    async def test_global_intent_uses_community_summaries(self):
+        ec = _make_embedding_client()
+        es = _make_embedding_store(content_rows=[_CONTENT_ROW])
+        ks = _make_knowledge_store()
+        # Mock community store
+        community_store = AsyncMock()
+        community_store.get_all.return_value = [
+            {
+                "id": "c1",
+                "level": 1,
+                "label": "Health",
+                "summary": "Health and biohacking topics",
+                "member_entities": ["http://e/a"],
+                "member_count": 3,
+                "built_at": "2026-01-01",
+            },
+        ]
+        retriever = RAGRetriever(ec, es, ks, community_store=community_store)
+        intent = QueryIntent(intent="global", entities=[])
+        context = await retriever.retrieve("what are the main themes?", intent=intent)
+        community_store.get_all.assert_called_once()
+        assert len(context.knowledge_triples) >= 1
+
+    async def test_global_falls_back_to_semantic_without_communities(self):
+        ec = _make_embedding_client()
+        es = _make_embedding_store(content_rows=[_CONTENT_ROW])
+        ks = _make_knowledge_store()
+        community_store = AsyncMock()
+        community_store.get_all.return_value = []
+        retriever = RAGRetriever(ec, es, ks, community_store=community_store)
+        intent = QueryIntent(intent="global", entities=[])
+        context = await retriever.retrieve("what are the main themes?", intent=intent)
+        # Falls back to semantic -- search called
+        es.search.assert_called_once()
+
+    async def test_global_falls_back_without_community_store(self):
+        ec = _make_embedding_client()
+        es = _make_embedding_store(content_rows=[_CONTENT_ROW])
+        ks = _make_knowledge_store()
+        retriever = RAGRetriever(ec, es, ks, community_store=None)
+        intent = QueryIntent(intent="global", entities=[])
+        context = await retriever.retrieve("what are the main themes?", intent=intent)
+        # Falls back to semantic -- search called
+        es.search.assert_called_once()
+
+    async def test_global_includes_level0_fallback_when_no_keyword_match(self):
+        ec = _make_embedding_client()
+        es = _make_embedding_store(content_rows=[_CONTENT_ROW])
+        ks = _make_knowledge_store()
+        community_store = AsyncMock()
+        community_store.get_all.return_value = [
+            {
+                "id": "c1",
+                "level": 0,
+                "label": "Neuroscience",
+                "summary": "Brain chemistry and neurotransmitters",
+                "member_entities": ["http://e/a"],
+                "member_count": 5,
+                "built_at": "2026-01-01",
+            },
+            {
+                "id": "c2",
+                "level": 1,
+                "label": "Science",
+                "summary": "Scientific research topics",
+                "member_entities": ["http://e/b"],
+                "member_count": 10,
+                "built_at": "2026-01-01",
+            },
+        ]
+        retriever = RAGRetriever(ec, es, ks, community_store=community_store)
+        intent = QueryIntent(intent="global", entities=[])
+        # Question words won't match level-0 summary, so fallback top-5 kicks in
+        context = await retriever.retrieve("overview?", intent=intent)
+        # Should include both: level-1 always included, level-0 via fallback
+        assert len(context.knowledge_triples) == 2
