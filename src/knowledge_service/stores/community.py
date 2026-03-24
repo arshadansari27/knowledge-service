@@ -2,10 +2,15 @@
 
 from __future__ import annotations
 
+import json
 import logging
+import re
 from typing import Any
 
+import httpx
 import igraph
+
+from knowledge_service._utils import _rdf_value_to_str
 
 logger = logging.getLogger(__name__)
 
@@ -151,3 +156,68 @@ class CommunityDetector:
             conf = float(r["conf"].value) if r.get("conf") and r["conf"] else 0.5
             edges.append({"source": s, "target": o, "weight": conf})
         return edges
+
+
+class CommunitySummarizer:
+    """Generate LLM summaries for communities."""
+
+    def __init__(
+        self, llm_client: httpx.AsyncClient, knowledge_store: Any, model: str = ""
+    ) -> None:
+        self._client = llm_client
+        self._ks = knowledge_store
+        self._model = model
+
+    async def summarize_one(self, community: dict) -> dict:
+        """Generate label + summary for a single community. Returns updated community dict."""
+        community = dict(community)
+        try:
+            context = self._build_context(community)
+            prompt = (
+                "Given these entities and their relationships, generate:\n"
+                "1. A short label (3-5 words) for this community's theme\n"
+                "2. A 2-3 sentence summary of what this community represents\n"
+                "\n"
+                f"{context}\n"
+                "\n"
+                'Return JSON: {"label": "...", "summary": "..."}'
+            )
+
+            response = await self._client.post(
+                "/v1/chat/completions",
+                json={
+                    "model": self._model,
+                    "messages": [{"role": "user", "content": prompt}],
+                    "response_format": {"type": "json_object"},
+                },
+            )
+            response.raise_for_status()
+            raw = response.json()["choices"][0]["message"]["content"]
+            stripped = re.sub(r"^```(?:json)?\s*\n?", "", raw.strip())
+            stripped = re.sub(r"\n?```\s*$", "", stripped)
+            parsed = json.loads(stripped)
+            community["label"] = parsed.get("label")
+            community["summary"] = parsed.get("summary")
+        except Exception as exc:
+            logger.warning("CommunitySummarizer: failed for community: %s", exc)
+            community["label"] = None
+            community["summary"] = None
+        return community
+
+    def _build_context(self, community: dict) -> str:
+        members = community["member_entities"][:10]
+        lines = [f"Entities: {', '.join(m.rsplit('/', 1)[-1] for m in members)}"]
+
+        relationships: list[str] = []
+        for uri in members[:5]:
+            triples = self._ks.get_triples_by_subject(uri)
+            for t in triples[:5]:
+                s = uri.rsplit("/", 1)[-1]
+                p = _rdf_value_to_str(t.get("predicate", "")).rsplit("/", 1)[-1]
+                o = _rdf_value_to_str(t.get("object", "")).rsplit("/", 1)[-1]
+                relationships.append(f"{s} -> {p} -> {o}")
+
+        if relationships:
+            lines.append("Relationships:\n" + "\n".join(f"  - {r}" for r in relationships[:15]))
+
+        return "\n".join(lines)

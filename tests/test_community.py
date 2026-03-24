@@ -1,6 +1,10 @@
 import pytest
 from unittest.mock import AsyncMock, MagicMock
-from knowledge_service.stores.community import CommunityDetector, CommunityStore
+from knowledge_service.stores.community import (
+    CommunityDetector,
+    CommunityStore,
+    CommunitySummarizer,
+)
 
 
 @pytest.fixture
@@ -123,3 +127,114 @@ class TestCommunityDetector:
         detector = CommunityDetector(ks)
         communities = detector.detect()
         assert communities == []
+
+
+class TestCommunitySummarizer:
+    async def test_summarize_produces_label_and_summary(self):
+        mock_llm_client = AsyncMock()
+        mock_llm_client.post.return_value = MagicMock(
+            status_code=200,
+            json=lambda: {
+                "choices": [
+                    {
+                        "message": {
+                            "content": '{"label": "Health Topics", "summary": "This community covers health and biohacking."}'
+                        }
+                    }
+                ]
+            },
+            raise_for_status=lambda: None,
+        )
+
+        mock_ks = MagicMock()
+        mock_ks.get_triples_by_subject.return_value = []
+
+        summarizer = CommunitySummarizer(mock_llm_client, mock_ks)
+        community = {
+            "level": 0,
+            "member_entities": ["http://e/a", "http://e/b"],
+            "member_count": 2,
+        }
+        result = await summarizer.summarize_one(community)
+        assert result["label"] == "Health Topics"
+        assert result["summary"] == "This community covers health and biohacking."
+
+    async def test_summarize_handles_llm_failure(self):
+        mock_llm_client = AsyncMock()
+        mock_llm_client.post.side_effect = Exception("LLM down")
+
+        mock_ks = MagicMock()
+        mock_ks.get_triples_by_subject.return_value = []
+
+        summarizer = CommunitySummarizer(mock_llm_client, mock_ks)
+        community = {
+            "level": 0,
+            "member_entities": ["http://e/a"],
+            "member_count": 1,
+        }
+        result = await summarizer.summarize_one(community)
+        assert result.get("label") is None
+        assert result.get("summary") is None
+
+    async def test_summarize_does_not_mutate_original(self):
+        mock_llm_client = AsyncMock()
+        mock_llm_client.post.return_value = MagicMock(
+            status_code=200,
+            json=lambda: {
+                "choices": [
+                    {"message": {"content": '{"label": "Test", "summary": "Test summary."}'}}
+                ]
+            },
+            raise_for_status=lambda: None,
+        )
+
+        mock_ks = MagicMock()
+        mock_ks.get_triples_by_subject.return_value = []
+
+        summarizer = CommunitySummarizer(mock_llm_client, mock_ks)
+        original = {
+            "level": 0,
+            "member_entities": ["http://e/a"],
+            "member_count": 1,
+        }
+        result = await summarizer.summarize_one(original)
+        assert "label" not in original  # Original not mutated
+        assert result["label"] == "Test"
+
+    async def test_summarize_builds_context_with_triples(self):
+        mock_llm_client = AsyncMock()
+        mock_llm_client.post.return_value = MagicMock(
+            status_code=200,
+            json=lambda: {
+                "choices": [
+                    {
+                        "message": {
+                            "content": '{"label": "Neuro", "summary": "Neuroscience topics."}'
+                        }
+                    }
+                ]
+            },
+            raise_for_status=lambda: None,
+        )
+
+        mock_ks = MagicMock()
+        mock_ks.get_triples_by_subject.return_value = [
+            {
+                "predicate": MagicMock(value="http://ks/causes"),
+                "object": MagicMock(value="http://e/b"),
+            },
+        ]
+
+        summarizer = CommunitySummarizer(mock_llm_client, mock_ks)
+        community = {
+            "level": 0,
+            "member_entities": ["http://e/a"],
+            "member_count": 1,
+        }
+        result = await summarizer.summarize_one(community)
+        assert result["label"] == "Neuro"
+        # Verify LLM was called and the prompt included relationship context
+        call_args = mock_llm_client.post.call_args
+        prompt = call_args[1]["json"]["messages"][0]["content"]
+        assert "causes" in prompt
+        assert "a" in prompt
