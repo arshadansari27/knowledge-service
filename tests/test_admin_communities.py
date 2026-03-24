@@ -64,14 +64,14 @@ def communities_app(mock_pg_pool, mock_community_store):
     ks = MagicMock()
     ks.query.return_value = []
 
-    rag_client = MagicMock()
-    rag_client._client = AsyncMock()
-    rag_client._model = "test-rag-model"
+    extraction_client = MagicMock()
+    extraction_client._client = AsyncMock()
+    extraction_client._model = "test-model"
 
     app.state.knowledge_store = ks
     app.state.community_store = mock_community_store
     app.state.pg_pool = pool
-    app.state.rag_client = rag_client
+    app.state.extraction_client = extraction_client
     return app
 
 

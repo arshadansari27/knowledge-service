@@ -80,22 +80,24 @@ class TestCommunityStore:
 
 
 def _make_knowledge_store_for_detection():
-    """Mock KnowledgeStore that returns a small entity graph."""
+    """Mock KnowledgeStore that returns a small entity graph with ks: predicates."""
     ks = MagicMock()
-    # Simulates a SPARQL result with entity-to-entity edges
     ks.query.return_value = [
         {
             "s": MagicMock(value="http://e/a"),
+            "p": MagicMock(value="http://knowledge.local/schema/causes"),
             "o": MagicMock(value="http://e/b"),
             "conf": MagicMock(value="0.8"),
         },
         {
             "s": MagicMock(value="http://e/b"),
+            "p": MagicMock(value="http://knowledge.local/schema/increases"),
             "o": MagicMock(value="http://e/c"),
             "conf": MagicMock(value="0.7"),
         },
         {
             "s": MagicMock(value="http://e/d"),
+            "p": MagicMock(value="http://knowledge.local/schema/reduces"),
             "o": MagicMock(value="http://e/e"),
             "conf": MagicMock(value="0.9"),
         },
@@ -128,17 +130,42 @@ class TestCommunityDetector:
         communities = detector.detect()
         assert communities == []
 
-    def test_sparql_filters_ontology_namespaces(self):
-        """The SPARQL query should exclude rdf:, rdfs:, owl:, skos:, schema: predicates."""
+    def test_filters_ontology_predicates_in_python(self):
+        """Detector should filter out non-ks: predicates from SPARQL results."""
         ks = MagicMock()
-        ks.query.return_value = []
+        ks.query.return_value = [
+            # Domain edge — should be kept
+            {
+                "s": MagicMock(value="http://e/a"),
+                "p": MagicMock(value="http://knowledge.local/schema/increases"),
+                "o": MagicMock(value="http://e/b"),
+                "conf": MagicMock(value="0.8"),
+            },
+            # Ontology edge — should be filtered out
+            {
+                "s": MagicMock(value="http://e/a"),
+                "p": MagicMock(value="http://www.w3.org/2002/07/owl#sameAs"),
+                "o": MagicMock(value="http://wikidata.org/Q123"),
+                "conf": MagicMock(value="1.0"),
+            },
+            # rdf:type — should be filtered out
+            {
+                "s": MagicMock(value="http://e/c"),
+                "p": MagicMock(value="http://www.w3.org/1999/02/22-rdf-syntax-ns#type"),
+                "o": MagicMock(value="http://schema.org/Thing"),
+                "conf": MagicMock(value="0.9"),
+            },
+        ]
         detector = CommunityDetector(ks)
-        detector.detect()
-        sparql = ks.query.call_args[0][0]
-        assert "STRSTARTS" in sparql
-        assert "rdf-syntax-ns" in sparql
-        assert "owl" in sparql
-        assert "graph/ontology" in sparql
+        communities = detector.detect()
+        # Only 1 edge (a->b), so should produce communities with just those 2 entities
+        all_members = set()
+        for c in communities:
+            all_members.update(c["member_entities"])
+        assert "http://e/a" in all_members
+        assert "http://e/b" in all_members
+        assert "http://wikidata.org/Q123" not in all_members
+        assert "http://schema.org/Thing" not in all_members
 
 
 class TestCommunitySummarizer:

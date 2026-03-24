@@ -132,21 +132,14 @@ class CommunityDetector:
     def _extract_graph(self) -> list[dict]:
         """Extract entity-to-entity edges from the knowledge store.
 
-        Only includes domain-relevant edges: filters out ontology namespace
-        predicates (rdf:, rdfs:, owl:, skos:, schema:) and the ontology graph.
+        Only includes domain-relevant edges: predicates from the ks: namespace.
+        SPARQL returns all IRI-to-IRI edges; Python filters to ks: predicates
+        (pyoxigraph STRSTARTS with RDF-star OPTIONAL is too slow).
         """
-        from knowledge_service.ontology.namespaces import (
-            KS_CONFIDENCE,
-            KS_GRAPH_ONTOLOGY,
-            OWL,
-            RDF,
-            RDFS,
-            SCHEMA,
-            SKOS,
-        )
+        from knowledge_service.ontology.namespaces import KS, KS_CONFIDENCE
 
         sparql = f"""
-            SELECT DISTINCT ?s ?o ?conf WHERE {{
+            SELECT DISTINCT ?s ?p ?o ?conf WHERE {{
                 GRAPH ?g {{
                     ?s ?p ?o .
                 }}
@@ -156,17 +149,14 @@ class CommunityDetector:
                     }}
                 }}
                 FILTER(isIRI(?o))
-                FILTER(?g != <{KS_GRAPH_ONTOLOGY}>)
-                FILTER(!STRSTARTS(STR(?p), "{RDF}"))
-                FILTER(!STRSTARTS(STR(?p), "{RDFS}"))
-                FILTER(!STRSTARTS(STR(?p), "{OWL}"))
-                FILTER(!STRSTARTS(STR(?p), "{SKOS}"))
-                FILTER(!STRSTARTS(STR(?p), "{SCHEMA}"))
             }}
         """
         rows = self._ks.query(sparql)
         edges = []
         for r in rows:
+            p = r["p"].value if hasattr(r["p"], "value") else str(r["p"])
+            if not p.startswith(KS):
+                continue
             s = r["s"].value if hasattr(r["s"], "value") else str(r["s"])
             o = r["o"].value if hasattr(r["o"], "value") else str(r["o"])
             conf = float(r["conf"].value) if r.get("conf") and r["conf"] else 0.5

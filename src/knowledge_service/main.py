@@ -227,11 +227,11 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
                     detector = CommunityDetector(app.state.knowledge_store)
                     communities = await asyncio.to_thread(detector.detect)
-                    # Summarize each community via LLM (uses RAG model for quality)
+                    # Summarize each community via LLM (uses extraction model — high volume)
                     summarizer = CommunitySummarizer(
-                        app.state.rag_client._client,
+                        app.state.extraction_client._client,
                         app.state.knowledge_store,
-                        model=app.state.rag_client._model,
+                        model=app.state.extraction_client._model,
                     )
                     summarized = []
                     for c in communities:
