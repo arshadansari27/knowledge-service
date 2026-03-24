@@ -1,6 +1,6 @@
 import pytest
 from unittest.mock import AsyncMock, MagicMock
-from knowledge_service.stores.community import CommunityStore
+from knowledge_service.stores.community import CommunityDetector, CommunityStore
 
 
 @pytest.fixture
@@ -73,3 +73,53 @@ class TestCommunityStore:
         result = await store.get_member_entities()
         assert "http://e/a" in result
         assert "http://e/c" in result
+
+
+def _make_knowledge_store_for_detection():
+    """Mock KnowledgeStore that returns a small entity graph."""
+    ks = MagicMock()
+    # Simulates a SPARQL result with entity-to-entity edges
+    ks.query.return_value = [
+        {
+            "s": MagicMock(value="http://e/a"),
+            "o": MagicMock(value="http://e/b"),
+            "conf": MagicMock(value="0.8"),
+        },
+        {
+            "s": MagicMock(value="http://e/b"),
+            "o": MagicMock(value="http://e/c"),
+            "conf": MagicMock(value="0.7"),
+        },
+        {
+            "s": MagicMock(value="http://e/d"),
+            "o": MagicMock(value="http://e/e"),
+            "conf": MagicMock(value="0.9"),
+        },
+    ]
+    return ks
+
+
+class TestCommunityDetector:
+    def test_detect_returns_communities(self):
+        ks = _make_knowledge_store_for_detection()
+        detector = CommunityDetector(ks)
+        communities = detector.detect()
+        assert len(communities) > 0
+        for c in communities:
+            assert "level" in c
+            assert "member_entities" in c
+            assert "member_count" in c
+
+    def test_detect_produces_two_levels(self):
+        ks = _make_knowledge_store_for_detection()
+        detector = CommunityDetector(ks)
+        communities = detector.detect()
+        levels = {c["level"] for c in communities}
+        assert 0 in levels
+
+    def test_detect_empty_graph(self):
+        ks = MagicMock()
+        ks.query.return_value = []
+        detector = CommunityDetector(ks)
+        communities = detector.detect()
+        assert communities == []
