@@ -57,6 +57,13 @@ class TestClassify:
         assert result.intent == "semantic"
         await c.close()
 
+    async def test_returns_global_intent(self, httpx_mock):
+        httpx_mock.add_response(url=_CHAT_URL, json=_make_response("global", []))
+        c = QueryClassifier(base_url=_BASE, model="qwen3:14b", api_key=_KEY)
+        result = await c.classify("what are the main themes in my knowledge base?")
+        assert result.intent == "global"
+        await c.close()
+
     async def test_falls_back_on_invalid_intent(self, httpx_mock):
         httpx_mock.add_response(url=_CHAT_URL, json=_make_response("unknown_type", []))
         c = QueryClassifier(base_url=_BASE, model="qwen3:14b", api_key=_KEY)

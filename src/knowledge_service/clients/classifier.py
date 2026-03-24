@@ -11,16 +11,17 @@ import httpx
 
 logger = logging.getLogger(__name__)
 
-_VALID_INTENTS = {"semantic", "entity", "graph"}
+_VALID_INTENTS = {"semantic", "entity", "graph", "global"}
 
 _CLASSIFICATION_PROMPT = """Classify this question into one category:
 - "semantic": searching for documents about a topic (e.g., "find articles about stress management")
 - "entity": asking about a specific thing (e.g., "what is dopamine?", "tell me about PostgreSQL")
 - "graph": asking about relationships between things (e.g., "how is cortisol connected to inflammation?", "what causes dopamine release?")
+- "global": asking about themes, summaries, or overviews across the entire knowledge base (e.g., "what are the main topics?", "summarize what I know about health", "what areas have I collected knowledge on?")
 
 Also extract any named entities mentioned in the question.
 
-Return JSON: {{"intent": "semantic|entity|graph", "entities": ["entity1", "entity2"]}}
+Return JSON: {{"intent": "semantic|entity|graph|global", "entities": ["entity1", "entity2"]}}
 
 Question: {question}"""
 
@@ -29,7 +30,7 @@ Question: {question}"""
 class QueryIntent:
     """Classified question intent with extracted entity names."""
 
-    intent: str  # "semantic", "entity", or "graph"
+    intent: str  # "semantic", "entity", "graph", or "global"
     entities: list[str] = field(default_factory=list)
 
 
