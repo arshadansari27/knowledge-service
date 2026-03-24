@@ -210,7 +210,10 @@ class CommunitySummarizer:
 
         relationships: list[str] = []
         for uri in members[:5]:
-            triples = self._ks.get_triples_by_subject(uri)
+            try:
+                triples = self._ks.get_triples_by_subject(uri)
+            except Exception:
+                continue
             for t in triples[:5]:
                 s = uri.rsplit("/", 1)[-1]
                 p = _rdf_value_to_str(t.get("predicate", "")).rsplit("/", 1)[-1]
