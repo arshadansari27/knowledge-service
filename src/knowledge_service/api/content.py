@@ -25,6 +25,8 @@ router = APIRouter()
 
 _CHUNK_SIZE = 4000
 _CHUNK_OVERLAP = 200
+_MAX_CONCURRENT_EXTRACTIONS = 4  # Bound parallel LLM calls per content request
+_MAX_CONCURRENT_CONTENT = 3  # Bound parallel content requests in batch mode
 
 
 async def _resolve_labels(item, entity_resolver) -> tuple[int, object]:
@@ -207,11 +209,21 @@ async def _process_one_content_request(body: ContentRequest, request: Request) -
     # Step 2.5: Auto-extract knowledge per chunk if none provided
     chunks_failed = 0
     if not body.knowledge and body.raw_text:
+        # Extract from all chunks concurrently (bounded by semaphore)
+        sem = asyncio.Semaphore(_MAX_CONCURRENT_EXTRACTIONS)
+
+        async def _extract_chunk(chunk):
+            async with sem:
+                return await extraction_client.extract(
+                    chunk["chunk_text"], title=body.title, source_type=body.source_type
+                )
+
+        extraction_results = await asyncio.gather(
+            *[_extract_chunk(c) for c in chunk_records]
+        )
+
         knowledge_by_chunk: list[tuple[list, str | None]] = []
-        for chunk in chunk_records:
-            items = await extraction_client.extract(
-                chunk["chunk_text"], title=body.title, source_type=body.source_type
-            )
+        for chunk, items in zip(chunk_records, extraction_results):
             cid = chunk_id_map.get(chunk["chunk_index"])
             if items is None:
                 chunks_failed += 1
@@ -297,9 +309,13 @@ async def post_content(request: Request):
     try:
         if isinstance(raw, list):
             items = [ContentRequest(**item) for item in raw]
-            results = await asyncio.gather(
-                *[_process_one_content_request(item, request) for item in items]
-            )
+            sem = asyncio.Semaphore(_MAX_CONCURRENT_CONTENT)
+
+            async def _bounded(item):
+                async with sem:
+                    return await _process_one_content_request(item, request)
+
+            results = await asyncio.gather(*[_bounded(item) for item in items])
             return JSONResponse([r.model_dump() for r in results])
 
         body = ContentRequest(**raw)
