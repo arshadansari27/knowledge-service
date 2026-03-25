@@ -60,6 +60,49 @@ async def _resolve_labels(item, entity_resolver) -> tuple[int, object]:
     return resolved, item
 
 
+def _dedup_extracted_items(
+    knowledge: list, chunk_ids: list[str | None]
+) -> tuple[list, list[str | None]]:
+    """Deduplicate knowledge items extracted from overlapping chunks.
+
+    For triple-shaped items (Claim/Fact/Relationship), key on (subject, predicate, object).
+    For TemporalState, key on (subject, property, value).
+    For Entity, key on uri. For Event, key on (subject, occurred_at).
+    For Conclusion, key on concludes text.
+    Keeps the item with the highest confidence when duplicates are found.
+    """
+    seen: dict[tuple, int] = {}  # dedup_key -> index in deduped list
+    deduped: list = []
+    deduped_cids: list[str | None] = []
+
+    for item, cid in zip(knowledge, chunk_ids):
+        kt = item.knowledge_type.value
+        if kt in ("Claim", "Fact", "Relationship"):
+            key = (kt, item.subject.lower(), item.predicate.lower(), item.object.lower())
+        elif kt == "TemporalState":
+            key = (kt, item.subject.lower(), item.property.lower(), str(item.value).lower())
+        elif kt == "Entity":
+            key = (kt, item.uri.lower())
+        elif kt == "Event":
+            key = (kt, item.subject.lower(), str(item.occurred_at))
+        elif kt == "Conclusion":
+            key = (kt, item.concludes.lower())
+        else:
+            key = (kt, id(item))  # no dedup for unknown types
+
+        if key in seen:
+            idx = seen[key]
+            if item.confidence > deduped[idx].confidence:
+                deduped[idx] = item
+                deduped_cids[idx] = cid
+        else:
+            seen[key] = len(deduped)
+            deduped.append(item)
+            deduped_cids.append(cid)
+
+    return deduped, deduped_cids
+
+
 def _apply_uri_fallback(item) -> object:
     """Ensure all subject/predicate/object fields are URIs.
 
@@ -176,6 +219,8 @@ async def _process_one_content_request(body: ContentRequest, request: Request) -
             for item in items:
                 knowledge.append(item)
                 chunk_ids_for_items.append(cid)
+        # Deduplicate items across overlapping chunks — keep highest confidence
+        knowledge, chunk_ids_for_items = _dedup_extracted_items(knowledge, chunk_ids_for_items)
         extracted_by_llm = bool(knowledge)
     else:
         knowledge = list(body.knowledge)
