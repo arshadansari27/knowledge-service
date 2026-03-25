@@ -3,10 +3,13 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 
 from knowledge_service._utils import _rdf_value_to_str
 from knowledge_service.ontology.namespaces import KS_GRAPH_ASSERTED, KS_GRAPH_EXTRACTED
 from knowledge_service.stores.provenance import ProvenanceStore
+
+logger = logging.getLogger(__name__)
 
 
 def _extractor_to_graph(extractor: str) -> str:
@@ -26,6 +29,10 @@ async def process_triple(
     chunk_id: str | None = None,
 ) -> tuple[bool, list[dict]]:
     """Insert one triple, detect contradictions, record provenance, combine evidence.
+
+    If the pyoxigraph insert succeeds but provenance fails, the triple is still
+    in the graph (idempotent on retry) but the error is logged. Callers see
+    is_new=False so the triple isn't double-counted.
 
     Returns:
         (is_new, contradictions): is_new=True if this triple did not already exist.
@@ -81,30 +88,45 @@ async def process_triple(
             }
         )
 
-    await provenance_store.insert(
-        triple_hash=triple_hash,
-        subject=t["subject"],
-        predicate=t["predicate"],
-        object_=t["object"],
-        source_url=source_url,
-        source_type=source_type,
-        extractor=extractor,
-        confidence=t["confidence"],
-        metadata={},
-        valid_from=t["valid_from"],
-        valid_until=t["valid_until"],
-        chunk_id=chunk_id,
-    )
+    try:
+        await provenance_store.insert(
+            triple_hash=triple_hash,
+            subject=t["subject"],
+            predicate=t["predicate"],
+            object_=t["object"],
+            source_url=source_url,
+            source_type=source_type,
+            extractor=extractor,
+            confidence=t["confidence"],
+            metadata={},
+            valid_from=t["valid_from"],
+            valid_until=t["valid_until"],
+            chunk_id=chunk_id,
+        )
+    except Exception:
+        logger.exception(
+            "Failed to record provenance for triple %s from %s — "
+            "triple exists in graph but provenance is missing",
+            triple_hash[:12],
+            source_url,
+        )
+        return is_new, contradictions
 
     prov_rows = await provenance_store.get_by_triple(triple_hash)
     if len(prov_rows) > 1:
         combined = reasoning_engine.combine_evidence([r["confidence"] for r in prov_rows])
-        await asyncio.to_thread(
-            knowledge_store.update_confidence,
-            t["subject"],
-            t["predicate"],
-            t["object"],
-            combined,
-        )
+        try:
+            await asyncio.to_thread(
+                knowledge_store.update_confidence,
+                t["subject"],
+                t["predicate"],
+                t["object"],
+                combined,
+            )
+        except Exception:
+            logger.exception(
+                "Failed to update combined confidence for triple %s",
+                triple_hash[:12],
+            )
 
     return is_new, contradictions
