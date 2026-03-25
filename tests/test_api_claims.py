@@ -90,6 +90,7 @@ CLAIM_PAYLOAD = {
             "subject": "https://example.com/subject",
             "predicate": "https://example.com/predicate",
             "object": "some-value",
+            "object_type": "literal",
             "confidence": 0.8,
         }
     ],
