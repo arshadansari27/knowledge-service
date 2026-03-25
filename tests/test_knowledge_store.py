@@ -91,6 +91,36 @@ class TestInsertTriple:
         assert results[0]["knowledge_type"] == "Claim"
         assert results[0]["graph"] == KS_GRAPH_EXTRACTED
 
+    def test_insert_triple_twice_does_not_duplicate_annotations(self, store):
+        """Re-inserting same triple must not create duplicate RDF-star annotations."""
+        args = dict(
+            subject="http://knowledge.local/data/cold",
+            predicate="http://knowledge.local/schema/increases",
+            object_="http://knowledge.local/data/dopamine",
+            confidence=0.9,
+            knowledge_type="Claim",
+        )
+        store.insert_triple(**args)
+        store.insert_triple(**args)
+
+        results = store.get_triples_by_subject("http://knowledge.local/data/cold")
+        assert len(results) == 1, f"Expected 1 result, got {len(results)} (duplicate annotations)"
+
+    def test_insert_triple_twice_with_literal_object_no_duplicates(self, store):
+        """Idempotency guard must also work for literal (non-URI) objects."""
+        args = dict(
+            subject="http://knowledge.local/data/cold",
+            predicate="http://knowledge.local/schema/dopamine_increase",
+            object_="up to 250 percent",
+            confidence=0.95,
+            knowledge_type="Entity",
+        )
+        store.insert_triple(**args)
+        store.insert_triple(**args)
+
+        results = store.get_triples_by_subject("http://knowledge.local/data/cold")
+        assert len(results) == 1, f"Expected 1 result, got {len(results)} (duplicate annotations)"
+
 
 class TestQuery:
     def test_sparql_query(self, store):

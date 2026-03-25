@@ -157,14 +157,22 @@ class KnowledgeStore:
         # Insert base triple into named graph (idempotent — pyoxigraph deduplicates quads)
         self._store.add(Quad(s, p, o, graph_node))
 
-        # Check if annotations already exist for this triple (across all graphs)
-        existing_reifications = list(self._store.quads_for_pattern(None, RDF_REIFIES, triple, None))
-        if existing_reifications:
-            # Annotations already exist; skip to preserve idempotency
+        # Check if annotations already exist using SPARQL (matches pyoxigraph's
+        # internal reification representation, unlike the Python API which cannot
+        # find reification blank nodes created by SPARQL INSERT DATA with << >>).
+        obj_sparql = _sparql_object(object_)
+        ask_sparql = f"""
+            ASK {{
+                GRAPH ?g {{
+                    << <{subject}> <{predicate}> {obj_sparql} >>
+                        <{KS_CONFIDENCE.value}> ?conf .
+                }}
+            }}
+        """
+        if self._store.query(ask_sparql):
             return triple_hash, False
 
         # Insert RDF-star annotations via SPARQL UPDATE into the same named graph
-        obj_sparql = _sparql_object(object_)
         conf_literal = f'"{confidence}"^^<{XSD}float>'
         type_uri = f"<{KS}{knowledge_type}>"
 
