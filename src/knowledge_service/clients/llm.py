@@ -364,7 +364,6 @@ class ExtractionClient:
                 json={
                     "model": self._model,
                     "messages": [{"role": "user", "content": prompt}],
-                    "response_format": {"type": "json_object"},
                 },
             )
             response.raise_for_status()

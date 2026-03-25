@@ -131,7 +131,7 @@ class TestExtract:
         body = json.loads(httpx_mock.get_requests()[0].content)
         assert "messages" in body
         assert body["messages"][0]["role"] == "user"
-        assert body["response_format"] == {"type": "json_object"}
+        assert "response_format" not in body
         await client.close()
 
     async def test_auth_header_sent(self, httpx_mock):
