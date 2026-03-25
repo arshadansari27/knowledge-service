@@ -352,6 +352,14 @@ class ExtractionClient:
             timeout=httpx.Timeout(connect=5.0, read=120.0, write=10.0, pool=5.0),
         )
 
+    @property
+    def client(self) -> httpx.AsyncClient:
+        return self._client
+
+    @property
+    def model(self) -> str:
+        return self._model
+
     async def _call_llm(self, prompt: str) -> list[dict]:
         """Send a prompt to the LLM and return parsed item dicts.
 

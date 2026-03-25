@@ -7,6 +7,7 @@ import re
 
 from fastapi import APIRouter, HTTPException, Query, Request
 
+from knowledge_service._utils import _rdf_value_to_str
 from knowledge_service.ontology.namespaces import (
     KS,
     KS_CONFIDENCE,
@@ -16,14 +17,6 @@ from knowledge_service.ontology.namespaces import (
 )
 
 router = APIRouter()
-
-
-def _rdf_value_to_str(value: object) -> str:
-    if value is None:
-        return ""
-    if hasattr(value, "value"):
-        return str(value.value)
-    return str(value)
 
 
 def _sanitize_sparql_string(value: str) -> str:
@@ -177,7 +170,7 @@ async def browse_triples(
     knowledge_type: str | None = Query(None, description="Filter by knowledge type"),
     min_confidence: float = Query(0.0, ge=0.0, le=1.0),
     max_confidence: float = Query(1.0, ge=0.0, le=1.0),
-    sort: str = Query("recency", pattern="^(recency|confidence)$"),
+    sort: str = Query("subject", pattern="^(subject|confidence)$"),
     limit: int = Query(50, ge=1, le=200),
     offset: int = Query(0, ge=0),
 ) -> dict:
@@ -217,7 +210,7 @@ async def browse_triples(
 
     filter_clause = "\n            ".join(filters)
     order_clause = (
-        "ORDER BY DESC(xsd:float(?conf))" if sort == "confidence" else "ORDER BY DESC(?s)"
+        "ORDER BY DESC(xsd:float(?conf))" if sort == "confidence" else "ORDER BY DESC(STR(?s))"
     )
 
     count_sparql = f"""

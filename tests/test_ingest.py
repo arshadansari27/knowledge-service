@@ -1,6 +1,5 @@
 """Tests for the shared per-triple ingestion pipeline."""
 
-from contextlib import asynccontextmanager
 from unittest.mock import AsyncMock, MagicMock
 from knowledge_service.api._ingest import process_triple
 
@@ -14,18 +13,11 @@ def _make_ks(is_new=True, contradictions=None):
     return mock
 
 
-def _make_pool(prov_rows=None):
-    mock_conn = AsyncMock()
-    mock_conn.execute.return_value = "INSERT 0 1"
-    mock_conn.fetch.return_value = prov_rows or []
-
-    @asynccontextmanager
-    async def _acquire():
-        yield mock_conn
-
-    mock_pool = MagicMock()
-    mock_pool.acquire = _acquire
-    return mock_pool
+def _make_provenance_store(prov_rows=None):
+    mock = AsyncMock()
+    mock.insert.return_value = None
+    mock.get_by_triple.return_value = prov_rows or []
+    return mock
 
 
 def _make_engine():
@@ -47,7 +39,7 @@ async def test_process_triple_returns_true_for_new():
             "valid_until": None,
         },
         ks,
-        _make_pool(),
+        _make_provenance_store(),
         _make_engine(),
         "http://src",
         "article",
@@ -70,7 +62,7 @@ async def test_process_triple_returns_false_for_existing():
             "valid_until": None,
         },
         ks,
-        _make_pool(),
+        _make_provenance_store(),
         _make_engine(),
         "http://src",
         "article",
@@ -92,7 +84,7 @@ async def test_process_triple_returns_contradictions():
             "valid_until": None,
         },
         ks,
-        _make_pool(),
+        _make_provenance_store(),
         _make_engine(),
         "http://src",
         "article",
@@ -104,7 +96,7 @@ async def test_process_triple_returns_contradictions():
 
 async def test_process_triple_combines_evidence_for_multiple_sources():
     ks = _make_ks(is_new=True)
-    pool = _make_pool(
+    prov_store = _make_provenance_store(
         prov_rows=[
             {"confidence": 0.7, "triple_hash": "abc123", "source_url": "http://a"},
             {"confidence": 0.6, "triple_hash": "abc123", "source_url": "http://b"},
@@ -122,7 +114,7 @@ async def test_process_triple_combines_evidence_for_multiple_sources():
             "valid_until": None,
         },
         ks,
-        pool,
+        prov_store,
         engine,
         "http://src",
         "article",
@@ -137,7 +129,7 @@ async def test_process_triple_detects_opposite_predicate_contradiction():
     ks.find_opposite_predicate_contradictions = MagicMock(
         return_value=[{"predicate_in_store": "http://ks/decreases", "confidence": 0.7}]
     )
-    pool = _make_pool()
+    prov_store = _make_provenance_store()
     engine = _make_engine()
     t = {
         "subject": "http://s",
@@ -148,7 +140,7 @@ async def test_process_triple_detects_opposite_predicate_contradiction():
         "valid_from": None,
         "valid_until": None,
     }
-    _, contras = await process_triple(t, ks, pool, engine, "http://src", "article", "manual")
+    _, contras = await process_triple(t, ks, prov_store, engine, "http://src", "article", "manual")
     # Should have detected the opposite-predicate contradiction
     opp = [c for c in contras if "opposite_predicate_in_store" in c]
     assert len(opp) == 1

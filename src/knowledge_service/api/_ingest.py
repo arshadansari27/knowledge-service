@@ -18,7 +18,7 @@ def _extractor_to_graph(extractor: str) -> str:
 async def process_triple(
     t: dict,
     knowledge_store,
-    pg_pool,
+    provenance_store: ProvenanceStore,
     reasoning_engine,
     source_url: str,
     source_type: str,
@@ -30,7 +30,6 @@ async def process_triple(
     Returns:
         (is_new, contradictions): is_new=True if this triple did not already exist.
     """
-    provenance_store = ProvenanceStore(pg_pool)
 
     graph = _extractor_to_graph(extractor)
 
