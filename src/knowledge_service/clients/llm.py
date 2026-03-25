@@ -244,7 +244,7 @@ def _build_relation_extraction_prompt(
 Return ONLY a JSON object: {{"items": [...]}}
 
 Known entities: [{entity_list}]
-Only use these entities as subjects and objects. Do NOT invent new entities.
+Prefer these entities as subjects and objects. If the text clearly mentions an entity not in this list, you may use it — follow the entity naming rules below.
 
 Each item must have a knowledge_type field. Supported types and required fields:
 - Claim: subject, predicate, object, object_type, confidence (0.0-0.89)

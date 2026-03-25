@@ -278,7 +278,7 @@ class TestRelationExtractionPrompt:
             "text", None, None, entities=["entity_a", "entity_b"]
         )
         assert "entity_a" in prompt
-        assert "Only use" in prompt or "only use" in prompt
+        assert "Prefer these entities" in prompt
 
 
 class TestTwoPhaseExtract:
