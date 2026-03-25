@@ -96,7 +96,13 @@ Deployed as part of the **AEGIS Docker Swarm stack** on a homelab cluster. Full 
 - **RDF storage:** Docker volume `aegis_knowledge_oxigraph` → `/app/data/oxigraph`
 - **Resources:** 1G memory limit, 256M reservation
 - **Deploy:** `source .env && ansible-playbook -i inventory/hosts.yml playbooks/deploy-aegis.yml`
-- **Quick update:** `docker service update --image arshadansari27/knowledge-service:latest aegis_knowledge`
+- **Quick update:** `docker --context swarm-baa service update --image arshadansari27/knowledge-service:latest --force aegis_knowledge`
+
+## LLM Integration Gotchas
+
+- **Do NOT use `response_format: {"type": "json_object"}`** with qwen3 via Ollama/LiteLLM. It returns empty `{}` silently, breaking extraction. The `_extract_json()` utility in `_utils.py` already handles freeform LLM output (markdown fences, `<think>` tags, trailing text).
+- All LLM clients (`EmbeddingClient`, `ExtractionClient`, `RAGClient`, `QueryClassifier`, health check) strip a trailing `/v1` from `LLM_BASE_URL` at init time, then use `/v1/...` relative paths in requests. This prevents `/v1/v1/...` double-pathing.
+- `KnowledgeStore.insert_triple` normalizes bare entity labels (e.g. `"cold_exposure"`) to `http://knowledge.local/data/cold_exposure` URIs before creating `NamedNode` objects. Without this, pyoxigraph raises `ValueError: No scheme found in an absolute IRI`.
 
 ## Project Lessons (auto-managed by cmemory)
 - cmemory's readStdin() in shared.ts only resolved on stdin 'end' event, but Claude Code hooks may not immediately close the stdin pipe. Fix: try JSON.parse() eagerly on each 'data' chunk so the promise resolves as soon as complete JSON arrives, without waiting for 'end'.

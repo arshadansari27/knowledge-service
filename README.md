@@ -53,7 +53,7 @@ PostgreSQL
 └── ingestion_events   Append-only audit log
 ```
 
-For detailed architecture, see [docs/architecture.md](docs/architecture.md).
+For deployment details, see [docs/deployment.md](docs/deployment.md).
 
 ---
 
@@ -606,7 +606,7 @@ All tests mock external dependencies — no PostgreSQL or LLM provider required.
 GitHub Actions pipeline on every push/merge to `main`:
 
 1. **Lint** — `ruff check` + `ruff format --check`
-2. **Test** — `pytest tests/ -v` (502 tests)
+2. **Test** — `pytest tests/ -v` (509 tests)
 3. **Version bump** — auto-increments patch version in `pyproject.toml`, commits back to `main`, creates `vX.Y.Z` git tag
 4. **Docker build** — builds and pushes to Docker Hub as `arshadansari27/knowledge-service:X.Y.Z` and `:latest`
 
@@ -684,7 +684,7 @@ The system reuses established vocabularies and keeps the custom `ks:` namespace 
 
 ## Status
 
-All 9 phases complete and deployed to production (v0.1.30, 502 tests).
+All 9 phases complete and deployed to production (v0.1.34, 509 tests).
 
 | Phase | Version | What |
 |-------|---------|------|
@@ -695,8 +695,7 @@ All 9 phases complete and deployed to production (v0.1.30, 502 tests).
 | 7 | v0.1.25 | Query intent classification (semantic/entity/graph) |
 | 8 | v0.1.28 | Multi-hop graph retrieval with Bayesian confidence propagation |
 | 9 | v0.1.30 | Community detection (Leiden), global search, LLM robustness |
-
-See [docs/changelog.md](docs/changelog.md) for detailed phase history.
+| Fixes | v0.1.34 | IRI normalization, stats endpoint, LLM URL double-pathing, qwen3 extraction |
 
 ---
 
@@ -704,14 +703,7 @@ See [docs/changelog.md](docs/changelog.md) for detailed phase history.
 
 | Document | Description |
 |----------|-------------|
-| [Architecture](docs/architecture.md) | System architecture, components, data flows |
-| [Design Decisions](docs/design-decisions.md) | Key decisions and rationale |
-| [Knowledge Model](docs/knowledge-model.md) | RDF model, 7 types, named graphs, ontology |
-| [Retrieval & Reasoning](docs/retrieval-and-reasoning.md) | Query strategies, ProbLog rules, community detection |
-| [API Reference](docs/api-reference.md) | All endpoints with examples |
-| [Development](docs/development.md) | Setup, testing, CI/CD |
 | [Deployment](docs/deployment.md) | Production AEGIS stack deployment |
-| [Changelog](docs/changelog.md) | Phase-by-phase evolution history |
 
 ---
 
