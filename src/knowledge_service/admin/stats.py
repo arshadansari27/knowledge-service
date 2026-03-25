@@ -223,22 +223,24 @@ async def browse_triples(
     count_sparql = f"""
         PREFIX xsd: <http://www.w3.org/2001/XMLSchema#>
         SELECT (COUNT(*) AS ?cnt) WHERE {{
-            GRAPH ?g {{
-                ?s ?p ?o .
+            SELECT DISTINCT ?s ?p ?o WHERE {{
+                GRAPH ?g {{
+                    ?s ?p ?o .
+                }}
+                GRAPH ?g {{
+                    << ?s ?p ?o >> <{KS_CONFIDENCE.value}> ?conf .
+                }}
+                OPTIONAL {{
+                    GRAPH ?g {{ << ?s ?p ?o >> <{KS_KNOWLEDGE_TYPE.value}> ?ktype . }}
+                }}
+                {filter_clause}
             }}
-            GRAPH ?g {{
-                << ?s ?p ?o >> <{KS_CONFIDENCE.value}> ?conf .
-            }}
-            OPTIONAL {{
-                GRAPH ?g {{ << ?s ?p ?o >> <{KS_KNOWLEDGE_TYPE.value}> ?ktype . }}
-            }}
-            {filter_clause}
         }}
     """
 
     data_sparql = f"""
         PREFIX xsd: <http://www.w3.org/2001/XMLSchema#>
-        SELECT ?s ?p ?o ?conf ?ktype ?vfrom ?vuntil WHERE {{
+        SELECT DISTINCT ?s ?p ?o ?conf ?ktype ?vfrom ?vuntil WHERE {{
             GRAPH ?g {{
                 ?s ?p ?o .
             }}
