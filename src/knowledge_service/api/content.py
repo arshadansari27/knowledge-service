@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 
 from fastapi import APIRouter, Request
@@ -18,6 +19,7 @@ from knowledge_service.clients.llm import (
 from knowledge_service.chunking import chunk_text as split_into_chunks
 from knowledge_service.config import settings
 from knowledge_service.models import ContentRequest, ContentResponse, expand_to_triples
+from knowledge_service.stores.provenance import ProvenanceStore
 
 router = APIRouter()
 
@@ -100,6 +102,7 @@ async def _process_one_content_request(body: ContentRequest, request: Request) -
     embedding_client = request.app.state.embedding_client
     extraction_client = request.app.state.extraction_client
     reasoning_engine = request.app.state.reasoning_engine
+    provenance_store = ProvenanceStore(pg_pool)
 
     embedding_store = getattr(request.app.state, "embedding_store", None)
     entity_resolver = getattr(request.app.state, "entity_resolver", None)
@@ -194,7 +197,7 @@ async def _process_one_content_request(body: ContentRequest, request: Request) -
             is_new, contras = await process_triple(
                 t,
                 knowledge_store,
-                pg_pool,
+                provenance_store,
                 reasoning_engine,
                 body.url,
                 body.source_type,
@@ -235,7 +238,9 @@ async def post_content(request: Request):
     try:
         if isinstance(raw, list):
             items = [ContentRequest(**item) for item in raw]
-            results = [await _process_one_content_request(item, request) for item in items]
+            results = await asyncio.gather(
+                *[_process_one_content_request(item, request) for item in items]
+            )
             return JSONResponse([r.model_dump() for r in results])
 
         body = ContentRequest(**raw)

@@ -8,6 +8,7 @@ from pydantic import ValidationError
 
 from knowledge_service.api._ingest import process_triple
 from knowledge_service.models import ClaimsRequest, ClaimsResponse, expand_to_triples
+from knowledge_service.stores.provenance import ProvenanceStore
 
 router = APIRouter()
 
@@ -17,6 +18,7 @@ async def _process_one_claims_request(body: ClaimsRequest, request: Request) -> 
     knowledge_store = request.app.state.knowledge_store
     pg_pool = request.app.state.pg_pool
     reasoning_engine = request.app.state.reasoning_engine
+    provenance_store = ProvenanceStore(pg_pool)
 
     triples_created = 0
     contradictions_all: list[dict] = []
@@ -26,7 +28,7 @@ async def _process_one_claims_request(body: ClaimsRequest, request: Request) -> 
             is_new, contras = await process_triple(
                 t,
                 knowledge_store,
-                pg_pool,
+                provenance_store,
                 reasoning_engine,
                 body.source_url,
                 body.source_type,

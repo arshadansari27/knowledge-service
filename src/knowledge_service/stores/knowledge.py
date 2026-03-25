@@ -27,7 +27,7 @@ from pyoxigraph import (
     Triple,
 )
 
-from knowledge_service._utils import _rdf_value_to_str
+from knowledge_service._utils import _is_uri, _rdf_value_to_str, _to_rdf_term
 from knowledge_service.ontology.namespaces import (
     KS,
     KS_CONFIDENCE,
@@ -46,18 +46,6 @@ def _strip_ks_prefix(value: str) -> str:
     if value.startswith(KS):
         return value[len(KS) :]
     return value
-
-
-def _is_uri(value: str) -> bool:
-    """Check if a string looks like a URI."""
-    return value.startswith("http://") or value.startswith("https://") or value.startswith("urn:")
-
-
-def _to_rdf_term(value: str) -> NamedNode | Literal:
-    """Convert a string to a NamedNode (if URI) or Literal."""
-    if _is_uri(value):
-        return NamedNode(value)
-    return Literal(value)
 
 
 def _sparql_object(object_: str) -> str:

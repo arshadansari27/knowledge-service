@@ -6,7 +6,7 @@
 <div class="bg-gray-800 rounded-lg overflow-hidden"
      x-data="{
         triples: null, total: 0, offset: 0, limit: 50,
-        q: '', knowledge_type: '', min_confidence: 0, max_confidence: 1, sort: 'recency',
+        q: '', knowledge_type: '', min_confidence: 0, max_confidence: 1, sort: 'subject',
         async load() {
             const params = new URLSearchParams({limit: this.limit, offset: this.offset});
             if (this.q) params.set('q', this.q);
@@ -55,7 +55,7 @@
                 <label class="block text-gray-400 text-sm mb-1">Sort</label>
                 <select x-model="sort" @change="offset = 0; load()"
                         class="w-full p-2 rounded bg-gray-700 text-white border border-gray-600">
-                    <option value="recency">Recency</option>
+                    <option value="subject">Subject</option>
                     <option value="confidence">Confidence</option>
                 </select>
             </div>
