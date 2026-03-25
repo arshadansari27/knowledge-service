@@ -25,8 +25,11 @@ class EmbeddingClient:
         headers = {}
         if api_key:
             headers["Authorization"] = f"Bearer {api_key}"
+        url = base_url.rstrip("/")
+        if url.endswith("/v1"):
+            url = url[:-3]
         self._client = httpx.AsyncClient(
-            base_url=base_url.rstrip("/"),
+            base_url=url,
             headers=headers,
             timeout=httpx.Timeout(connect=5.0, read=30.0, write=10.0, pool=5.0),
         )
@@ -340,8 +343,11 @@ class ExtractionClient:
         headers = {}
         if api_key:
             headers["Authorization"] = f"Bearer {api_key}"
+        url = base_url.rstrip("/")
+        if url.endswith("/v1"):
+            url = url[:-3]
         self._client = httpx.AsyncClient(
-            base_url=base_url.rstrip("/"),
+            base_url=url,
             headers=headers,
             timeout=httpx.Timeout(connect=5.0, read=120.0, write=10.0, pool=5.0),
         )
