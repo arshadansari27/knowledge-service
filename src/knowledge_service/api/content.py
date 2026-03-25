@@ -148,6 +148,14 @@ async def _process_one_content_request(body: ContentRequest, request: Request) -
     for rec, emb in zip(chunk_records, embeddings):
         rec["embedding"] = emb
 
+    # Null out provenance chunk_ids before deleting old chunks to avoid dangling FKs
+    async with pg_pool.acquire() as conn:
+        await conn.execute(
+            """UPDATE provenance SET chunk_id = NULL
+               WHERE chunk_id IN (SELECT id::text FROM content WHERE content_id = $1)""",
+            content_id,
+        )
+
     # Delete old chunks (re-ingestion) and insert new
     await embedding_store.delete_chunks(content_id)
     chunk_id_pairs = await embedding_store.insert_chunks(content_id, chunk_records)
