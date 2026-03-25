@@ -129,3 +129,13 @@ class TestExtractJson:
 
     def test_empty_json_object(self):
         assert _extract_json("{}") == {}
+
+    def test_nested_json_in_prose(self):
+        text = 'Here is the result:\n{"items": [{"name": "a"}, {"name": "b"}]}\nDone!'
+        result = _extract_json(text)
+        assert result == {"items": [{"name": "a"}, {"name": "b"}]}
+
+    def test_nested_objects(self):
+        text = 'Output: {"outer": {"inner": {"deep": true}}}'
+        result = _extract_json(text)
+        assert result == {"outer": {"inner": {"deep": True}}}

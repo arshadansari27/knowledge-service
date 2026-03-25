@@ -50,10 +50,18 @@ def _extract_json(text: str) -> dict | None:
         return json.loads(stripped)
     except (json.JSONDecodeError, ValueError):
         pass
-    match = re.search(r"\{[^{}]*\}", stripped)
-    if match:
-        try:
-            return json.loads(match.group())
-        except (json.JSONDecodeError, ValueError):
-            pass
+    start = stripped.find("{")
+    while start != -1:
+        depth = 0
+        for i in range(start, len(stripped)):
+            if stripped[i] == "{":
+                depth += 1
+            elif stripped[i] == "}":
+                depth -= 1
+                if depth == 0:
+                    try:
+                        return json.loads(stripped[start : i + 1])
+                    except (json.JSONDecodeError, ValueError):
+                        break
+        start = stripped.find("{", start + 1)
     return None
