@@ -860,3 +860,93 @@ class TestContentChunking:
             await c.post("/api/content", json=SHORT_TEXT_PAYLOAD)
 
         mock_es.delete_chunks.assert_called_once_with("content-uuid-1234")
+
+
+# ---------------------------------------------------------------------------
+# Tests: _resolve_labels — literal object guard (Task 3)
+# ---------------------------------------------------------------------------
+
+
+class TestResolveLabelLiteralGuard:
+    async def test_resolve_labels_skips_literal_object(self):
+        """Literal objects should NOT be resolved through entity_resolver."""
+        from knowledge_service.api.content import _resolve_labels
+        from knowledge_service.models import ClaimInput
+
+        item = ClaimInput(
+            subject="cold_exposure",
+            predicate="increases_by",
+            object="250% dopamine increase",
+            object_type="literal",
+            confidence=0.7,
+        )
+        resolver = AsyncMock()
+        resolver.resolve = AsyncMock(return_value="http://knowledge.local/data/cold_exposure")
+        resolver.resolve_predicate = AsyncMock(
+            return_value="http://knowledge.local/schema/increases_by"
+        )
+
+        count, result = await _resolve_labels(item, resolver)
+
+        # subject and predicate resolved, but object was NOT
+        assert resolver.resolve.call_count == 1  # only subject
+        assert result.object == "250% dopamine increase"  # unchanged
+
+    async def test_resolve_labels_resolves_entity_object(self):
+        """Entity objects should still be resolved."""
+        from knowledge_service.api.content import _resolve_labels
+        from knowledge_service.models import ClaimInput
+
+        item = ClaimInput(
+            subject="cold_exposure",
+            predicate="increases",
+            object="dopamine",
+            object_type="entity",
+            confidence=0.7,
+        )
+        resolver = AsyncMock()
+        resolver.resolve = AsyncMock(return_value="http://knowledge.local/data/resolved")
+        resolver.resolve_predicate = AsyncMock(
+            return_value="http://knowledge.local/schema/increases"
+        )
+
+        count, result = await _resolve_labels(item, resolver)
+
+        assert resolver.resolve.call_count == 2  # subject + object
+
+
+# ---------------------------------------------------------------------------
+# Tests: _apply_uri_fallback — literal object guard (Task 4)
+# ---------------------------------------------------------------------------
+
+
+class TestApplyUriFallbackLiteralGuard:
+    def test_apply_uri_fallback_preserves_literal_object(self):
+        """Literal objects should NOT be converted to entity URIs."""
+        from knowledge_service.api.content import _apply_uri_fallback
+        from knowledge_service.models import ClaimInput
+
+        item = ClaimInput(
+            subject="http://knowledge.local/data/cold_exposure",
+            predicate="http://knowledge.local/schema/increases",
+            object="250% dopamine increase",
+            object_type="literal",
+            confidence=0.7,
+        )
+        result = _apply_uri_fallback(item)
+        assert result.object == "250% dopamine increase"
+
+    def test_apply_uri_fallback_converts_entity_object(self):
+        """Entity objects without URIs should still be converted."""
+        from knowledge_service.api.content import _apply_uri_fallback
+        from knowledge_service.models import ClaimInput
+
+        item = ClaimInput(
+            subject="http://knowledge.local/data/cold_exposure",
+            predicate="http://knowledge.local/schema/increases",
+            object="dopamine",
+            object_type="entity",
+            confidence=0.7,
+        )
+        result = _apply_uri_fallback(item)
+        assert result.object.startswith("http://knowledge.local/data/")
