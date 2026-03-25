@@ -40,3 +40,26 @@ def test_rdf_value_to_str_none():
 
 def test_rdf_value_to_str_plain_string():
     assert _rdf_value_to_str("plain") == "plain"
+
+
+from knowledge_service._utils import is_object_entity
+
+
+class TestIsObjectEntity:
+    def test_explicit_entity(self):
+        assert is_object_entity({"object": "dopamine", "object_type": "entity"}) is True
+
+    def test_explicit_literal(self):
+        assert is_object_entity({"object": "dopamine", "object_type": "literal"}) is False
+
+    def test_none_object_type_short_no_spaces_is_entity(self):
+        assert is_object_entity({"object": "dopamine"}) is True
+
+    def test_none_object_type_spaces_is_literal(self):
+        assert is_object_entity({"object": "250% dopamine increase"}) is False
+
+    def test_none_object_type_long_string_is_literal(self):
+        assert is_object_entity({"object": "a" * 61}) is False
+
+    def test_empty_object_is_not_entity(self):
+        assert is_object_entity({"object": ""}) is False
