@@ -11,11 +11,28 @@ from knowledge_service.stores.provenance import ProvenanceStore
 
 logger = logging.getLogger(__name__)
 
+# Max confidence penalty when a contradiction exists at confidence=1.0
+_CONTRADICTION_PENALTY_FACTOR = 0.5
+
 
 def _extractor_to_graph(extractor: str) -> str:
     if extractor.startswith("llm_"):
         return KS_GRAPH_EXTRACTED
     return KS_GRAPH_ASSERTED
+
+
+def _penalize_confidence(new_conf: float, existing_confs: list[float]) -> float:
+    """Reduce confidence of a new triple that contradicts existing triples.
+
+    Penalty = max(existing_confidence) * _CONTRADICTION_PENALTY_FACTOR.
+    E.g., if existing has confidence 0.9 and penalty factor is 0.5,
+    penalty is 0.45, so new_conf is multiplied by (1 - 0.45) = 0.55.
+    """
+    if not existing_confs:
+        return new_conf
+    max_existing = max(c for c in existing_confs if c is not None) if existing_confs else 0.0
+    penalty = max_existing * _CONTRADICTION_PENALTY_FACTOR
+    return round(new_conf * (1.0 - penalty), 4)
 
 
 async def process_triple(
@@ -29,6 +46,9 @@ async def process_triple(
     chunk_id: str | None = None,
 ) -> tuple[bool, list[dict]]:
     """Insert one triple, detect contradictions, record provenance, combine evidence.
+
+    If contradictions are found, the new triple's confidence is penalized
+    proportionally to the strongest contradicting triple's confidence.
 
     If the pyoxigraph insert succeeds but provenance fails, the triple is still
     in the graph (idempotent on retry) but the error is logged. Callers see
@@ -88,6 +108,33 @@ async def process_triple(
             }
         )
 
+    # Penalize confidence when contradictions exist
+    effective_confidence = t["confidence"]
+    if contradictions and is_new:
+        existing_confs = [c.get("existing_confidence") for c in contradictions]
+        existing_confs = [c for c in existing_confs if c is not None]
+        effective_confidence = _penalize_confidence(t["confidence"], existing_confs)
+        if effective_confidence != t["confidence"]:
+            logger.info(
+                "Contradiction penalty: triple %s confidence %.3f -> %.3f",
+                triple_hash[:12],
+                t["confidence"],
+                effective_confidence,
+            )
+            try:
+                await asyncio.to_thread(
+                    knowledge_store.update_confidence,
+                    t["subject"],
+                    t["predicate"],
+                    t["object"],
+                    effective_confidence,
+                )
+            except Exception:
+                logger.exception(
+                    "Failed to apply contradiction penalty for triple %s",
+                    triple_hash[:12],
+                )
+
     try:
         await provenance_store.insert(
             triple_hash=triple_hash,
@@ -97,7 +144,7 @@ async def process_triple(
             source_url=source_url,
             source_type=source_type,
             extractor=extractor,
-            confidence=t["confidence"],
+            confidence=effective_confidence,
             metadata={},
             valid_from=t["valid_from"],
             valid_until=t["valid_until"],
