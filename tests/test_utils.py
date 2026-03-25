@@ -1,4 +1,4 @@
-from knowledge_service._utils import _is_uri, _triple_hash, _rdf_value_to_str
+from knowledge_service._utils import _is_uri, _triple_hash, _rdf_value_to_str, is_object_entity
 from pyoxigraph import NamedNode, Literal
 
 
@@ -42,9 +42,6 @@ def test_rdf_value_to_str_plain_string():
     assert _rdf_value_to_str("plain") == "plain"
 
 
-from knowledge_service._utils import is_object_entity
-
-
 class TestIsObjectEntity:
     def test_explicit_entity(self):
         assert is_object_entity({"object": "dopamine", "object_type": "entity"}) is True
@@ -69,8 +66,11 @@ class TestIsObjectEntity:
         from knowledge_service.models import ClaimInput
 
         item = ClaimInput(
-            subject="x", predicate="p", object="250%",
-            object_type="literal", confidence=0.7,
+            subject="x",
+            predicate="p",
+            object="250%",
+            object_type="literal",
+            confidence=0.7,
         )
         assert is_object_entity(item) is False
 
@@ -78,7 +78,10 @@ class TestIsObjectEntity:
         from knowledge_service.models import ClaimInput
 
         item = ClaimInput(
-            subject="x", predicate="p", object="dopamine", confidence=0.7,
+            subject="x",
+            predicate="p",
+            object="dopamine",
+            confidence=0.7,
         )
         assert is_object_entity(item) is True
 
@@ -89,12 +92,14 @@ def test_object_type_survives_discriminated_union():
     from knowledge_service.models import KnowledgeInput
 
     adapter = TypeAdapter(KnowledgeInput)
-    item = adapter.validate_python({
-        "knowledge_type": "Claim",
-        "subject": "x",
-        "predicate": "p",
-        "object": "250%",
-        "object_type": "literal",
-        "confidence": 0.7,
-    })
+    item = adapter.validate_python(
+        {
+            "knowledge_type": "Claim",
+            "subject": "x",
+            "predicate": "p",
+            "object": "250%",
+            "object_type": "literal",
+            "confidence": 0.7,
+        }
+    )
     assert item.object_type == "literal"
