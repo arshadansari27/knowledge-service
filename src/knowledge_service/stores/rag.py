@@ -362,9 +362,7 @@ class RAGRetriever:
 
         all_triples = []
         for uri in matched_uris:
-            triples = await asyncio.to_thread(
-                self._knowledge_store.get_triples_by_predicate, uri
-            )
+            triples = await asyncio.to_thread(self._knowledge_store.get_triples_by_predicate, uri)
             for t in triples:
                 t["subject"] = _rdf_value_to_str(t.get("subject"))
                 t["predicate"] = _rdf_value_to_str(t.get("predicate"))
