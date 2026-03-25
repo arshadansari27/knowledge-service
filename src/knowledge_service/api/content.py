@@ -205,6 +205,7 @@ async def _process_one_content_request(body: ContentRequest, request: Request) -
     chunk_id_map = dict(chunk_id_pairs) if chunk_id_pairs else {}  # {chunk_index: chunk_id}
 
     # Step 2.5: Auto-extract knowledge per chunk if none provided
+    chunks_failed = 0
     if not body.knowledge and body.raw_text:
         knowledge_by_chunk: list[tuple[list, str | None]] = []
         for chunk in chunk_records:
@@ -212,6 +213,9 @@ async def _process_one_content_request(body: ContentRequest, request: Request) -
                 chunk["chunk_text"], title=body.title, source_type=body.source_type
             )
             cid = chunk_id_map.get(chunk["chunk_index"])
+            if items is None:
+                chunks_failed += 1
+                continue
             knowledge_by_chunk.append((items, cid))
         knowledge = []
         chunk_ids_for_items: list[str | None] = []
@@ -276,6 +280,8 @@ async def _process_one_content_request(body: ContentRequest, request: Request) -
         triples_created=triples_created,
         contradictions_detected=contradictions_all,
         entities_resolved=entities_resolved,
+        chunks_total=len(chunk_records),
+        chunks_failed=chunks_failed,
     )
 
 

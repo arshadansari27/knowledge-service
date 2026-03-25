@@ -65,21 +65,21 @@ class TestExtract:
         assert result[1].knowledge_type.value == "Claim"
         await client.close()
 
-    async def test_returns_empty_on_http_error(self, httpx_mock):
+    async def test_returns_none_on_http_error(self, httpx_mock):
         httpx_mock.add_response(url=_CHAT_URL, status_code=500)
         client = ExtractionClient(base_url=_BASE, model="qwen3:14b", api_key=_KEY)
         result = await client.extract("some text")
-        assert result == []
+        assert result is None
         await client.close()
 
-    async def test_returns_empty_on_bad_json(self, httpx_mock):
+    async def test_returns_none_on_bad_json(self, httpx_mock):
         httpx_mock.add_response(
             url=_CHAT_URL,
             json={"choices": [{"message": {"content": "not valid json {{"}}]},
         )
         client = ExtractionClient(base_url=_BASE, model="qwen3:14b", api_key=_KEY)
         result = await client.extract("some text")
-        assert result == []
+        assert result is None
         await client.close()
 
     async def test_skips_invalid_items_returns_valid(self, httpx_mock):
@@ -341,11 +341,11 @@ class TestTwoPhaseExtract:
         assert result[0].knowledge_type.value == "Entity"
         await client.close()
 
-    async def test_returns_empty_when_phase1_fails(self, httpx_mock):
+    async def test_returns_none_when_phase1_fails(self, httpx_mock):
         httpx_mock.add_response(url=_CHAT_URL, status_code=500)
         client = ExtractionClient(base_url=_BASE, model="qwen3:14b", api_key=_KEY)
         result = await client.extract("text")
-        assert result == []
+        assert result is None
         assert len(httpx_mock.get_requests()) == 1
         await client.close()
 

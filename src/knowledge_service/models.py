@@ -307,6 +307,8 @@ class ContentResponse(BaseModel):
     triples_created: int
     contradictions_detected: list[dict] = []
     entities_resolved: int = 0  # How many were matched to existing entities
+    chunks_total: int = 0  # Total chunks processed
+    chunks_failed: int = 0  # Chunks where LLM extraction failed
 
 
 class ClaimsResponse(BaseModel):
