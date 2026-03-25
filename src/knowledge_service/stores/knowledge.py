@@ -40,8 +40,6 @@ from knowledge_service.ontology.namespaces import (
     XSD,
 )
 
-RDF_REIFIES = NamedNode("http://www.w3.org/1999/02/22-rdf-syntax-ns#reifies")
-
 
 def _strip_ks_prefix(value: str) -> str:
     """Strip the ks: namespace prefix from a URI, returning the local name."""
