@@ -10,12 +10,7 @@ from fastapi.responses import JSONResponse
 from pydantic import ValidationError
 
 from knowledge_service._utils import _is_uri, is_object_entity
-from knowledge_service.api._ingest import process_triple
-from knowledge_service.clients.llm import (
-    to_entity_uri,
-    to_predicate_uri,
-    resolve_predicate_synonym,
-)
+from knowledge_service.api._ingest import apply_uri_fallback, process_triple
 from knowledge_service.chunking import chunk_text as split_into_chunks
 from knowledge_service.config import settings
 from knowledge_service.models import ContentRequest, ContentResponse, expand_to_triples
@@ -105,41 +100,6 @@ def _dedup_extracted_items(
     return deduped, deduped_cids
 
 
-def _apply_uri_fallback(item) -> object:
-    """Ensure all subject/predicate/object fields are URIs.
-
-    Called after entity resolution to catch any fields that weren't resolved
-    (e.g., predicates, or when entity_resolver is None).
-    """
-    kt = item.knowledge_type.value
-
-    if kt in ("Claim", "Fact", "Relationship"):
-        if not _is_uri(item.subject):
-            item.subject = to_entity_uri(item.subject)
-        if not _is_uri(item.predicate):
-            item.predicate = resolve_predicate_synonym(item.predicate)
-            item.predicate = to_predicate_uri(item.predicate)
-        obj = item.object
-        if obj and not _is_uri(obj) and is_object_entity(item):
-            item.object = to_entity_uri(obj)
-    elif kt == "TemporalState":
-        if not _is_uri(item.subject):
-            item.subject = to_entity_uri(item.subject)
-        if not _is_uri(item.property):
-            item.property = resolve_predicate_synonym(item.property)
-            item.property = to_predicate_uri(item.property)
-    elif kt == "Event":
-        if not _is_uri(item.subject):
-            item.subject = to_entity_uri(item.subject)
-    elif kt == "Entity":
-        if not _is_uri(item.uri):
-            item.uri = to_entity_uri(item.uri)
-    elif kt == "Conclusion":
-        pass  # Conclusion has no URI fields to normalize
-
-    return item
-
-
 async def _process_one_content_request(body: ContentRequest, request: Request) -> ContentResponse:
     """Process a single ContentRequest and return its response."""
     knowledge_store = request.app.state.knowledge_store
@@ -218,9 +178,7 @@ async def _process_one_content_request(body: ContentRequest, request: Request) -
                     chunk["chunk_text"], title=body.title, source_type=body.source_type
                 )
 
-        extraction_results = await asyncio.gather(
-            *[_extract_chunk(c) for c in chunk_records]
-        )
+        extraction_results = await asyncio.gather(*[_extract_chunk(c) for c in chunk_records])
 
         knowledge_by_chunk: list[tuple[list, str | None]] = []
         for chunk, items in zip(chunk_records, extraction_results):
@@ -254,7 +212,7 @@ async def _process_one_content_request(body: ContentRequest, request: Request) -
 
     # Step 2.8: Ensure all fields are proper URIs (fallback for unresolved fields)
     for i, item in enumerate(knowledge):
-        knowledge[i] = _apply_uri_fallback(item)
+        knowledge[i] = apply_uri_fallback(item)
 
     # Step 3: Expand all knowledge items to triples and process
     triples_created = 0

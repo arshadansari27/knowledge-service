@@ -923,7 +923,7 @@ class TestResolveLabelLiteralGuard:
 class TestApplyUriFallbackLiteralGuard:
     def test_apply_uri_fallback_preserves_literal_object(self):
         """Literal objects should NOT be converted to entity URIs."""
-        from knowledge_service.api.content import _apply_uri_fallback
+        from knowledge_service.api._ingest import apply_uri_fallback
         from knowledge_service.models import ClaimInput
 
         item = ClaimInput(
@@ -933,12 +933,12 @@ class TestApplyUriFallbackLiteralGuard:
             object_type="literal",
             confidence=0.7,
         )
-        result = _apply_uri_fallback(item)
+        result = apply_uri_fallback(item)
         assert result.object == "250% dopamine increase"
 
     def test_apply_uri_fallback_converts_entity_object(self):
         """Entity objects without URIs should still be converted."""
-        from knowledge_service.api.content import _apply_uri_fallback
+        from knowledge_service.api._ingest import apply_uri_fallback
         from knowledge_service.models import ClaimInput
 
         item = ClaimInput(
@@ -948,12 +948,12 @@ class TestApplyUriFallbackLiteralGuard:
             object_type="entity",
             confidence=0.7,
         )
-        result = _apply_uri_fallback(item)
+        result = apply_uri_fallback(item)
         assert result.object.startswith("http://knowledge.local/data/")
 
     def test_apply_uri_fallback_normalizes_subject_and_predicate(self):
         """Subject and predicate are converted to URIs by _apply_uri_fallback."""
-        from knowledge_service.api.content import _apply_uri_fallback
+        from knowledge_service.api._ingest import apply_uri_fallback
         from knowledge_service.models import ClaimInput
 
         item = ClaimInput(
@@ -963,13 +963,13 @@ class TestApplyUriFallbackLiteralGuard:
             object_type="entity",
             confidence=0.7,
         )
-        result = _apply_uri_fallback(item)
+        result = apply_uri_fallback(item)
         assert result.subject == "http://knowledge.local/data/cold_exposure"
         assert result.predicate == "http://knowledge.local/schema/increases"
 
     def test_apply_uri_fallback_resolves_predicate_synonym(self):
         """Predicate synonyms are resolved before URI conversion."""
-        from knowledge_service.api.content import _apply_uri_fallback
+        from knowledge_service.api._ingest import apply_uri_fallback
         from knowledge_service.models import ClaimInput
 
         item = ClaimInput(
@@ -979,7 +979,7 @@ class TestApplyUriFallbackLiteralGuard:
             object_type="entity",
             confidence=0.7,
         )
-        result = _apply_uri_fallback(item)
+        result = apply_uri_fallback(item)
         assert result.predicate == "http://knowledge.local/schema/increases"
 
 

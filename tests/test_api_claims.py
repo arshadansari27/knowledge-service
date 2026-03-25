@@ -39,6 +39,7 @@ def _make_knowledge_store_mock():
     mock_ks = MagicMock()
     mock_ks.insert_triple.return_value = ("abc123deadbeef", True)
     mock_ks.find_contradictions.return_value = []
+    mock_ks.find_opposite_predicate_contradictions.return_value = []
     return mock_ks
 
 

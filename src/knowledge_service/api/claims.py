@@ -3,15 +3,17 @@
 from __future__ import annotations
 
 import json
+import logging
 
 from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse
 from pydantic import ValidationError
 
-from knowledge_service.api._ingest import process_triple
-from knowledge_service.api.content import _apply_uri_fallback
+from knowledge_service.api._ingest import apply_uri_fallback, process_triple
 from knowledge_service.models import ClaimsRequest, ClaimsResponse, expand_to_triples
 from knowledge_service.stores.provenance import ProvenanceStore
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
@@ -27,7 +29,7 @@ async def _process_one_claims_request(body: ClaimsRequest, request: Request) -> 
     contradictions_all: list[dict] = []
 
     for item in body.knowledge:
-        item = _apply_uri_fallback(item)
+        item = apply_uri_fallback(item)
         for t in expand_to_triples(item):
             is_new, contras = await process_triple(
                 t,
@@ -43,18 +45,23 @@ async def _process_one_claims_request(body: ClaimsRequest, request: Request) -> 
             contradictions_all.extend(contras)
 
     # Log ingestion event (parity with content pipeline)
-    async with pg_pool.acquire() as conn:
-        await conn.execute(
-            """INSERT INTO ingestion_events (event_type, payload, source)
-               VALUES ($1, $2, $3)""",
-            "claims_ingested",
-            json.dumps({
-                "source_url": body.source_url,
-                "extractor": body.extractor,
-                "triples_created": triples_created,
-            }),
-            body.source_url,
-        )
+    try:
+        async with pg_pool.acquire() as conn:
+            await conn.execute(
+                """INSERT INTO ingestion_events (event_type, payload, source)
+                   VALUES ($1, $2, $3)""",
+                "claims_ingested",
+                json.dumps(
+                    {
+                        "source_url": body.source_url,
+                        "extractor": body.extractor,
+                        "triples_created": triples_created,
+                    }
+                ),
+                body.source_url,
+            )
+    except Exception:
+        logger.exception("Failed to log ingestion event for claims from %s", body.source_url)
 
     return ClaimsResponse(
         triples_created=triples_created,

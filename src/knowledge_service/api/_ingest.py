@@ -5,7 +5,12 @@ from __future__ import annotations
 import asyncio
 import logging
 
-from knowledge_service._utils import _rdf_value_to_str
+from knowledge_service._utils import _is_uri, _rdf_value_to_str, is_object_entity
+from knowledge_service.clients.llm import (
+    resolve_predicate_synonym,
+    to_entity_uri,
+    to_predicate_uri,
+)
 from knowledge_service.ontology.namespaces import KS_GRAPH_ASSERTED, KS_GRAPH_EXTRACTED
 from knowledge_service.stores.provenance import ProvenanceStore
 
@@ -28,11 +33,47 @@ def _penalize_confidence(new_conf: float, existing_confs: list[float]) -> float:
     E.g., if existing has confidence 0.9 and penalty factor is 0.5,
     penalty is 0.45, so new_conf is multiplied by (1 - 0.45) = 0.55.
     """
-    if not existing_confs:
+    filtered = [c for c in existing_confs if c is not None]
+    if not filtered:
         return new_conf
-    max_existing = max(c for c in existing_confs if c is not None) if existing_confs else 0.0
+    max_existing = max(filtered)
     penalty = max_existing * _CONTRADICTION_PENALTY_FACTOR
     return round(new_conf * (1.0 - penalty), 4)
+
+
+def apply_uri_fallback(item):
+    """Ensure all subject/predicate/object fields are URIs.
+
+    Called after entity resolution to catch any fields that weren't resolved
+    (e.g., predicates, or when entity_resolver is None).
+    """
+    kt = item.knowledge_type.value
+
+    if kt in ("Claim", "Fact", "Relationship"):
+        if not _is_uri(item.subject):
+            item.subject = to_entity_uri(item.subject)
+        if not _is_uri(item.predicate):
+            item.predicate = resolve_predicate_synonym(item.predicate)
+            item.predicate = to_predicate_uri(item.predicate)
+        obj = item.object
+        if obj and not _is_uri(obj) and is_object_entity(item):
+            item.object = to_entity_uri(obj)
+    elif kt == "TemporalState":
+        if not _is_uri(item.subject):
+            item.subject = to_entity_uri(item.subject)
+        if not _is_uri(item.property):
+            item.property = resolve_predicate_synonym(item.property)
+            item.property = to_predicate_uri(item.property)
+    elif kt == "Event":
+        if not _is_uri(item.subject):
+            item.subject = to_entity_uri(item.subject)
+    elif kt == "Entity":
+        if not _is_uri(item.uri):
+            item.uri = to_entity_uri(item.uri)
+    elif kt == "Conclusion":
+        pass  # Conclusion has no URI fields to normalize
+
+    return item
 
 
 async def process_triple(
