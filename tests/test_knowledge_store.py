@@ -39,6 +39,35 @@ class TestInsertTriple:
         h2, _ = store.insert_triple(**args)
         assert h1 == h2
 
+    def test_insert_bare_label_subject_does_not_crash(self, store):
+        """Bare labels without URI schemes should be auto-normalized, not crash."""
+        h, is_new = store.insert_triple(
+            subject="Cold Exposure",
+            predicate="http://knowledge.local/schema/increases",
+            object_="http://knowledge.local/data/dopamine",
+            confidence=0.7,
+            knowledge_type="Claim",
+        )
+        assert isinstance(h, str)
+        assert len(h) == 64
+        assert is_new is True
+        results = store.get_triples_by_subject("http://knowledge.local/data/Cold%20Exposure")
+        assert len(results) == 1
+
+    def test_insert_bare_label_predicate_does_not_crash(self, store):
+        """Bare predicate labels should be auto-normalized to KS namespace."""
+        h, is_new = store.insert_triple(
+            subject="http://knowledge.local/data/x",
+            predicate="increases dopamine",
+            object_="http://knowledge.local/data/y",
+            confidence=0.6,
+            knowledge_type="Claim",
+        )
+        assert isinstance(h, str)
+        assert is_new is True
+        results = store.get_triples_by_subject("http://knowledge.local/data/x")
+        assert len(results) == 1
+
     def test_insert_triple_returns_is_new_true_for_new_triple(self, store):
         hash_, is_new = store.insert_triple("http://s/1", "http://p/1", "obj1", 0.8, "Claim")
         assert is_new is True
