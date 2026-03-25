@@ -3,6 +3,7 @@
 import asyncio
 import logging
 from contextlib import asynccontextmanager
+from importlib.metadata import version as pkg_version
 from pathlib import Path
 from typing import AsyncIterator
 
@@ -274,7 +275,7 @@ def create_app(use_lifespan: bool = True) -> FastAPI:
     lf = lifespan if use_lifespan else None
     app = FastAPI(
         title="Knowledge Service",
-        version="0.1.0",
+        version=pkg_version("knowledge-service"),
         lifespan=lf,
     )
     app.include_router(health.router)
