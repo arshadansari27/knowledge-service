@@ -492,6 +492,7 @@ class TestPredicateIntegration:
             "knowledge_type": "Claim",
             "valid_from": None,
             "valid_until": None,
+            "graph": "http://knowledge.local/graph/extracted",
         }
         es = _make_embedding_store(entity_rows=[entity_row], predicate_rows=[_PREDICATE_ROW])
         ks = _make_knowledge_store(triples=[subject_triple])
@@ -500,3 +501,34 @@ class TestPredicateIntegration:
         ctx = await retriever.retrieve("sentry", max_sources=5, min_confidence=0.0)
         # Should deduplicate — same (subject, predicate, object) from both lookups
         assert len(ctx.knowledge_triples) == 1
+
+    async def test_entity_resolved_includes_predicate_triples(self):
+        """When entity resolution succeeds, predicate triples are still included."""
+        ec = _make_embedding_client()
+        ec.embed_batch.return_value = [[0.1] * 768]
+        entity_row = {
+            "uri": "http://knowledge.local/data/my_service",
+            "label": "my_service",
+            "similarity": 0.9,
+        }
+        subject_triple = {
+            "predicate": NamedNode("http://knowledge.local/schema/runs_on"),
+            "object": Literal("kubernetes"),
+            "confidence": 0.8,
+            "knowledge_type": "Fact",
+            "valid_from": None,
+            "valid_until": None,
+            "graph": "http://knowledge.local/graph/extracted",
+        }
+        es = _make_embedding_store(predicate_rows=[_PREDICATE_ROW])
+        es.search_entities.return_value = [entity_row]
+        ks = _make_knowledge_store(triples=[subject_triple])
+        ks.get_triples_by_predicate.return_value = [_PREDICATE_TRIPLE]
+        retriever = RAGRetriever(ec, es, ks)
+        intent = QueryIntent(intent="entity", entities=["my_service"])
+        ctx = await retriever.retrieve("my_service sentry issues?", intent=intent)
+        # Both subject triple and predicate triple should be included
+        assert len(ctx.knowledge_triples) == 2
+        predicates = {t["predicate"] for t in ctx.knowledge_triples}
+        assert "http://knowledge.local/schema/runs_on" in predicates
+        assert "http://knowledge.local/schema/sentry_issue" in predicates
