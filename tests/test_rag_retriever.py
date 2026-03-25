@@ -16,10 +16,11 @@ def _make_embedding_client():
     return mock
 
 
-def _make_embedding_store(content_rows=None, entity_rows=None):
+def _make_embedding_store(content_rows=None, entity_rows=None, predicate_rows=None):
     mock = AsyncMock()
     mock.search.return_value = content_rows or []
     mock.search_entities.return_value = entity_rows or []
+    mock.search_predicates.return_value = predicate_rows or []
     return mock
 
 
@@ -369,3 +370,81 @@ class TestGlobalIntent:
         context = await retriever.retrieve("overview?", intent=intent)
         # Should include both: level-1 always included, level-0 via fallback
         assert len(context.knowledge_triples) == 2
+
+
+_PREDICATE_ROW = {
+    "uri": "http://knowledge.local/schema/sentry_issue",
+    "label": "sentry_issue",
+    "similarity": 0.85,
+}
+
+_PREDICATE_TRIPLE = {
+    "graph": "http://knowledge.local/graph/extracted",
+    "subject": NamedNode("http://knowledge.local/data/connection_error"),
+    "predicate": NamedNode("http://knowledge.local/schema/sentry_issue"),
+    "object": Literal("error"),
+    "confidence": 0.9,
+    "knowledge_type": "Claim",
+    "valid_from": None,
+    "valid_until": None,
+}
+
+
+class TestPredicateLookup:
+    async def test_returns_triples_for_matching_predicate(self):
+        ec = _make_embedding_client()
+        es = _make_embedding_store(predicate_rows=[_PREDICATE_ROW])
+        ks = _make_knowledge_store()
+        ks.get_triples_by_predicate.return_value = [_PREDICATE_TRIPLE]
+        retriever = RAGRetriever(ec, es, ks)
+        embedding = [0.1] * 768
+        triples = await retriever._lookup_triples_by_predicate(embedding)
+        assert len(triples) == 1
+        assert triples[0]["subject"] == "http://knowledge.local/data/connection_error"
+        assert triples[0]["predicate"] == "http://knowledge.local/schema/sentry_issue"
+        assert triples[0]["object"] == "error"
+        assert triples[0]["confidence"] == 0.9
+        assert triples[0]["trust_tier"] == "extracted"
+
+    async def test_filters_below_threshold(self):
+        low_sim = {
+            "uri": "http://knowledge.local/schema/weak",
+            "label": "weak",
+            "similarity": 0.5,
+        }
+        ec = _make_embedding_client()
+        es = _make_embedding_store(predicate_rows=[low_sim])
+        ks = _make_knowledge_store()
+        retriever = RAGRetriever(ec, es, ks)
+        embedding = [0.1] * 768
+        triples = await retriever._lookup_triples_by_predicate(embedding)
+        assert triples == []
+        ks.get_triples_by_predicate.assert_not_called()
+
+    async def test_empty_predicate_embeddings(self):
+        ec = _make_embedding_client()
+        es = _make_embedding_store(predicate_rows=[])
+        ks = _make_knowledge_store()
+        retriever = RAGRetriever(ec, es, ks)
+        embedding = [0.1] * 768
+        triples = await retriever._lookup_triples_by_predicate(embedding)
+        assert triples == []
+
+    async def test_limits_to_top_n_by_confidence(self):
+        ec = _make_embedding_client()
+        es = _make_embedding_store(predicate_rows=[_PREDICATE_ROW])
+        ks = _make_knowledge_store()
+        # Return 15 triples, should be limited to 10
+        many_triples = []
+        for i in range(15):
+            t = dict(_PREDICATE_TRIPLE)
+            t["confidence"] = round(0.5 + i * 0.03, 2)
+            many_triples.append(t)
+        ks.get_triples_by_predicate.return_value = many_triples
+        retriever = RAGRetriever(ec, es, ks)
+        embedding = [0.1] * 768
+        triples = await retriever._lookup_triples_by_predicate(embedding)
+        assert len(triples) == 10
+        # Should be sorted by confidence descending
+        confs = [t["confidence"] for t in triples]
+        assert confs == sorted(confs, reverse=True)

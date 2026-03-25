@@ -15,6 +15,8 @@ from knowledge_service.stores.graph_traversal import GraphTraverser
 logger = logging.getLogger(__name__)
 
 _ENTITY_MATCH_THRESHOLD = 0.80
+_PREDICATE_MATCH_THRESHOLD = 0.80
+_PREDICATE_TRIPLE_LIMIT = 10
 
 
 @dataclass
@@ -340,6 +342,35 @@ class RAGRetriever:
                 t["trust_tier"] = "verified" if graph == KS_GRAPH_ASSERTED else "extracted"
             all_triples.extend(triples)
         return all_triples
+
+    async def _lookup_triples_by_predicate(
+        self, embedding, limit=_PREDICATE_TRIPLE_LIMIT
+    ) -> list[dict]:
+        """Find triples by predicate similarity to the query embedding."""
+        pred_rows = await self._embedding_store.search_predicates(
+            query_embedding=embedding, limit=3
+        )
+        matched_uris = [
+            r["uri"] for r in pred_rows if r.get("similarity", 0) >= _PREDICATE_MATCH_THRESHOLD
+        ]
+        if not matched_uris:
+            return []
+
+        all_triples = []
+        for uri in matched_uris:
+            triples = await asyncio.to_thread(
+                self._knowledge_store.get_triples_by_predicate, uri
+            )
+            for t in triples:
+                t["subject"] = _rdf_value_to_str(t.get("subject"))
+                t["predicate"] = _rdf_value_to_str(t.get("predicate"))
+                t["object"] = _rdf_value_to_str(t.get("object"))
+                graph = t.get("graph", "")
+                t["trust_tier"] = "verified" if graph == KS_GRAPH_ASSERTED else "extracted"
+            all_triples.extend(triples)
+
+        all_triples.sort(key=lambda t: t.get("confidence") or 0, reverse=True)
+        return all_triples[:limit]
 
     @staticmethod
     def _filter_by_confidence(triples, min_confidence):
