@@ -75,7 +75,7 @@ def _apply_uri_fallback(item) -> object:
             item.predicate = resolve_predicate_synonym(item.predicate)
             item.predicate = to_predicate_uri(item.predicate)
         obj = item.object
-        if obj and not _is_uri(obj):
+        if obj and not _is_uri(obj) and is_object_entity(item):
             item.object = to_entity_uri(obj)
     elif kt == "TemporalState":
         if not _is_uri(item.subject):
