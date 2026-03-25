@@ -570,11 +570,20 @@ class KnowledgeStore:
         object_: str,
         new_confidence: float,
     ) -> None:
-        """Update the confidence annotation for a triple.
+        """Update the confidence annotation on a triple.
 
-        Uses the Python API to find the reification blank node and replace
-        the old confidence literal with the new one. This avoids SPARQL
-        DELETE/INSERT limitations with RDF-star syntax.
+        Uses a hybrid SPARQL + Python API approach:
+        1. SPARQL SELECT with << >> finds the reification blank node that
+           carries the confidence annotation (pyoxigraph creates separate
+           blank nodes per annotation property).
+        2. Python API remove()/add() swaps the old literal for the new one.
+
+        pyoxigraph does not support DELETE with RDF-star << >> syntax, so
+        pure SPARQL is not possible. The SPARQL SELECT ensures we find the
+        correct bnode (unlike quads_for_pattern with rdf:reifies, which
+        returns ALL reification bnodes including those without confidence).
+
+        Silently does nothing if the triple does not exist.
 
         Args:
             subject: URI of the subject.
@@ -582,29 +591,33 @@ class KnowledgeStore:
             object_: URI or literal value for the object.
             new_confidence: New confidence score between 0.0 and 1.0.
         """
-        s = NamedNode(subject)
-        p = NamedNode(predicate)
-        o = _to_rdf_term(object_)
-        target_triple = Triple(s, p, o)
+        obj_sparql = _sparql_object(object_)
 
-        # Find blank nodes that reify this triple (across all graphs)
-        reification_quads = list(
-            self._store.quads_for_pattern(None, RDF_REIFIES, target_triple, None)
+        # Step 1: SPARQL SELECT to find the reification bnode that carries
+        # the confidence annotation, its graph, and the old value.
+        select_sparql = f"""
+            SELECT ?g ?bnode ?old_conf WHERE {{
+                GRAPH ?g {{
+                    ?bnode <http://www.w3.org/1999/02/22-rdf-syntax-ns#reifies>
+                        <<( <{subject}> <{predicate}> {obj_sparql} )>> .
+                    ?bnode <{KS_CONFIDENCE.value}> ?old_conf .
+                }}
+            }}
+        """
+        results = self._store.query(select_sparql)
+
+        # Step 2: For each match, remove old confidence and add new one via
+        # the Python API (the only way to delete RDF-star annotations).
+        new_val = Literal(
+            str(new_confidence),
+            datatype=NamedNode(f"{XSD}float"),
         )
+        for solution in results:
+            bnode = solution["bnode"]
+            graph_node = solution["g"]
+            old_conf = solution["old_conf"]
 
-        for rq in reification_quads:
-            bnode = rq.subject
-            graph_node = rq.graph_name  # preserve the named graph
-            # Find existing confidence quads for this blank node
-            conf_quads = list(self._store.quads_for_pattern(bnode, KS_CONFIDENCE, None, None))
-            # Remove old confidence values
-            for cq in conf_quads:
-                self._store.remove(cq)
-            # Add new confidence in the same named graph
-            new_val = Literal(
-                str(new_confidence),
-                datatype=NamedNode(f"{XSD}float"),
-            )
+            self._store.remove(Quad(bnode, KS_CONFIDENCE, old_conf, graph_node))
             self._store.add(Quad(bnode, KS_CONFIDENCE, new_val, graph_node))
 
     def find_contradictions(
