@@ -10,12 +10,7 @@ from fastapi.responses import JSONResponse
 from pydantic import ValidationError
 
 from knowledge_service._utils import _is_uri, is_object_entity
-from knowledge_service.api._ingest import process_triple
-from knowledge_service.clients.llm import (
-    to_entity_uri,
-    to_predicate_uri,
-    resolve_predicate_synonym,
-)
+from knowledge_service.api._ingest import apply_uri_fallback, process_triple
 from knowledge_service.chunking import chunk_text as split_into_chunks
 from knowledge_service.config import settings
 from knowledge_service.models import ContentRequest, ContentResponse, expand_to_triples
@@ -25,6 +20,8 @@ router = APIRouter()
 
 _CHUNK_SIZE = 4000
 _CHUNK_OVERLAP = 200
+_MAX_CONCURRENT_EXTRACTIONS = 4  # Bound parallel LLM calls per content request
+_MAX_CONCURRENT_CONTENT = 3  # Bound parallel content requests in batch mode
 
 
 async def _resolve_labels(item, entity_resolver) -> tuple[int, object]:
@@ -60,39 +57,47 @@ async def _resolve_labels(item, entity_resolver) -> tuple[int, object]:
     return resolved, item
 
 
-def _apply_uri_fallback(item) -> object:
-    """Ensure all subject/predicate/object fields are URIs.
+def _dedup_extracted_items(
+    knowledge: list, chunk_ids: list[str | None]
+) -> tuple[list, list[str | None]]:
+    """Deduplicate knowledge items extracted from overlapping chunks.
 
-    Called after entity resolution to catch any fields that weren't resolved
-    (e.g., predicates, or when entity_resolver is None).
+    For triple-shaped items (Claim/Fact/Relationship), key on (subject, predicate, object).
+    For TemporalState, key on (subject, property, value).
+    For Entity, key on uri. For Event, key on (subject, occurred_at).
+    For Conclusion, key on concludes text.
+    Keeps the item with the highest confidence when duplicates are found.
     """
-    kt = item.knowledge_type.value
+    seen: dict[tuple, int] = {}  # dedup_key -> index in deduped list
+    deduped: list = []
+    deduped_cids: list[str | None] = []
 
-    if kt in ("Claim", "Fact", "Relationship"):
-        if not _is_uri(item.subject):
-            item.subject = to_entity_uri(item.subject)
-        if not _is_uri(item.predicate):
-            item.predicate = resolve_predicate_synonym(item.predicate)
-            item.predicate = to_predicate_uri(item.predicate)
-        obj = item.object
-        if obj and not _is_uri(obj) and is_object_entity(item):
-            item.object = to_entity_uri(obj)
-    elif kt == "TemporalState":
-        if not _is_uri(item.subject):
-            item.subject = to_entity_uri(item.subject)
-        if not _is_uri(item.property):
-            item.property = resolve_predicate_synonym(item.property)
-            item.property = to_predicate_uri(item.property)
-    elif kt == "Event":
-        if not _is_uri(item.subject):
-            item.subject = to_entity_uri(item.subject)
-    elif kt == "Entity":
-        if not _is_uri(item.uri):
-            item.uri = to_entity_uri(item.uri)
-    elif kt == "Conclusion":
-        pass  # Conclusion has no URI fields to normalize
+    for item, cid in zip(knowledge, chunk_ids):
+        kt = item.knowledge_type.value
+        if kt in ("Claim", "Fact", "Relationship"):
+            key = (kt, item.subject.lower(), item.predicate.lower(), item.object.lower())
+        elif kt == "TemporalState":
+            key = (kt, item.subject.lower(), item.property.lower(), str(item.value).lower())
+        elif kt == "Entity":
+            key = (kt, item.uri.lower())
+        elif kt == "Event":
+            key = (kt, item.subject.lower(), str(item.occurred_at))
+        elif kt == "Conclusion":
+            key = (kt, item.concludes.lower())
+        else:
+            key = (kt, id(item))  # no dedup for unknown types
 
-    return item
+        if key in seen:
+            idx = seen[key]
+            if item.confidence > deduped[idx].confidence:
+                deduped[idx] = item
+                deduped_cids[idx] = cid
+        else:
+            seen[key] = len(deduped)
+            deduped.append(item)
+            deduped_cids.append(cid)
+
+    return deduped, deduped_cids
 
 
 async def _process_one_content_request(body: ContentRequest, request: Request) -> ContentResponse:
@@ -148,19 +153,39 @@ async def _process_one_content_request(body: ContentRequest, request: Request) -
     for rec, emb in zip(chunk_records, embeddings):
         rec["embedding"] = emb
 
+    # Null out provenance chunk_ids before deleting old chunks to avoid dangling FKs
+    async with pg_pool.acquire() as conn:
+        await conn.execute(
+            """UPDATE provenance SET chunk_id = NULL
+               WHERE chunk_id IN (SELECT id::text FROM content WHERE content_id = $1)""",
+            content_id,
+        )
+
     # Delete old chunks (re-ingestion) and insert new
     await embedding_store.delete_chunks(content_id)
     chunk_id_pairs = await embedding_store.insert_chunks(content_id, chunk_records)
     chunk_id_map = dict(chunk_id_pairs) if chunk_id_pairs else {}  # {chunk_index: chunk_id}
 
     # Step 2.5: Auto-extract knowledge per chunk if none provided
+    chunks_failed = 0
     if not body.knowledge and body.raw_text:
+        # Extract from all chunks concurrently (bounded by semaphore)
+        sem = asyncio.Semaphore(_MAX_CONCURRENT_EXTRACTIONS)
+
+        async def _extract_chunk(chunk):
+            async with sem:
+                return await extraction_client.extract(
+                    chunk["chunk_text"], title=body.title, source_type=body.source_type
+                )
+
+        extraction_results = await asyncio.gather(*[_extract_chunk(c) for c in chunk_records])
+
         knowledge_by_chunk: list[tuple[list, str | None]] = []
-        for chunk in chunk_records:
-            items = await extraction_client.extract(
-                chunk["chunk_text"], title=body.title, source_type=body.source_type
-            )
+        for chunk, items in zip(chunk_records, extraction_results):
             cid = chunk_id_map.get(chunk["chunk_index"])
+            if items is None:
+                chunks_failed += 1
+                continue
             knowledge_by_chunk.append((items, cid))
         knowledge = []
         chunk_ids_for_items: list[str | None] = []
@@ -168,6 +193,8 @@ async def _process_one_content_request(body: ContentRequest, request: Request) -
             for item in items:
                 knowledge.append(item)
                 chunk_ids_for_items.append(cid)
+        # Deduplicate items across overlapping chunks — keep highest confidence
+        knowledge, chunk_ids_for_items = _dedup_extracted_items(knowledge, chunk_ids_for_items)
         extracted_by_llm = bool(knowledge)
     else:
         knowledge = list(body.knowledge)
@@ -185,7 +212,7 @@ async def _process_one_content_request(body: ContentRequest, request: Request) -
 
     # Step 2.8: Ensure all fields are proper URIs (fallback for unresolved fields)
     for i, item in enumerate(knowledge):
-        knowledge[i] = _apply_uri_fallback(item)
+        knowledge[i] = apply_uri_fallback(item)
 
     # Step 3: Expand all knowledge items to triples and process
     triples_created = 0
@@ -223,6 +250,8 @@ async def _process_one_content_request(body: ContentRequest, request: Request) -
         triples_created=triples_created,
         contradictions_detected=contradictions_all,
         entities_resolved=entities_resolved,
+        chunks_total=len(chunk_records),
+        chunks_failed=chunks_failed,
     )
 
 
@@ -238,9 +267,13 @@ async def post_content(request: Request):
     try:
         if isinstance(raw, list):
             items = [ContentRequest(**item) for item in raw]
-            results = await asyncio.gather(
-                *[_process_one_content_request(item, request) for item in items]
-            )
+            sem = asyncio.Semaphore(_MAX_CONCURRENT_CONTENT)
+
+            async def _bounded(item):
+                async with sem:
+                    return await _process_one_content_request(item, request)
+
+            results = await asyncio.gather(*[_bounded(item) for item in items])
             return JSONResponse([r.model_dump() for r in results])
 
         body = ContentRequest(**raw)

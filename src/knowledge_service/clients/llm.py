@@ -244,7 +244,7 @@ def _build_relation_extraction_prompt(
 Return ONLY a JSON object: {{"items": [...]}}
 
 Known entities: [{entity_list}]
-Only use these entities as subjects and objects. Do NOT invent new entities.
+Prefer these entities as subjects and objects. If the text clearly mentions an entity not in this list, you may use it — follow the entity naming rules below.
 
 Each item must have a knowledge_type field. Supported types and required fields:
 - Claim: subject, predicate, object, object_type, confidence (0.0-0.89)
@@ -315,10 +315,11 @@ class ExtractionClient:
     def model(self) -> str:
         return self._model
 
-    async def _call_llm(self, prompt: str) -> list[dict]:
+    async def _call_llm(self, prompt: str) -> list[dict] | None:
         """Send a prompt to the LLM and return parsed item dicts.
 
-        Returns an empty list on HTTP errors, timeouts, or JSON parse failures.
+        Returns None on HTTP errors, timeouts, or JSON parse failures (distinguishable
+        from an empty list which means "LLM responded but found nothing").
         Raises no exceptions.
         """
         try:
@@ -332,10 +333,10 @@ class ExtractionClient:
             response.raise_for_status()
         except httpx.HTTPStatusError as exc:
             logger.warning("ExtractionClient: LLM API returned %s", exc.response.status_code)
-            return []
+            return None
         except httpx.TimeoutException as exc:
             logger.warning("ExtractionClient: LLM API request timed out: %s", exc)
-            return []
+            return None
 
         raw = response.json()["choices"][0]["message"]["content"]
         from knowledge_service._utils import _extract_json
@@ -343,7 +344,7 @@ class ExtractionClient:
         parsed = _extract_json(raw)
         if parsed is None:
             logger.warning("ExtractionClient: could not parse JSON from response")
-            return []
+            return None
 
         return parsed.get("items", [])
 
@@ -352,11 +353,11 @@ class ExtractionClient:
         text: str,
         title: str | None = None,
         source_type: str | None = None,
-    ) -> list:
+    ) -> list | None:
         """Extract KnowledgeInput items from raw text using two-phase extraction.
 
         Phase 1: entities/events. Phase 2: relations constrained to phase 1 entities.
-        If phase 1 fails → return [].
+        Returns None if phase 1 LLM call failed (distinguishable from [] = nothing found).
         If phase 2 fails → return phase 1 results only.
         """
         from knowledge_service.models import KnowledgeInput  # noqa: PLC0415
@@ -366,6 +367,8 @@ class ExtractionClient:
         # --- Phase 1: Entity/Event extraction ---
         phase1_prompt = _build_entity_extraction_prompt(text, title, source_type)
         phase1_raw = await self._call_llm(phase1_prompt)
+        if phase1_raw is None:
+            return None
         if not phase1_raw:
             return []
 

@@ -158,50 +158,38 @@ class KnowledgeStore:
         if self._store.query(ask_sparql):
             return triple_hash, False
 
-        # Insert RDF-star annotations via SPARQL UPDATE into the same named graph
+        # Build all RDF-star annotations in a single SPARQL INSERT DATA
         conf_literal = f'"{confidence}"^^<{XSD}float>'
         type_uri = f"<{KS}{knowledge_type}>"
+        quoted = f"<< <{subject}> <{predicate}> {obj_sparql} >>"
 
-        sparql = f"""
-            INSERT DATA {{
-                GRAPH <{graph_uri}> {{
-                    << <{subject}> <{predicate}> {obj_sparql} >>
-                        <{KS_CONFIDENCE.value}> {conf_literal} .
-                    << <{subject}> <{predicate}> {obj_sparql} >>
-                        <{KS_KNOWLEDGE_TYPE.value}> {type_uri} .
-                }}
-            }}
-        """
-        self._store.update(sparql)
+        annotation_lines = [
+            f"{quoted} <{KS_CONFIDENCE.value}> {conf_literal} .",
+            f"{quoted} <{KS_KNOWLEDGE_TYPE.value}> {type_uri} .",
+        ]
 
-        # Optional temporal annotations
         if valid_from is not None:
             if isinstance(valid_from, date) and not isinstance(valid_from, datetime):
                 vf = f'"{valid_from.isoformat()}"^^<{XSD}date>'
             else:
                 vf = f'"{valid_from.isoformat()}"^^<{XSD}dateTime>'
-            self._store.update(f"""
-                INSERT DATA {{
-                    GRAPH <{graph_uri}> {{
-                        << <{subject}> <{predicate}> {obj_sparql} >>
-                            <{KS_VALID_FROM.value}> {vf} .
-                    }}
-                }}
-            """)
+            annotation_lines.append(f"{quoted} <{KS_VALID_FROM.value}> {vf} .")
 
         if valid_until is not None:
             if isinstance(valid_until, date) and not isinstance(valid_until, datetime):
                 vu = f'"{valid_until.isoformat()}"^^<{XSD}date>'
             else:
                 vu = f'"{valid_until.isoformat()}"^^<{XSD}dateTime>'
-            self._store.update(f"""
-                INSERT DATA {{
-                    GRAPH <{graph_uri}> {{
-                        << <{subject}> <{predicate}> {obj_sparql} >>
-                            <{KS_VALID_UNTIL.value}> {vu} .
-                    }}
+            annotation_lines.append(f"{quoted} <{KS_VALID_UNTIL.value}> {vu} .")
+
+        body = "\n                    ".join(annotation_lines)
+        self._store.update(f"""
+            INSERT DATA {{
+                GRAPH <{graph_uri}> {{
+                    {body}
                 }}
-            """)
+            }}
+        """)
 
         return triple_hash, True
 

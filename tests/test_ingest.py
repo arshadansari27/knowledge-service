@@ -1,7 +1,9 @@
 """Tests for the shared per-triple ingestion pipeline."""
 
 from unittest.mock import AsyncMock, MagicMock
-from knowledge_service.api._ingest import process_triple
+
+from knowledge_service.api._ingest import _penalize_confidence, process_triple
+from knowledge_service.api.content import _dedup_extracted_items
 
 
 def _make_ks(is_new=True, contradictions=None):
@@ -145,3 +147,96 @@ async def test_process_triple_detects_opposite_predicate_contradiction():
     opp = [c for c in contras if "opposite_predicate_in_store" in c]
     assert len(opp) == 1
     assert opp[0]["opposite_predicate_in_store"] == "http://ks/decreases"
+
+
+# ---------------------------------------------------------------------------
+# Tests: _penalize_confidence
+# ---------------------------------------------------------------------------
+
+
+class TestPenalizeConfidence:
+    def test_no_existing_confs_returns_original(self):
+        assert _penalize_confidence(0.8, []) == 0.8
+
+    def test_all_none_confs_returns_original(self):
+        assert _penalize_confidence(0.8, [None, None]) == 0.8
+
+    def test_penalizes_proportionally(self):
+        # existing=0.9, penalty_factor=0.5 → penalty=0.45 → 0.8 * 0.55 = 0.44
+        result = _penalize_confidence(0.8, [0.9])
+        assert result == 0.44
+
+    def test_max_existing_used(self):
+        # max(0.6, 0.9) = 0.9
+        result = _penalize_confidence(0.8, [0.6, 0.9])
+        assert result == _penalize_confidence(0.8, [0.9])
+
+    def test_zero_existing_no_penalty(self):
+        assert _penalize_confidence(0.8, [0.0]) == 0.8
+
+    def test_full_confidence_existing(self):
+        # existing=1.0 → penalty=0.5 → 0.8 * 0.5 = 0.4
+        assert _penalize_confidence(0.8, [1.0]) == 0.4
+
+
+# ---------------------------------------------------------------------------
+# Tests: _dedup_extracted_items
+# ---------------------------------------------------------------------------
+
+
+class TestDedupExtractedItems:
+    def _make_claim(self, subject, predicate, obj, confidence=0.7):
+        from knowledge_service.models import ClaimInput
+
+        return ClaimInput(
+            subject=subject,
+            predicate=predicate,
+            object=obj,
+            object_type="entity",
+            confidence=confidence,
+        )
+
+    def _make_entity(self, uri, label, confidence=0.9):
+        from knowledge_service.models import EntityInput
+
+        return EntityInput(
+            uri=uri,
+            rdf_type="schema:Thing",
+            label=label,
+            properties={},
+            confidence=confidence,
+        )
+
+    def test_no_duplicates_preserved(self):
+        items = [self._make_claim("a", "p", "b"), self._make_claim("c", "p", "d")]
+        cids = ["c1", "c2"]
+        result, result_cids = _dedup_extracted_items(items, cids)
+        assert len(result) == 2
+
+    def test_exact_duplicate_keeps_higher_confidence(self):
+        low = self._make_claim("a", "p", "b", confidence=0.5)
+        high = self._make_claim("a", "p", "b", confidence=0.9)
+        result, result_cids = _dedup_extracted_items([low, high], ["c1", "c2"])
+        assert len(result) == 1
+        assert result[0].confidence == 0.9
+        assert result_cids[0] == "c2"
+
+    def test_case_insensitive_dedup(self):
+        a = self._make_claim("Dopamine", "Increases", "Alertness", confidence=0.7)
+        b = self._make_claim("dopamine", "increases", "alertness", confidence=0.8)
+        result, _ = _dedup_extracted_items([a, b], ["c1", "c2"])
+        assert len(result) == 1
+        assert result[0].confidence == 0.8
+
+    def test_entity_dedup_by_uri(self):
+        a = self._make_entity("dopamine", "dopamine", confidence=0.7)
+        b = self._make_entity("dopamine", "dopamine", confidence=0.9)
+        result, _ = _dedup_extracted_items([a, b], ["c1", "c2"])
+        assert len(result) == 1
+        assert result[0].confidence == 0.9
+
+    def test_different_types_not_deduped(self):
+        claim = self._make_claim("a", "p", "b")
+        entity = self._make_entity("a", "a")
+        result, _ = _dedup_extracted_items([claim, entity], ["c1", "c2"])
+        assert len(result) == 2
