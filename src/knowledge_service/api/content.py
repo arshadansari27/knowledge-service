@@ -157,7 +157,7 @@ async def _process_one_content_request(body: ContentRequest, request: Request) -
     async with pg_pool.acquire() as conn:
         await conn.execute(
             """UPDATE provenance SET chunk_id = NULL
-               WHERE chunk_id IN (SELECT id::text FROM content WHERE content_id = $1)""",
+               WHERE chunk_id IN (SELECT id::text FROM content WHERE content_id = $1::uuid)""",
             content_id,
         )
 
