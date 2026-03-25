@@ -12,7 +12,7 @@ Literal objects (e.g., "250% dopamine increase", "2024-01-15") are incorrectly t
 
 The LLM extraction prompt correctly asks for `object_type` ("entity" or "literal"), but:
 
-- `TripleInput` Pydantic model has no `object_type` field, so the hint is silently dropped
+- `TripleInput` Pydantic model has no `object_type` field, so the hint is silently dropped (Pydantic v2 default `extra='ignore'`)
 - `_resolve_labels()` in `content.py` blindly resolves all objects through `entity_resolver.resolve()`
 - `_apply_uri_fallback()` in `content.py` blindly converts all non-URI objects to entity URIs
 - `normalize_item_uris()` in `llm.py` was designed to handle this correctly but is dead code (never called in the pipeline, only referenced in tests)
@@ -52,14 +52,17 @@ def is_object_entity(item) -> bool:
     Checks the object_type hint first (from LLM or user), falls back to
     heuristic: no spaces and <= 60 chars suggests an entity.
     """
-    obj_type = item.get("object_type", "") if isinstance(item, dict) else getattr(item, "object_type", "")
+    obj_type = item.get("object_type") if isinstance(item, dict) else getattr(item, "object_type", None)
     if obj_type == "entity":
         return True
     if obj_type == "literal":
         return False
+    # Heuristic fallback when object_type is None/missing
     obj = item.get("object", "") if isinstance(item, dict) else getattr(item, "object", "")
     return bool(obj) and " " not in obj and len(obj) <= 60
 ```
+
+**Known limitation:** The heuristic misclassifies short literals without spaces (e.g., "2024-01-15", "250%", "42", "true") as entities. This is acceptable when `object_type` is provided (the common case via LLM extraction). For the `/api/claims` fallback, users should provide `object_type` for ambiguous values. A future improvement could add pattern checks for dates (`\d{4}-\d{2}-\d{2}`), percentages (`\d+%`), and pure numbers.
 
 ### 3. Fix `_resolve_labels` in `content.py`
 
@@ -97,7 +100,9 @@ if obj and not _is_uri(obj) and is_object_entity(item):
 
 In `ExtractionClient.extract()` phase 2, the LLM already produces `object_type` in its output dicts. Currently `normalize_item_uris()` would strip it before Pydantic validation, but since `normalize_item_uris()` is never called, the field is simply dropped by Pydantic's strict validation.
 
-With the new `object_type` field on `TripleInput`, the LLM's hint flows through naturally. No extraction code changes needed.
+With the new `object_type` field on `TripleInput`, the LLM's hint flows through naturally via `TypeAdapter(KnowledgeInput).validate_python()` at lines 412/438. No extraction code changes needed. A unit test should verify the field survives discriminated union validation.
+
+**Note:** `TemporalState` items also come from phase 2 but are already correct — `_resolve_labels` resolves `subject` and `property` but never touches `value`, so literal values in TemporalState are never URI-ified.
 
 ### 6. Delete dead code: `normalize_item_uris` and `_is_object_entity` from `llm.py`
 
@@ -111,35 +116,24 @@ The logic is replaced by `is_object_entity()` in `_utils.py` and the guards in `
 
 Update `test_extraction_client.py` to remove tests for the deleted function, or migrate them to test `is_object_entity` in `_utils.py`.
 
-### 7. Strip `object_type` before storage
+### 7. `expand_to_triples` — no change needed
 
-**File:** `src/knowledge_service/models.py`
+`expand_to_triples()` constructs triple dicts with explicit named keys (`subject`, `predicate`, `object`, `confidence`, `knowledge_type`, `valid_from`, `valid_until`). Since `object_type` is never included in this explicit construction, it is naturally excluded. No code change required.
 
-In `expand_to_triples()`, exclude `object_type` from the triple dicts it produces. It is routing metadata, not RDF data. The existing `_to_rdf_term()` in `knowledge.py` already converts plain strings to RDF Literal nodes.
+## Out of Scope (Follow-up)
 
-### 8. Add entity resolution to `/api/claims`
+### Add entity resolution to `/api/claims`
 
-**File:** `src/knowledge_service/api/claims.py`
+Currently `/api/claims` skips `_resolve_labels` and `_apply_uri_fallback`. This is a separate behavioral change (not a bug fix) — claims that previously stored raw labels would start getting resolved to URIs. Should be handled in a separate PR to isolate risk.
 
-Currently `/api/claims` skips `_resolve_labels` and `_apply_uri_fallback`, so manually submitted claims bypass entity deduplication entirely. Add the same resolution + fallback pipeline:
+### Existing corrupted data
 
-```python
-entity_resolver = getattr(request.app.state, "entity_resolver", None)
-
-for item in body.knowledge:
-    if entity_resolver is not None:
-        _, item = await _resolve_labels(item, entity_resolver)
-    item = _apply_uri_fallback(item)
-    for t in expand_to_triples(item):
-        # ... existing process_triple logic
-```
-
-Import `_resolve_labels` and `_apply_uri_fallback` from `content.py`, or move them to a shared module if preferred.
+Literal objects already stored as entity URIs in production are not addressed by this fix. A cleanup migration may be needed as a follow-up.
 
 ## Data Flow After Fix
 
 ```
-LLM output: {subject: "cold_exposure", predicate: "increases_by", object: "250%", object_type: "literal"}
+LLM output: {subject: "cold_exposure", predicate: "increases", object: "250%", object_type: "literal"}
     |
     v
 Pydantic validation: ClaimInput(object_type="literal")  -- field preserved
@@ -166,16 +160,15 @@ For entities, the flow is unchanged — they still get resolved and URI-ified.
 - Test `_apply_uri_fallback` leaves literal objects as plain strings
 - Test end-to-end: content ingestion with mixed entity/literal objects produces correct RDF terms
 - Test `/api/claims` with `object_type` specified and omitted (heuristic fallback)
-- Verify `expand_to_triples` excludes `object_type` from output dicts
+- Verify `object_type` survives discriminated union validation in `TypeAdapter(KnowledgeInput)`
 
 ## Files Changed
 
 | File | Change |
 |------|--------|
-| `src/knowledge_service/models.py` | Add `object_type` to `TripleInput`; strip in `expand_to_triples` |
+| `src/knowledge_service/models.py` | Add `object_type` to `TripleInput` |
 | `src/knowledge_service/_utils.py` | Add `is_object_entity()` |
 | `src/knowledge_service/api/content.py` | Guard object resolution/fallback on `is_object_entity()` |
-| `src/knowledge_service/api/claims.py` | Add entity resolution + fallback pipeline |
 | `src/knowledge_service/clients/llm.py` | Delete `normalize_item_uris()` and `_is_object_entity()` |
 | `tests/test_extraction_client.py` | Remove/migrate `normalize_item_uris` tests |
 | `tests/` | New tests for literal handling |
