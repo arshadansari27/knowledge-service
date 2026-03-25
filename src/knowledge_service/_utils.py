@@ -50,18 +50,14 @@ def _extract_json(text: str) -> dict | None:
         return json.loads(stripped)
     except (json.JSONDecodeError, ValueError):
         pass
+    decoder = json.JSONDecoder()
     start = stripped.find("{")
     while start != -1:
-        depth = 0
-        for i in range(start, len(stripped)):
-            if stripped[i] == "{":
-                depth += 1
-            elif stripped[i] == "}":
-                depth -= 1
-                if depth == 0:
-                    try:
-                        return json.loads(stripped[start : i + 1])
-                    except (json.JSONDecodeError, ValueError):
-                        break
+        try:
+            obj, _ = decoder.raw_decode(stripped, start)
+            if isinstance(obj, dict):
+                return obj
+        except (json.JSONDecodeError, ValueError):
+            pass
         start = stripped.find("{", start + 1)
     return None

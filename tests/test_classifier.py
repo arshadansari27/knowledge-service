@@ -139,3 +139,8 @@ class TestExtractJson:
         text = 'Output: {"outer": {"inner": {"deep": true}}}'
         result = _extract_json(text)
         assert result == {"outer": {"inner": {"deep": True}}}
+
+    def test_braces_inside_string_values(self):
+        text = 'Result: {"msg": "use {braces} here"}'
+        result = _extract_json(text)
+        assert result == {"msg": "use {braces} here"}
