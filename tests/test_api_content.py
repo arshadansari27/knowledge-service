@@ -981,3 +981,58 @@ class TestApplyUriFallbackLiteralGuard:
         )
         result = _apply_uri_fallback(item)
         assert result.predicate == "http://knowledge.local/schema/increases"
+
+
+# ---------------------------------------------------------------------------
+# Tests: End-to-end literal object handling (Task 6)
+# ---------------------------------------------------------------------------
+
+
+async def test_content_ingestion_preserves_literal_objects(client):
+    """End-to-end: literal objects stay as plain strings through the pipeline."""
+    resp = await client.post(
+        "/api/content",
+        json={
+            "url": "http://example.com/test",
+            "title": "Test",
+            "source_type": "article",
+            "knowledge": [
+                {
+                    "knowledge_type": "Claim",
+                    "subject": "cold_exposure",
+                    "predicate": "increases",
+                    "object": "dopamine",
+                    "object_type": "entity",
+                    "confidence": 0.7,
+                },
+                {
+                    "knowledge_type": "Claim",
+                    "subject": "cold_exposure",
+                    "predicate": "has_effect",
+                    "object": "250% dopamine increase lasting 2 hours",
+                    "object_type": "literal",
+                    "confidence": 0.7,
+                },
+            ],
+        },
+    )
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["triples_created"] == 2
+
+    # Get insert_triple call args from the mock knowledge_store
+    ks = client._transport.app.state.knowledge_store
+    calls = ks.insert_triple.call_args_list
+    assert len(calls) == 2
+
+    # First call: entity object should be a URI
+    entity_call_args = calls[0].args if calls[0].args else ()
+    entity_call_kwargs = calls[0].kwargs if calls[0].kwargs else {}
+    entity_obj = entity_call_args[2] if len(entity_call_args) > 2 else entity_call_kwargs.get("object_")
+    assert entity_obj.startswith("http://")
+
+    # Second call: literal object should NOT be a URI
+    literal_call_args = calls[1].args if calls[1].args else ()
+    literal_call_kwargs = calls[1].kwargs if calls[1].kwargs else {}
+    literal_obj = literal_call_args[2] if len(literal_call_args) > 2 else literal_call_kwargs.get("object_")
+    assert literal_obj == "250% dopamine increase lasting 2 hours"
