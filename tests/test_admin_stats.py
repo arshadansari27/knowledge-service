@@ -91,6 +91,20 @@ async def test_triples_browse_with_filters(stats_client):
     assert resp.status_code == 200
 
 
+async def test_triples_browse_no_duplicates(stats_client):
+    """browse_triples must not return duplicate rows for the same triple."""
+    resp = await stats_client.get("/api/admin/knowledge/triples")
+    assert resp.status_code == 200
+    data = resp.json()
+    items = data["items"]
+    # Check uniqueness by (subject, predicate, object) tuple
+    seen = set()
+    for item in items:
+        key = (item["subject"], item["predicate"], item["object"])
+        assert key not in seen, f"Duplicate triple in browse results: {key}"
+        seen.add(key)
+
+
 async def test_recent_activity_endpoint(stats_client):
     resp = await stats_client.get("/api/admin/stats/activity")
     assert resp.status_code == 200
