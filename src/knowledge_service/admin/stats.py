@@ -149,7 +149,7 @@ async def get_content_items(request: Request) -> list[dict]:
 
     sql = """
         SELECT id, url, title, source_type, tags, ingested_at
-        FROM content
+        FROM content_metadata
         ORDER BY ingested_at DESC
         LIMIT 200
     """
