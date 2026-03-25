@@ -20,7 +20,7 @@ router = APIRouter()
 
 _CHUNK_SIZE = 4000
 _CHUNK_OVERLAP = 200
-_MAX_CONCURRENT_EXTRACTIONS = 4  # Bound parallel LLM calls per content request
+_MAX_CONCURRENT_EXTRACTIONS = 2  # Bound parallel LLM calls per content request
 _MAX_CONCURRENT_CONTENT = 3  # Bound parallel content requests in batch mode
 
 

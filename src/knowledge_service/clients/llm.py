@@ -304,7 +304,7 @@ class ExtractionClient:
         self._client = httpx.AsyncClient(
             base_url=url,
             headers=headers,
-            timeout=httpx.Timeout(connect=5.0, read=120.0, write=10.0, pool=5.0),
+            timeout=httpx.Timeout(connect=5.0, read=600.0, write=10.0, pool=5.0),
         )
 
     @property
