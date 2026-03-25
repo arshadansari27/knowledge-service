@@ -63,3 +63,38 @@ class TestIsObjectEntity:
 
     def test_empty_object_is_not_entity(self):
         assert is_object_entity({"object": ""}) is False
+
+    def test_pydantic_model_with_object_type(self):
+        """Works with Pydantic models (attribute access, not dict)."""
+        from knowledge_service.models import ClaimInput
+
+        item = ClaimInput(
+            subject="x", predicate="p", object="250%",
+            object_type="literal", confidence=0.7,
+        )
+        assert is_object_entity(item) is False
+
+    def test_pydantic_model_entity_heuristic(self):
+        from knowledge_service.models import ClaimInput
+
+        item = ClaimInput(
+            subject="x", predicate="p", object="dopamine", confidence=0.7,
+        )
+        assert is_object_entity(item) is True
+
+
+def test_object_type_survives_discriminated_union():
+    """object_type flows through TypeAdapter(KnowledgeInput) validation."""
+    from pydantic import TypeAdapter
+    from knowledge_service.models import KnowledgeInput
+
+    adapter = TypeAdapter(KnowledgeInput)
+    item = adapter.validate_python({
+        "knowledge_type": "Claim",
+        "subject": "x",
+        "predicate": "p",
+        "object": "250%",
+        "object_type": "literal",
+        "confidence": 0.7,
+    })
+    assert item.object_type == "literal"
