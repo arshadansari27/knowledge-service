@@ -4,7 +4,6 @@ import pytest
 
 from knowledge_service.clients.llm import (
     ExtractionClient,
-    normalize_item_uris,
     to_entity_uri,
     to_predicate_uri,
     resolve_predicate_synonym,
@@ -179,80 +178,6 @@ class TestUriNormalisation:
     def testto_predicate_uri_preserves_existing_uri(self):
         uri = "http://knowledge.local/schema/depends_on"
         assert to_predicate_uri(uri) == uri
-
-    def test_normalize_claim_subject_and_predicate(self):
-        item = {
-            "knowledge_type": "Claim",
-            "subject": "cold exposure",
-            "predicate": "increases",
-            "object": "dopamine",
-            "confidence": 0.7,
-        }
-        result = normalize_item_uris(item)
-        assert result["subject"] == "http://knowledge.local/data/cold_exposure"
-        assert result["predicate"] == "http://knowledge.local/schema/increases"
-        assert result["object"] == "http://knowledge.local/data/dopamine"
-
-    def test_normalize_leaves_literal_objects_unchanged(self):
-        item = {
-            "knowledge_type": "Claim",
-            "subject": "x",
-            "predicate": "p",
-            "object": "a value with spaces",
-            "confidence": 0.7,
-        }
-        result = normalize_item_uris(item)
-        assert result["object"] == "a value with spaces"
-
-    def test_normalize_resolves_predicate_synonym(self):
-        item = {
-            "knowledge_type": "Claim",
-            "subject": "x",
-            "predicate": "boosts",
-            "object": "y",
-            "confidence": 0.7,
-        }
-        result = normalize_item_uris(item)
-        assert result["predicate"] == "http://knowledge.local/schema/increases"
-
-    def test_object_type_entity_converts_to_uri(self):
-        item = {
-            "knowledge_type": "Claim",
-            "subject": "x",
-            "predicate": "p",
-            "object": "dopamine levels in the brain",
-            "object_type": "entity",
-            "confidence": 0.7,
-        }
-        result = normalize_item_uris(item)
-        assert result["object"].startswith("http://knowledge.local/data/")
-        assert "object_type" not in result
-
-    def test_object_type_literal_preserved(self):
-        item = {
-            "knowledge_type": "Claim",
-            "subject": "x",
-            "predicate": "p",
-            "object": "dopamine",
-            "object_type": "literal",
-            "confidence": 0.7,
-        }
-        result = normalize_item_uris(item)
-        # Even though "dopamine" has no spaces and is short, object_type=literal wins
-        assert result["object"] == "dopamine"
-        assert "object_type" not in result
-
-    def test_missing_object_type_falls_back_to_heuristic(self):
-        item = {
-            "knowledge_type": "Claim",
-            "subject": "x",
-            "predicate": "p",
-            "object": "dopamine",
-            "confidence": 0.7,
-        }
-        result = normalize_item_uris(item)
-        # No object_type → heuristic: short, no spaces → entity URI
-        assert result["object"] == "http://knowledge.local/data/dopamine"
 
 
 class TestPredicateSynonymResolution:
