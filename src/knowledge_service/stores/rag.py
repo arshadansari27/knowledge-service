@@ -84,7 +84,9 @@ class RAGRetriever:
         )
         entities_found = [row["uri"] for row in entity_rows]
         triples = await self._lookup_triples_by_subject(entities_found)
-        filtered = self._filter_by_confidence(triples, min_confidence)
+        predicate_triples = await self._lookup_triples_by_predicate(embedding)
+        merged = self._deduplicate_triples(triples + predicate_triples)
+        filtered = self._filter_by_confidence(merged, min_confidence)
         contradictions = await self._detect_contradictions(filtered)
         return RetrievalContext(
             content_results=content_results,
@@ -103,7 +105,9 @@ class RAGRetriever:
             # Fallback: no entities resolved, use semantic
             return await self._retrieve_semantic(question, embedding, max_sources, min_confidence)
         triples = await self._lookup_triples_by_subject(resolved_uris)
-        filtered = self._filter_by_confidence(triples, min_confidence)
+        predicate_triples = await self._lookup_triples_by_predicate(embedding)
+        merged = self._deduplicate_triples(triples + predicate_triples)
+        filtered = self._filter_by_confidence(merged, min_confidence)
         contradictions = await self._detect_contradictions(filtered)
         # Light content search for supporting text
         content_results = await self._embedding_store.search(
@@ -371,6 +375,18 @@ class RAGRetriever:
 
         all_triples.sort(key=lambda t: t.get("confidence") or 0, reverse=True)
         return all_triples[:limit]
+
+    @staticmethod
+    def _deduplicate_triples(triples: list[dict]) -> list[dict]:
+        """Deduplicate triples by (subject, predicate, object). First occurrence wins."""
+        seen: set[tuple[str, str, str]] = set()
+        result = []
+        for t in triples:
+            key = (t.get("subject", ""), t.get("predicate", ""), t.get("object", ""))
+            if key not in seen:
+                seen.add(key)
+                result.append(t)
+        return result
 
     @staticmethod
     def _filter_by_confidence(triples, min_confidence):

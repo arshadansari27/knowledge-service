@@ -448,3 +448,55 @@ class TestPredicateLookup:
         # Should be sorted by confidence descending
         confs = [t["confidence"] for t in triples]
         assert confs == sorted(confs, reverse=True)
+
+
+class TestPredicateIntegration:
+    async def test_semantic_includes_predicate_triples(self):
+        ec = _make_embedding_client()
+        es = _make_embedding_store(predicate_rows=[_PREDICATE_ROW])
+        ks = _make_knowledge_store()
+        ks.get_triples_by_predicate.return_value = [_PREDICATE_TRIPLE]
+        retriever = RAGRetriever(ec, es, ks)
+        ctx = await retriever.retrieve("any sentry issues?", max_sources=5, min_confidence=0.0)
+        assert len(ctx.knowledge_triples) == 1
+        assert ctx.knowledge_triples[0]["predicate"] == "http://knowledge.local/schema/sentry_issue"
+
+    async def test_entity_intent_includes_predicate_triples(self):
+        ec = _make_embedding_client()
+        ec.embed_batch.return_value = [[0.1] * 768]
+        es = _make_embedding_store(predicate_rows=[_PREDICATE_ROW])
+        es.search_entities.return_value = [
+            {"uri": "http://knowledge.local/data/sentry", "similarity": 0.5}
+        ]
+        ks = _make_knowledge_store()
+        ks.get_triples_by_predicate.return_value = [_PREDICATE_TRIPLE]
+        retriever = RAGRetriever(ec, es, ks)
+        intent = QueryIntent(intent="entity", entities=["sentry"])
+        ctx = await retriever.retrieve("sentry issues?", intent=intent)
+        # Entity resolution failed (similarity 0.5 < 0.80), fell back to semantic
+        # but predicate lookup should still find sentry_issue triples
+        assert len(ctx.knowledge_triples) == 1
+
+    async def test_dedup_subject_and_predicate_triples(self):
+        """Same triple from subject lookup and predicate lookup should not duplicate."""
+        ec = _make_embedding_client()
+        entity_row = {
+            "uri": "http://knowledge.local/data/connection_error",
+            "label": "connection_error",
+            "similarity": 0.9,
+        }
+        subject_triple = {
+            "predicate": NamedNode("http://knowledge.local/schema/sentry_issue"),
+            "object": Literal("error"),
+            "confidence": 0.9,
+            "knowledge_type": "Claim",
+            "valid_from": None,
+            "valid_until": None,
+        }
+        es = _make_embedding_store(entity_rows=[entity_row], predicate_rows=[_PREDICATE_ROW])
+        ks = _make_knowledge_store(triples=[subject_triple])
+        ks.get_triples_by_predicate.return_value = [_PREDICATE_TRIPLE]
+        retriever = RAGRetriever(ec, es, ks)
+        ctx = await retriever.retrieve("sentry", max_sources=5, min_confidence=0.0)
+        # Should deduplicate — same (subject, predicate, object) from both lookups
+        assert len(ctx.knowledge_triples) == 1
