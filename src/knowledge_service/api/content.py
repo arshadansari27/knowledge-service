@@ -9,7 +9,7 @@ from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse
 from pydantic import ValidationError
 
-from knowledge_service._utils import _is_uri
+from knowledge_service._utils import _is_uri, is_object_entity
 from knowledge_service.api._ingest import process_triple
 from knowledge_service.clients.llm import (
     to_entity_uri,
@@ -42,7 +42,7 @@ async def _resolve_labels(item, entity_resolver) -> tuple[int, object]:
         if not _is_uri(item.predicate):
             item.predicate = await entity_resolver.resolve_predicate(item.predicate)
             resolved += 1
-        if not _is_uri(item.object):
+        if not _is_uri(item.object) and is_object_entity(item):
             item.object = await entity_resolver.resolve(item.object)
             resolved += 1
     elif kt == "TemporalState":
@@ -75,7 +75,7 @@ def _apply_uri_fallback(item) -> object:
             item.predicate = resolve_predicate_synonym(item.predicate)
             item.predicate = to_predicate_uri(item.predicate)
         obj = item.object
-        if obj and not _is_uri(obj):
+        if obj and not _is_uri(obj) and is_object_entity(item):
             item.object = to_entity_uri(obj)
     elif kt == "TemporalState":
         if not _is_uri(item.subject):

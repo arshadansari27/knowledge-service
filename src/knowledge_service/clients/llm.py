@@ -190,51 +190,6 @@ def to_predicate_uri(value: str) -> str:
     return f"{_KS_PREDICATE}{slug}"
 
 
-def _is_object_entity(item: dict) -> bool:
-    """Decide whether the object field is an entity reference (vs a literal).
-
-    Uses the LLM-provided ``object_type`` hint when available, falling back
-    to the legacy heuristic (no spaces and <=60 chars).
-    """
-    obj_type = item.get("object_type", "")
-    if obj_type == "entity":
-        return True
-    if obj_type == "literal":
-        return False
-    # Legacy heuristic fallback
-    obj = item.get("object", "")
-    return bool(obj) and " " not in obj and len(obj) <= 60
-
-
-def normalize_item_uris(item: dict) -> dict:
-    """Normalize subject/predicate string fields to URIs based on knowledge_type.
-
-    Also resolves predicate synonyms and strips the ``object_type`` helper field.
-    """
-    kt = item.get("knowledge_type", "")
-    item = dict(item)
-    if kt in ("Claim", "Fact", "Relationship"):
-        if "subject" in item:
-            item["subject"] = to_entity_uri(item["subject"])
-        if "predicate" in item:
-            item["predicate"] = resolve_predicate_synonym(item["predicate"])
-            item["predicate"] = to_predicate_uri(item["predicate"])
-        if _is_object_entity(item):
-            item["object"] = to_entity_uri(item["object"])
-    elif kt == "TemporalState":
-        if "subject" in item:
-            item["subject"] = to_entity_uri(item["subject"])
-        if "property" in item:
-            item["property"] = resolve_predicate_synonym(item["property"])
-            item["property"] = to_predicate_uri(item["property"])
-    elif kt == "Event":
-        if "subject" in item:
-            item["subject"] = to_entity_uri(item["subject"])
-    # Strip object_type — not part of the Pydantic model
-    item.pop("object_type", None)
-    return item
-
-
 def _build_entity_extraction_prompt(text: str, title: str | None, source_type: str | None) -> str:
     """Build the phase-1 prompt that extracts Entity and Event items only."""
     context = ""

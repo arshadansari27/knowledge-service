@@ -13,6 +13,25 @@ def _is_uri(value: str) -> bool:
     return value.startswith(("http://", "https://", "urn:"))
 
 
+def is_object_entity(item) -> bool:
+    """Decide whether an item's object field is an entity reference (vs a literal).
+
+    Checks the object_type hint first (from LLM or user), falls back to
+    heuristic: no spaces and <= 60 chars suggests an entity.
+
+    Works with both dicts and Pydantic models.
+    """
+    obj_type = (
+        item.get("object_type") if isinstance(item, dict) else getattr(item, "object_type", None)
+    )
+    if obj_type == "entity":
+        return True
+    if obj_type == "literal":
+        return False
+    obj = item.get("object", "") if isinstance(item, dict) else getattr(item, "object", "")
+    return bool(obj) and " " not in obj and len(obj) <= 60
+
+
 def _to_rdf_term(value: str) -> NamedNode | Literal:
     if _is_uri(value):
         return NamedNode(value)

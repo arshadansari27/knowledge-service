@@ -26,6 +26,7 @@ class TripleInput(BaseModel):
     subject: str
     predicate: str
     object: str
+    object_type: Literal["entity", "literal"] | None = None
     confidence: float = Field(ge=0.0, le=1.0)
     valid_from: date | None = None
     valid_until: date | None = None
