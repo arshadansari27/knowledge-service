@@ -286,7 +286,9 @@ class TestFederationEnrichment:
         assert "federation_enriched" in call_args[0][0]
         assert call_args[0][1] == 2  # 2 triples enriched
 
-    async def test_no_enrichment_without_federation_hit(self, resolver_with_federation, federation_client):
+    async def test_no_enrichment_without_federation_hit(
+        self, resolver_with_federation, federation_client
+    ):
         """When federation lookup returns None, no enrichment task is spawned."""
         federation_client.lookup_entity.return_value = None
         await resolver_with_federation.resolve("PostgreSQL")

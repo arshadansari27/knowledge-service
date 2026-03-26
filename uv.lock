@@ -340,7 +340,7 @@ wheels = [
 
 [[package]]
 name = "knowledge-service"
-version = "0.1.44"
+version = "0.1.46"
 source = { editable = "." }
 dependencies = [
     { name = "asyncpg" },

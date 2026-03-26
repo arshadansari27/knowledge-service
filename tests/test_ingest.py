@@ -177,7 +177,9 @@ async def test_process_triple_detects_opposite_predicate_contradiction():
         "valid_from": None,
         "valid_until": None,
     }
-    _, contras, _pf = await process_triple(t, ks, prov_store, engine, "http://src", "article", "manual")
+    _, contras, _pf = await process_triple(
+        t, ks, prov_store, engine, "http://src", "article", "manual"
+    )
     # Should have detected the opposite-predicate contradiction
     opp = [c for c in contras if "opposite_predicate_in_store" in c]
     assert len(opp) == 1

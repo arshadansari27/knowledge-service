@@ -101,9 +101,7 @@ class EntityResolver:
                 self._cache_entity(cache_key, uri)
 
                 # Fire-and-forget enrichment
-                task = asyncio.create_task(
-                    self._enrich_entity(ext["uri"], job_id, pg_pool)
-                )
+                task = asyncio.create_task(self._enrich_entity(ext["uri"], job_id, pg_pool))
                 self._enrichment_tasks.add(task)
                 task.add_done_callback(self._enrichment_tasks.discard)
 
@@ -117,9 +115,7 @@ class EntityResolver:
         self._cache_entity(cache_key, uri)
         return uri
 
-    async def _enrich_entity(
-        self, external_uri: str, job_id: str | None, pg_pool
-    ) -> None:
+    async def _enrich_entity(self, external_uri: str, job_id: str | None, pg_pool) -> None:
         """Fire-and-forget: fetch enrichment triples and store in ks:graph/federated."""
         try:
             triples = await self._federation_client.enrich_entity(external_uri)
@@ -145,9 +141,7 @@ class EntityResolver:
                         count,
                         job_id,
                     )
-            logger.info(
-                "Federation enrichment stored %d triples for %s", count, external_uri
-            )
+            logger.info("Federation enrichment stored %d triples for %s", count, external_uri)
         except Exception:
             logger.debug("Federation enrichment failed for %s", external_uri, exc_info=True)
 

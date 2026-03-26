@@ -41,7 +41,9 @@ async def _resolve_labels(
 
     if kt in ("Claim", "Fact", "Relationship"):
         if not _is_uri(item.subject):
-            item.subject = await entity_resolver.resolve(item.subject, job_id=job_id, pg_pool=pg_pool)
+            item.subject = await entity_resolver.resolve(
+                item.subject, job_id=job_id, pg_pool=pg_pool
+            )
             resolved += 1
         if not _is_uri(item.predicate):
             item.predicate = await entity_resolver.resolve_predicate(item.predicate)
@@ -51,14 +53,18 @@ async def _resolve_labels(
             resolved += 1
     elif kt == "TemporalState":
         if not _is_uri(item.subject):
-            item.subject = await entity_resolver.resolve(item.subject, job_id=job_id, pg_pool=pg_pool)
+            item.subject = await entity_resolver.resolve(
+                item.subject, job_id=job_id, pg_pool=pg_pool
+            )
             resolved += 1
         if not _is_uri(item.property):
             item.property = await entity_resolver.resolve_predicate(item.property)
             resolved += 1
     elif kt == "Event":
         if not _is_uri(item.subject):
-            item.subject = await entity_resolver.resolve(item.subject, job_id=job_id, pg_pool=pg_pool)
+            item.subject = await entity_resolver.resolve(
+                item.subject, job_id=job_id, pg_pool=pg_pool
+            )
             resolved += 1
 
     return resolved, item
