@@ -5,6 +5,8 @@ from __future__ import annotations
 import json
 import logging
 
+import asyncpg.exceptions
+
 from fastapi import APIRouter, BackgroundTasks, Request
 from fastapi.responses import JSONResponse
 from pydantic import ValidationError
@@ -160,26 +162,19 @@ async def _accept_content_request(body: ContentRequest, pg_pool, embedding_store
         )
         chunk_records = chunk_records[:_MAX_CHUNKS]
 
-    # Step 4: Check for active job (idempotency guard)
+    # Step 4+5: Atomically create job if no active one exists
     async with pg_pool.acquire() as conn:
-        active = await conn.fetchrow(
-            """SELECT id FROM ingestion_jobs
-               WHERE content_id = $1::uuid AND status NOT IN ('completed', 'failed')""",
-            content_id,
-        )
-    if active:
-        return {"conflict": True, "content_id": content_id}
-
-    # Step 5: Create ingestion job
-    async with pg_pool.acquire() as conn:
-        job_row = await conn.fetchrow(
-            """INSERT INTO ingestion_jobs (content_id, chunks_total, chunks_capped_from)
-               VALUES ($1::uuid, $2, $3)
-               RETURNING id""",
-            content_id,
-            len(chunk_records),
-            chunks_capped_from,
-        )
+        try:
+            job_row = await conn.fetchrow(
+                """INSERT INTO ingestion_jobs (content_id, chunks_total, chunks_capped_from)
+                   VALUES ($1::uuid, $2, $3)
+                   RETURNING id""",
+                content_id,
+                len(chunk_records),
+                chunks_capped_from,
+            )
+        except asyncpg.exceptions.UniqueViolationError:
+            return {"conflict": True, "content_id": content_id}
     job_id = str(job_row["id"])
 
     return {
