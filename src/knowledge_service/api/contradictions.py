@@ -8,7 +8,7 @@ from fastapi import APIRouter, Query, Request
 from pydantic import BaseModel
 
 from knowledge_service._utils import _triple_hash, _rdf_value_to_str
-from knowledge_service.ontology.namespaces import KS_CONFIDENCE, KS_OPPOSITE_PREDICATE
+from knowledge_service.ontology.namespaces import KS_CONFIDENCE, KS_OPPOSITE_PREDICATE, OWL
 from knowledge_service.stores.provenance import ProvenanceStore
 
 router = APIRouter()
@@ -52,21 +52,28 @@ async def get_contradictions(
 ) -> list[ContradictionResponse]:
     """Find all contradictions in the knowledge graph.
 
-    A contradiction is a pair of triples that share the same subject and predicate
-    but have different objects. The contradiction probability is computed as the
-    product of both claims' individual confidence scores.
+    Two patterns are detected:
+    - **Value conflict**: same subject + single-valued predicate (owl:FunctionalProperty)
+      but different objects. Multi-valued predicates like has_property are excluded.
+    - **Opposite predicates**: same subject + object but predicates declared as opposites
+      (e.g., increases vs decreases).
 
-    Optional query parameter:
-    - ``min_confidence``: filter out pairs whose contradiction probability is below
-      this threshold (default: 0.0, i.e. return all pairs).
+    The contradiction probability is the product of both claims' confidence scores.
     """
     knowledge_store = request.app.state.knowledge_store
     pg_pool = request.app.state.pg_pool
 
     provenance_store = ProvenanceStore(pg_pool)
 
+    # Pattern A: same subject+predicate, different objects — only for functional
+    # (single-valued) properties. Multi-valued predicates like has_property,
+    # related_to, etc. naturally have multiple objects and are NOT contradictions.
+    owl_functional = f"{OWL}FunctionalProperty"
     sparql = f"""
         SELECT ?s ?p ?o1 ?o2 ?conf1 ?conf2 WHERE {{
+            GRAPH ?gont {{
+                ?p a <{owl_functional}> .
+            }}
             GRAPH ?g {{
                 ?s ?p ?o1 .
                 ?s ?p ?o2 .

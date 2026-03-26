@@ -2,6 +2,7 @@
 @prefix rdf:   <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
 @prefix rdfs:  <http://www.w3.org/2000/01/rdf-schema#> .
 @prefix xsd:   <http://www.w3.org/2001/XMLSchema#> .
+@prefix owl:   <http://www.w3.org/2002/07/owl#> .
 
 # Knowledge type classes
 ks:KnowledgeType   rdf:type rdfs:Class ; rdfs:label "Knowledge Type" .
@@ -22,8 +23,8 @@ ks:concludes           rdf:type rdf:Property ; rdfs:label "concludes" .
 ks:derivedFrom         rdf:type rdf:Property ; rdfs:label "derived from" .
 ks:inferenceMethod     rdf:type rdf:Property ; rdfs:label "inference method" .
 ks:occurredAt          rdf:type rdf:Property ; rdfs:label "occurred at" .
-ks:amount              rdf:type rdf:Property ; rdfs:label "amount" .
-ks:currency            rdf:type rdf:Property ; rdfs:label "currency" .
+ks:amount              rdf:type rdf:Property, owl:FunctionalProperty ; rdfs:label "amount" .
+ks:currency            rdf:type rdf:Property, owl:FunctionalProperty ; rdfs:label "currency" .
 ks:oppositePredicate   rdf:type rdf:Property ; rdfs:label "opposite predicate" .
 ks:inversePredicate    rdf:type rdf:Property ; rdfs:label "inverse predicate" .
 
