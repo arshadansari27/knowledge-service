@@ -9,7 +9,7 @@ from dataclasses import dataclass, field
 from knowledge_service._utils import _rdf_value_to_str
 from knowledge_service.clients.classifier import QueryIntent
 from knowledge_service.clients.llm import to_entity_uri
-from knowledge_service.ontology.namespaces import KS_GRAPH_ASSERTED
+from knowledge_service.ontology.namespaces import KS_GRAPH_ASSERTED, KS_GRAPH_FEDERATED
 from knowledge_service.stores.graph_traversal import GraphTraverser
 
 logger = logging.getLogger(__name__)
@@ -330,7 +330,12 @@ class RAGRetriever:
                 t["predicate"] = _rdf_value_to_str(t.get("predicate"))
                 t["object"] = _rdf_value_to_str(t.get("object"))
                 graph = t.get("graph", "")
-                t["trust_tier"] = "verified" if graph == KS_GRAPH_ASSERTED else "extracted"
+                if graph == KS_GRAPH_ASSERTED:
+                    t["trust_tier"] = "verified"
+                elif graph == KS_GRAPH_FEDERATED:
+                    t["trust_tier"] = "federated"
+                else:
+                    t["trust_tier"] = "extracted"
             all_triples.extend(triples)
         return all_triples
 
@@ -343,7 +348,12 @@ class RAGRetriever:
                 t["subject"] = _rdf_value_to_str(t.get("subject"))
                 t["predicate"] = _rdf_value_to_str(t.get("predicate"))
                 graph = t.get("graph", "")
-                t["trust_tier"] = "verified" if graph == KS_GRAPH_ASSERTED else "extracted"
+                if graph == KS_GRAPH_ASSERTED:
+                    t["trust_tier"] = "verified"
+                elif graph == KS_GRAPH_FEDERATED:
+                    t["trust_tier"] = "federated"
+                else:
+                    t["trust_tier"] = "extracted"
             all_triples.extend(triples)
         return all_triples
 
@@ -368,7 +378,12 @@ class RAGRetriever:
                 t["predicate"] = _rdf_value_to_str(t.get("predicate"))
                 t["object"] = _rdf_value_to_str(t.get("object"))
                 graph = t.get("graph", "")
-                t["trust_tier"] = "verified" if graph == KS_GRAPH_ASSERTED else "extracted"
+                if graph == KS_GRAPH_ASSERTED:
+                    t["trust_tier"] = "verified"
+                elif graph == KS_GRAPH_FEDERATED:
+                    t["trust_tier"] = "federated"
+                else:
+                    t["trust_tier"] = "extracted"
             all_triples.extend(triples)
 
         all_triples.sort(key=lambda t: t.get("confidence") or 0, reverse=True)
