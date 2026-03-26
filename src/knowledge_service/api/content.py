@@ -324,7 +324,7 @@ async def _run_ingestion_worker(
         for i, item in enumerate(knowledge):
             for t in expand_to_triples(item):
                 cid = chunk_ids_for_items[i] if i < len(chunk_ids_for_items) else None
-                is_new, _contras = await process_triple(
+                is_new, _contras, prov_failed = await process_triple(
                     t,
                     knowledge_store,
                     provenance_store,
@@ -336,6 +336,12 @@ async def _run_ingestion_worker(
                 )
                 if is_new:
                     triples_created += 1
+                if prov_failed:
+                    logger.warning(
+                        "Provenance lost for triple in job %s from %s",
+                        job_id,
+                        body.url,
+                    )
 
         # Log ingestion event
         async with pg_pool.acquire() as conn:
