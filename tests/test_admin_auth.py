@@ -25,21 +25,26 @@ def test_config_requires_admin_password(monkeypatch):
 def test_config_accepts_admin_password(monkeypatch):
     """Settings should accept ADMIN_PASSWORD when set."""
     monkeypatch.setenv("ADMIN_PASSWORD", "test-password-123")
+    monkeypatch.setenv("SECRET_KEY", "test-secret-key-123")
     from knowledge_service.config import Settings
 
     s = Settings()
     assert s.admin_password == "test-password-123"
 
 
-def test_secret_key_has_default(monkeypatch):
-    """SECRET_KEY should have a generated default when not set."""
+def test_secret_key_is_required(monkeypatch):
+    """SECRET_KEY must be explicitly set — no auto-generated default."""
     monkeypatch.setenv("ADMIN_PASSWORD", "test-password-123")
     monkeypatch.delenv("SECRET_KEY", raising=False)
+    from pydantic import ValidationError
     from knowledge_service.config import Settings
 
-    s = Settings()
-    assert s.secret_key is not None
-    assert len(s.secret_key) >= 32
+    with pytest.raises(ValidationError) as exc_info:
+        Settings()
+
+    errors = exc_info.value.errors()
+    missing_fields = [e["loc"][0] for e in errors if e["type"] == "missing"]
+    assert "secret_key" in missing_fields
 
 
 @pytest.fixture
