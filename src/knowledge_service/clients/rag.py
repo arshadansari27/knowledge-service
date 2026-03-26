@@ -5,9 +5,8 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass, field
 
-import httpx
-
 from knowledge_service._utils import _extract_json
+from knowledge_service.clients.base import BaseLLMClient
 from knowledge_service.stores.rag import RetrievalContext
 
 logger = logging.getLogger(__name__)
@@ -76,19 +75,11 @@ def build_rag_prompt(question: str, context: RetrievalContext) -> str:
     return "\n".join(sections)
 
 
-class RAGClient:
+class RAGClient(BaseLLMClient):
     """Calls the LLM with retrieval context to generate answers."""
 
     def __init__(self, base_url: str, model: str, api_key: str) -> None:
-        self._model = model
-        headers = {}
-        if api_key:
-            headers["Authorization"] = f"Bearer {api_key}"
-        self._client = httpx.AsyncClient(
-            base_url=base_url.rstrip("/").removesuffix("/v1"),
-            headers=headers,
-            timeout=httpx.Timeout(connect=5.0, read=120.0, write=10.0, pool=5.0),
-        )
+        super().__init__(base_url, model, api_key, read_timeout=120.0)
 
     async def answer(self, question: str, context: RetrievalContext) -> RAGAnswer:
         """Generate an answer from the question and retrieval context."""
@@ -113,8 +104,3 @@ class RAGClient:
             )
         logger.warning("RAGClient: could not parse JSON response, using raw text")
         return RAGAnswer(answer=raw, source_urls_cited=[])
-
-    async def close(self) -> None:
-        """Close the underlying HTTP client."""
-        if not self._client.is_closed:
-            await self._client.aclose()

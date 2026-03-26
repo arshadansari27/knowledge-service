@@ -472,6 +472,78 @@ class TestPostKnowledgeSparql:
 
 
 # ---------------------------------------------------------------------------
+# Tests: Error handling for invalid SPARQL queries
+# ---------------------------------------------------------------------------
+
+
+class TestSparqlErrorHandling:
+    async def test_get_knowledge_query_invalid_sparql_returns_400(self):
+        """GET /api/knowledge/query returns 400 for SPARQL parse errors."""
+        app = create_app(use_lifespan=False)
+        mock_ks = _make_knowledge_store_mock()
+        mock_ks.query.side_effect = Exception("Parse error: invalid SPARQL syntax")
+        app.state.knowledge_store = mock_ks
+        app.state.pg_pool = _make_pg_pool_mock()
+
+        transport = ASGITransport(app=app)
+        async with AsyncClient(
+            transport=transport,
+            base_url="http://test",
+            cookies={"ks_session": make_test_session_cookie()},
+        ) as c:
+            response = await c.get("/api/knowledge/query", params={"subject": _SAMPLE_SUBJECT})
+
+        assert response.status_code == 400
+        assert "SPARQL query failed" in response.json()["detail"]
+
+    async def test_post_knowledge_sparql_invalid_query_returns_400(self):
+        """POST /api/knowledge/sparql returns 400 for SPARQL parse errors."""
+        app = create_app(use_lifespan=False)
+        mock_ks = _make_knowledge_store_mock()
+        mock_ks.query.side_effect = Exception("Parse error: invalid SPARQL syntax")
+        app.state.knowledge_store = mock_ks
+        app.state.pg_pool = _make_pg_pool_mock()
+
+        transport = ASGITransport(app=app)
+        async with AsyncClient(
+            transport=transport,
+            base_url="http://test",
+            cookies={"ks_session": make_test_session_cookie()},
+        ) as c:
+            response = await c.post(
+                "/api/knowledge/sparql",
+                json={"query": "INVALID SPARQL"},
+            )
+
+        assert response.status_code == 400
+        assert "SPARQL query failed" in response.json()["detail"]
+
+    async def test_sparql_error_detail_includes_exception_message(self):
+        """Error detail includes the underlying exception message."""
+        app = create_app(use_lifespan=False)
+        mock_ks = _make_knowledge_store_mock()
+        mock_ks.query.side_effect = Exception("Parse error: unexpected token")
+        app.state.knowledge_store = mock_ks
+        app.state.pg_pool = _make_pg_pool_mock()
+
+        transport = ASGITransport(app=app)
+        async with AsyncClient(
+            transport=transport,
+            base_url="http://test",
+            cookies={"ks_session": make_test_session_cookie()},
+        ) as c:
+            response = await c.post(
+                "/api/knowledge/sparql",
+                json={"query": "SELECT ?x WHERE { INVALID }"},
+            )
+
+        assert response.status_code == 400
+        detail = response.json()["detail"]
+        assert "SPARQL query failed" in detail
+        assert "unexpected token" in detail
+
+
+# ---------------------------------------------------------------------------
 # Tests: GET /api/knowledge/query — local-only results
 # ---------------------------------------------------------------------------
 

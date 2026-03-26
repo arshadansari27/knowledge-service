@@ -13,6 +13,11 @@ def _is_uri(value: str) -> bool:
     return value.startswith(("http://", "https://", "urn:"))
 
 
+def sanitize_sparql_string(value: str) -> str:
+    """Sanitize a string for safe inclusion in SPARQL queries."""
+    return re.sub(r'["\\\n\r]', "", value)
+
+
 def is_object_entity(item) -> bool:
     """Decide whether an item's object field is an entity reference (vs a literal).
 

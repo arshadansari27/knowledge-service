@@ -8,6 +8,7 @@ from dataclasses import dataclass, field
 import httpx
 
 from knowledge_service._utils import _extract_json
+from knowledge_service.clients.base import BaseLLMClient
 
 logger = logging.getLogger(__name__)
 
@@ -35,19 +36,11 @@ class QueryIntent:
     entities: list[str] = field(default_factory=list)
 
 
-class QueryClassifier:
+class QueryClassifier(BaseLLMClient):
     """Classifies questions into retrieval intent types via LLM."""
 
     def __init__(self, base_url: str, model: str, api_key: str) -> None:
-        self._model = model
-        headers = {}
-        if api_key:
-            headers["Authorization"] = f"Bearer {api_key}"
-        self._client = httpx.AsyncClient(
-            base_url=base_url.rstrip("/").removesuffix("/v1"),
-            headers=headers,
-            timeout=httpx.Timeout(connect=5.0, read=30.0, write=10.0, pool=5.0),
-        )
+        super().__init__(base_url, model, api_key, read_timeout=30.0)
 
     async def classify(self, question: str) -> QueryIntent:
         """Classify a question into a retrieval intent.
@@ -91,7 +84,3 @@ class QueryClassifier:
             entities,
         )
         return QueryIntent(intent=intent, entities=entities)
-
-    async def close(self) -> None:
-        if not self._client.is_closed:
-            await self._client.aclose()

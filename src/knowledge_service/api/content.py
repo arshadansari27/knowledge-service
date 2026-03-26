@@ -4,6 +4,9 @@ from __future__ import annotations
 
 import json
 import logging
+from enum import StrEnum
+
+import asyncpg.exceptions
 
 from fastapi import APIRouter, BackgroundTasks, Request
 from fastapi.responses import JSONResponse
@@ -23,10 +26,19 @@ from knowledge_service.stores.provenance import ProvenanceStore
 router = APIRouter()
 logger = logging.getLogger(__name__)
 
-_CHUNK_SIZE = 4000
-_CHUNK_OVERLAP = 200
-_MAX_CHUNKS = 50
-_EMBED_BATCH_SIZE = 20
+
+class JobPhase(StrEnum):
+    EMBEDDING = "embedding"
+    EXTRACTING = "extracting"
+    PROCESSING = "processing"
+    COMPLETED = "completed"
+    FAILED = "failed"
+
+
+_CHUNK_SIZE = settings.chunk_size
+_CHUNK_OVERLAP = settings.chunk_overlap
+_MAX_CHUNKS = settings.max_chunks
+_EMBED_BATCH_SIZE = settings.embed_batch_size
 
 
 async def _resolve_labels(
@@ -160,26 +172,19 @@ async def _accept_content_request(body: ContentRequest, pg_pool, embedding_store
         )
         chunk_records = chunk_records[:_MAX_CHUNKS]
 
-    # Step 4: Check for active job (idempotency guard)
+    # Step 4+5: Atomically create job if no active one exists
     async with pg_pool.acquire() as conn:
-        active = await conn.fetchrow(
-            """SELECT id FROM ingestion_jobs
-               WHERE content_id = $1::uuid AND status NOT IN ('completed', 'failed')""",
-            content_id,
-        )
-    if active:
-        return {"conflict": True, "content_id": content_id}
-
-    # Step 5: Create ingestion job
-    async with pg_pool.acquire() as conn:
-        job_row = await conn.fetchrow(
-            """INSERT INTO ingestion_jobs (content_id, chunks_total, chunks_capped_from)
-               VALUES ($1::uuid, $2, $3)
-               RETURNING id""",
-            content_id,
-            len(chunk_records),
-            chunks_capped_from,
-        )
+        try:
+            job_row = await conn.fetchrow(
+                """INSERT INTO ingestion_jobs (content_id, chunks_total, chunks_capped_from)
+                   VALUES ($1::uuid, $2, $3)
+                   RETURNING id""",
+                content_id,
+                len(chunk_records),
+                chunks_capped_from,
+            )
+        except asyncpg.exceptions.UniqueViolationError:
+            return {"conflict": True, "content_id": content_id}
     job_id = str(job_row["id"])
 
     return {
@@ -219,7 +224,7 @@ async def _run_ingestion_worker(
 
         embedding_store = EmbeddingStore(pg_pool)
 
-    current_phase = "embedding"
+    current_phase = JobPhase.EMBEDDING
     try:
         # --- Phase 1: Embedding ---
         async with pg_pool.acquire() as conn:
@@ -254,7 +259,7 @@ async def _run_ingestion_worker(
         chunk_id_map = dict(chunk_id_pairs) if chunk_id_pairs else {}
 
         # --- Phase 2: Extraction ---
-        current_phase = "extracting"
+        current_phase = JobPhase.EXTRACTING
         async with pg_pool.acquire() as conn:
             await conn.execute(
                 "UPDATE ingestion_jobs SET status = 'extracting' WHERE id = $1::uuid", job_id
@@ -306,7 +311,7 @@ async def _run_ingestion_worker(
         extractor = f"llm_{settings.llm_chat_model}" if extracted_by_llm else "api"
 
         # --- Phase 3: Processing ---
-        current_phase = "processing"
+        current_phase = JobPhase.PROCESSING
         async with pg_pool.acquire() as conn:
             await conn.execute(
                 "UPDATE ingestion_jobs SET status = 'processing' WHERE id = $1::uuid", job_id
@@ -373,6 +378,12 @@ async def _run_ingestion_worker(
             )
 
     except Exception as exc:
+        # Clean up orphaned chunks from Phase 1
+        try:
+            await embedding_store.delete_chunks(content_id)
+        except Exception:
+            logger.warning("Failed to clean up chunks for failed job %s", job_id)
+
         error_json = json.dumps(
             {
                 "type": type(exc).__name__,

@@ -23,6 +23,9 @@ _RATE_WINDOW = 60  # seconds
 _MAX_TRACKED_IPS = 1000
 
 
+_MAX_TRACKED_IPS = 1000
+
+
 def _is_rate_limited(ip: str) -> bool:
     """Check if an IP has exceeded the login attempt rate limit."""
     now = time.monotonic()

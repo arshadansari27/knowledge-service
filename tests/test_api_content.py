@@ -5,6 +5,7 @@ mocked — no real services are required.
 """
 
 import pytest
+import asyncpg.exceptions
 from contextlib import asynccontextmanager
 from unittest.mock import AsyncMock, MagicMock
 from httpx import AsyncClient, ASGITransport
@@ -26,8 +27,6 @@ def _make_pg_pool_mock():
     async def _fetchrow(sql, *args):
         if "ingestion_jobs" in sql and "INSERT" in sql:
             return {"id": "job-uuid-1234"}
-        if "ingestion_jobs" in sql and "SELECT" in sql and "status NOT IN" in sql:
-            return None  # no active job
         return {"id": "content-uuid-1234"}
 
     mock_conn.fetchrow.side_effect = _fetchrow
@@ -472,19 +471,21 @@ class TestPostContentBatch:
 
 class TestIdempotencyGuard:
     async def test_active_job_returns_409(self):
-        """Second request for same content_id returns 409 when job is active."""
+        """Second request for same content_id returns 409 when partial unique index fires."""
 
-        call_count = 0
+        insert_count = 0
 
         async def _fetchrow(sql, *args):
-            nonlocal call_count
+            nonlocal insert_count
             if "ingestion_jobs" in sql and "INSERT" in sql:
+                insert_count += 1
+                if insert_count > 1:
+                    # Simulate the partial unique index rejecting a duplicate active job
+                    raise asyncpg.exceptions.UniqueViolationError(
+                        "duplicate key value violates unique constraint "
+                        '"idx_ingestion_jobs_active_content"'
+                    )
                 return {"id": "job-uuid-1234"}
-            if "ingestion_jobs" in sql and "SELECT" in sql and "status NOT IN" in sql:
-                call_count += 1
-                if call_count > 1:
-                    return {"id": "existing-job"}  # active job exists
-                return None  # first call: no active job
             return {"id": "content-uuid-1234"}
 
         mock_conn = AsyncMock()
@@ -510,7 +511,7 @@ class TestIdempotencyGuard:
             resp1 = await c.post("/api/content", json=MINIMAL_PAYLOAD)
             assert resp1.status_code == 202
 
-            # Second request gets 409
+            # Second request gets 409 because the unique index blocks the INSERT
             resp2 = await c.post("/api/content", json=MINIMAL_PAYLOAD)
             assert resp2.status_code == 409
 
