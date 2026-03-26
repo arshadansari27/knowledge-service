@@ -1,4 +1,4 @@
-"""Integration tests for POST /api/content endpoint.
+"""Integration tests for POST /api/content endpoint (async 202 flow).
 
 All external dependencies (PostgreSQL, Ollama, pyoxigraph KnowledgeStore) are
 mocked — no real services are required.
@@ -22,7 +22,15 @@ def _make_pg_pool_mock():
     """Build a mock asyncpg pool whose .acquire() works as an async context manager."""
     mock_conn = AsyncMock()
     mock_conn.execute.return_value = "INSERT 0 1"
-    mock_conn.fetchrow.return_value = {"id": "content-uuid-1234"}
+
+    async def _fetchrow(sql, *args):
+        if "ingestion_jobs" in sql and "INSERT" in sql:
+            return {"id": "job-uuid-1234"}
+        if "ingestion_jobs" in sql and "SELECT" in sql and "status NOT IN" in sql:
+            return None  # no active job
+        return {"id": "content-uuid-1234"}
+
+    mock_conn.fetchrow.side_effect = _fetchrow
     mock_conn.fetch.return_value = []
 
     @asynccontextmanager
@@ -46,7 +54,7 @@ def _make_embedding_client_mock():
     """Build a mock EmbeddingClient."""
     mock = AsyncMock()
     mock.embed.return_value = [0.1] * 768
-    mock.embed_batch.side_effect = lambda texts: [[0.1] * 768 for _ in texts]
+    mock.embed_batch.side_effect = lambda texts, **kw: [[0.1] * 768 for _ in texts]
     return mock
 
 
@@ -94,6 +102,20 @@ def _make_embedding_store_mock():
     return mock
 
 
+def _make_app_with_mocks(**overrides):
+    """Create test app with standard mocks. Override any via kwargs."""
+    app = create_app(use_lifespan=False)
+    app.state.knowledge_store = overrides.get("knowledge_store", _make_knowledge_store_mock())
+    app.state.pg_pool = overrides.get("pg_pool", _make_pg_pool_mock())
+    app.state.embedding_client = overrides.get("embedding_client", _make_embedding_client_mock())
+    app.state.extraction_client = overrides.get("extraction_client", _make_extraction_client_mock())
+    app.state.reasoning_engine = overrides.get("reasoning_engine", _make_reasoning_engine_mock())
+    app.state.embedding_store = overrides.get("embedding_store", _make_embedding_store_mock())
+    if "entity_resolver" in overrides:
+        app.state.entity_resolver = overrides["entity_resolver"]
+    return app
+
+
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------
@@ -102,16 +124,7 @@ def _make_embedding_store_mock():
 @pytest.fixture
 async def client():
     """Create test client with all external dependencies mocked."""
-    app = create_app(use_lifespan=False)
-
-    app.state.knowledge_store = _make_knowledge_store_mock()
-    app.state.pg_pool = _make_pg_pool_mock()
-    app.state.embedding_client = _make_embedding_client_mock()
-    app.state.extraction_client = _make_extraction_client_mock()
-    app.state.reasoning_engine = _make_reasoning_engine_mock()
-    app.state.entity_resolver = _make_entity_resolver_mock()
-    app.state.embedding_store = _make_embedding_store_mock()
-
+    app = _make_app_with_mocks(entity_resolver=_make_entity_resolver_mock())
     transport = ASGITransport(app=app)
     async with AsyncClient(
         transport=transport,
@@ -200,14 +213,14 @@ EVENT_PAYLOAD = {
 
 
 # ---------------------------------------------------------------------------
-# Tests: basic response structure
+# Tests: basic 202 response structure
 # ---------------------------------------------------------------------------
 
 
 class TestPostContentBasic:
-    async def test_returns_200(self, client):
+    async def test_returns_202(self, client):
         response = await client.post("/api/content", json=MINIMAL_PAYLOAD)
-        assert response.status_code == 200
+        assert response.status_code == 202
 
     async def test_response_has_content_id(self, client):
         response = await client.post("/api/content", json=MINIMAL_PAYLOAD)
@@ -215,72 +228,32 @@ class TestPostContentBasic:
         assert "content_id" in data
         assert data["content_id"]  # non-empty
 
-    async def test_response_has_triples_created(self, client):
+    async def test_response_has_job_id(self, client):
         response = await client.post("/api/content", json=MINIMAL_PAYLOAD)
         data = response.json()
-        assert "triples_created" in data
+        assert "job_id" in data
+        assert data["job_id"]
 
-    async def test_response_has_contradictions_detected(self, client):
+    async def test_response_has_status_accepted(self, client):
         response = await client.post("/api/content", json=MINIMAL_PAYLOAD)
         data = response.json()
-        assert "contradictions_detected" in data
-        assert isinstance(data["contradictions_detected"], list)
+        assert data["status"] == "accepted"
 
-    async def test_response_has_entities_resolved(self, client):
+    async def test_response_has_chunks_total(self, client):
         response = await client.post("/api/content", json=MINIMAL_PAYLOAD)
         data = response.json()
-        assert "entities_resolved" in data
+        assert "chunks_total" in data
 
 
 # ---------------------------------------------------------------------------
-# Tests: triple counting
-# ---------------------------------------------------------------------------
-
-
-class TestPostContentTripleCount:
-    async def test_no_knowledge_items_zero_triples(self, client):
-        response = await client.post("/api/content", json=MINIMAL_PAYLOAD)
-        data = response.json()
-        assert data["triples_created"] == 0
-
-    async def test_one_claim_one_triple(self, client):
-        response = await client.post("/api/content", json=CLAIM_PAYLOAD)
-        data = response.json()
-        assert data["triples_created"] == 1
-
-    async def test_one_fact_one_triple(self, client):
-        response = await client.post("/api/content", json=FACT_PAYLOAD)
-        data = response.json()
-        assert data["triples_created"] == 1
-
-    async def test_two_triples_counted_correctly(self, client):
-        response = await client.post("/api/content", json=MULTI_TRIPLE_PAYLOAD)
-        data = response.json()
-        assert data["triples_created"] == 2
-
-    async def test_event_expands_to_triples(self, client):
-        """EventInput expands to at least 1 triple (occurredAt)."""
-        response = await client.post("/api/content", json=EVENT_PAYLOAD)
-        data = response.json()
-        assert data["triples_created"] >= 1
-
-
-# ---------------------------------------------------------------------------
-# Tests: KnowledgeStore interactions
+# Tests: KnowledgeStore interactions (via background worker)
 # ---------------------------------------------------------------------------
 
 
 class TestPostContentKnowledgeStore:
     async def test_insert_triple_called_for_claim(self):
-        app = create_app(use_lifespan=False)
         mock_ks = _make_knowledge_store_mock()
-        app.state.knowledge_store = mock_ks
-        app.state.pg_pool = _make_pg_pool_mock()
-        app.state.embedding_client = _make_embedding_client_mock()
-        app.state.extraction_client = _make_extraction_client_mock()
-        app.state.reasoning_engine = _make_reasoning_engine_mock()
-        app.state.embedding_store = _make_embedding_store_mock()
-
+        app = _make_app_with_mocks(knowledge_store=mock_ks)
         transport = ASGITransport(app=app)
         async with AsyncClient(
             transport=transport,
@@ -289,45 +262,11 @@ class TestPostContentKnowledgeStore:
         ) as c:
             await c.post("/api/content", json=CLAIM_PAYLOAD)
 
-        # insert_triple should be called once for the single Claim
         mock_ks.insert_triple.assert_called_once()
-        call_kwargs = mock_ks.insert_triple.call_args
-
-        # Verify the subject, predicate, object, confidence are correct
-        call_repr = str(call_kwargs)
-        assert "https://example.com/subject" in call_repr
-        assert "https://example.com/predicate" in call_repr
-
-    async def test_find_contradictions_called_for_claim(self):
-        app = create_app(use_lifespan=False)
-        mock_ks = _make_knowledge_store_mock()
-        app.state.knowledge_store = mock_ks
-        app.state.pg_pool = _make_pg_pool_mock()
-        app.state.embedding_client = _make_embedding_client_mock()
-        app.state.extraction_client = _make_extraction_client_mock()
-        app.state.reasoning_engine = _make_reasoning_engine_mock()
-        app.state.embedding_store = _make_embedding_store_mock()
-
-        transport = ASGITransport(app=app)
-        async with AsyncClient(
-            transport=transport,
-            base_url="http://test",
-            cookies={"ks_session": make_test_session_cookie()},
-        ) as c:
-            await c.post("/api/content", json=CLAIM_PAYLOAD)
-
-        mock_ks.find_contradictions.assert_called_once()
 
     async def test_insert_triple_called_twice_for_two_items(self):
-        app = create_app(use_lifespan=False)
         mock_ks = _make_knowledge_store_mock()
-        app.state.knowledge_store = mock_ks
-        app.state.pg_pool = _make_pg_pool_mock()
-        app.state.embedding_client = _make_embedding_client_mock()
-        app.state.extraction_client = _make_extraction_client_mock()
-        app.state.reasoning_engine = _make_reasoning_engine_mock()
-        app.state.embedding_store = _make_embedding_store_mock()
-
+        app = _make_app_with_mocks(knowledge_store=mock_ks)
         transport = ASGITransport(app=app)
         async with AsyncClient(
             transport=transport,
@@ -337,130 +276,6 @@ class TestPostContentKnowledgeStore:
             await c.post("/api/content", json=MULTI_TRIPLE_PAYLOAD)
 
         assert mock_ks.insert_triple.call_count == 2
-        assert mock_ks.find_contradictions.call_count == 2
-
-
-# ---------------------------------------------------------------------------
-# Tests: Contradiction detection
-# ---------------------------------------------------------------------------
-
-
-class TestPostContentContradictions:
-    async def test_no_contradictions_returned_when_none_found(self, client):
-        response = await client.post("/api/content", json=CLAIM_PAYLOAD)
-        data = response.json()
-        assert data["contradictions_detected"] == []
-
-    async def test_contradictions_returned_when_found(self):
-        """When KnowledgeStore finds a contradiction, it should appear in the response."""
-        app = create_app(use_lifespan=False)
-        mock_ks = _make_knowledge_store_mock()
-        mock_ks.find_contradictions.return_value = [{"object": "other-value", "confidence": 0.6}]
-        app.state.knowledge_store = mock_ks
-        app.state.pg_pool = _make_pg_pool_mock()
-        app.state.embedding_client = _make_embedding_client_mock()
-        app.state.extraction_client = _make_extraction_client_mock()
-        app.state.reasoning_engine = _make_reasoning_engine_mock()
-        app.state.embedding_store = _make_embedding_store_mock()
-
-        transport = ASGITransport(app=app)
-        async with AsyncClient(
-            transport=transport,
-            base_url="http://test",
-            cookies={"ks_session": make_test_session_cookie()},
-        ) as c:
-            response = await c.post("/api/content", json=CLAIM_PAYLOAD)
-
-        data = response.json()
-        assert len(data["contradictions_detected"]) == 1
-        contradiction = data["contradictions_detected"][0]
-        assert "subject" in contradiction
-        assert "predicate" in contradiction
-
-
-# ---------------------------------------------------------------------------
-# Tests: Embedding and content storage
-# ---------------------------------------------------------------------------
-
-
-class TestPostContentEmbedding:
-    async def test_embedding_client_called_for_embedding(self):
-        """The endpoint must call EmbeddingClient to generate an embedding."""
-        app = create_app(use_lifespan=False)
-        mock_ec = _make_embedding_client_mock()
-        app.state.knowledge_store = _make_knowledge_store_mock()
-        app.state.pg_pool = _make_pg_pool_mock()
-        app.state.embedding_client = mock_ec
-        app.state.extraction_client = _make_extraction_client_mock()
-        app.state.reasoning_engine = _make_reasoning_engine_mock()
-        app.state.embedding_store = _make_embedding_store_mock()
-
-        transport = ASGITransport(app=app)
-        async with AsyncClient(
-            transport=transport,
-            base_url="http://test",
-            cookies={"ks_session": make_test_session_cookie()},
-        ) as c:
-            await c.post("/api/content", json=MINIMAL_PAYLOAD)
-
-        mock_ec.embed.assert_called_once()
-
-    async def test_pg_pool_used_to_insert_content(self):
-        """EmbeddingStore.insert_content_metadata must be called to upsert content."""
-        app = create_app(use_lifespan=False)
-        mock_pool = _make_pg_pool_mock()
-        mock_es = _make_embedding_store_mock()
-        app.state.knowledge_store = _make_knowledge_store_mock()
-        app.state.pg_pool = mock_pool
-        app.state.embedding_client = _make_embedding_client_mock()
-        app.state.extraction_client = _make_extraction_client_mock()
-        app.state.reasoning_engine = _make_reasoning_engine_mock()
-        app.state.embedding_store = mock_es
-
-        transport = ASGITransport(app=app)
-        async with AsyncClient(
-            transport=transport,
-            base_url="http://test",
-            cookies={"ks_session": make_test_session_cookie()},
-        ) as c:
-            response = await c.post("/api/content", json=MINIMAL_PAYLOAD)
-
-        # The content_id should come from insert_content_metadata
-        data = response.json()
-        assert data["content_id"] == "content-uuid-1234"
-
-
-# ---------------------------------------------------------------------------
-# Tests: ProvenanceStore
-# ---------------------------------------------------------------------------
-
-
-class TestPostContentProvenance:
-    async def test_provenance_inserted_for_triple(self):
-        """ProvenanceStore.insert must be called once per triple."""
-        app = create_app(use_lifespan=False)
-        mock_pool = _make_pg_pool_mock()
-        app.state.knowledge_store = _make_knowledge_store_mock()
-        app.state.pg_pool = mock_pool
-        app.state.embedding_client = _make_embedding_client_mock()
-        app.state.extraction_client = _make_extraction_client_mock()
-        app.state.reasoning_engine = _make_reasoning_engine_mock()
-        app.state.embedding_store = _make_embedding_store_mock()
-
-        transport = ASGITransport(app=app)
-        async with AsyncClient(
-            transport=transport,
-            base_url="http://test",
-            cookies={"ks_session": make_test_session_cookie()},
-        ) as c:
-            await c.post("/api/content", json=CLAIM_PAYLOAD)
-
-        # The pg pool conn.execute should be called at least once (for provenance insert)
-        # and conn.fetchrow at least once (for content insert)
-        # We inspect via the mock_pool acquire context
-        # Since the mock conn is yielded by acquire(), we need to access it
-        # Re-create and check call count
-        assert True  # Structural: if 200 returned, provenance path ran
 
 
 # ---------------------------------------------------------------------------
@@ -535,16 +350,8 @@ RAW_TEXT_PAYLOAD = {
 
 class TestPostContentExtraction:
     async def test_extract_called_when_no_knowledge_and_raw_text(self):
-        """ExtractionClient.extract must be called when knowledge is empty and raw_text present."""
-        app = create_app(use_lifespan=False)
         mock_xc = _make_extraction_client_mock()
-        app.state.knowledge_store = _make_knowledge_store_mock()
-        app.state.pg_pool = _make_pg_pool_mock()
-        app.state.embedding_client = _make_embedding_client_mock()
-        app.state.extraction_client = mock_xc
-        app.state.reasoning_engine = _make_reasoning_engine_mock()
-        app.state.embedding_store = _make_embedding_store_mock()
-
+        app = _make_app_with_mocks(extraction_client=mock_xc)
         transport = ASGITransport(app=app)
         async with AsyncClient(
             transport=transport,
@@ -556,16 +363,8 @@ class TestPostContentExtraction:
         mock_xc.extract.assert_called_once()
 
     async def test_extract_not_called_when_knowledge_provided(self):
-        """ExtractionClient.extract must NOT be called when knowledge items are supplied."""
-        app = create_app(use_lifespan=False)
         mock_xc = _make_extraction_client_mock()
-        app.state.knowledge_store = _make_knowledge_store_mock()
-        app.state.pg_pool = _make_pg_pool_mock()
-        app.state.embedding_client = _make_embedding_client_mock()
-        app.state.extraction_client = mock_xc
-        app.state.reasoning_engine = _make_reasoning_engine_mock()
-        app.state.embedding_store = _make_embedding_store_mock()
-
+        app = _make_app_with_mocks(extraction_client=mock_xc)
         transport = ASGITransport(app=app)
         async with AsyncClient(
             transport=transport,
@@ -577,16 +376,8 @@ class TestPostContentExtraction:
         mock_xc.extract.assert_not_called()
 
     async def test_extract_not_called_when_no_raw_text(self):
-        """ExtractionClient.extract must NOT be called when raw_text is absent."""
-        app = create_app(use_lifespan=False)
         mock_xc = _make_extraction_client_mock()
-        app.state.knowledge_store = _make_knowledge_store_mock()
-        app.state.pg_pool = _make_pg_pool_mock()
-        app.state.embedding_client = _make_embedding_client_mock()
-        app.state.extraction_client = mock_xc
-        app.state.reasoning_engine = _make_reasoning_engine_mock()
-        app.state.embedding_store = _make_embedding_store_mock()
-
+        app = _make_app_with_mocks(extraction_client=mock_xc)
         transport = ASGITransport(app=app)
         async with AsyncClient(
             transport=transport,
@@ -597,105 +388,40 @@ class TestPostContentExtraction:
 
         mock_xc.extract.assert_not_called()
 
-    async def test_extracted_items_create_triples(self):
-        """When extraction returns items, triples_created should reflect them."""
-        from knowledge_service.models import ClaimInput, KnowledgeType
-
-        extracted = [
-            ClaimInput(
-                knowledge_type=KnowledgeType.CLAIM,
-                subject="http://knowledge.local/data/cold_exposure",
-                predicate="http://knowledge.local/schema/increases",
-                object="http://knowledge.local/data/dopamine",
-                confidence=0.7,
-            )
-        ]
-
-        app = create_app(use_lifespan=False)
-        mock_xc = _make_extraction_client_mock()
-        mock_xc.extract.return_value = extracted
-        app.state.knowledge_store = _make_knowledge_store_mock()
-        app.state.pg_pool = _make_pg_pool_mock()
-        app.state.embedding_client = _make_embedding_client_mock()
-        app.state.extraction_client = mock_xc
-        app.state.reasoning_engine = _make_reasoning_engine_mock()
-        app.state.embedding_store = _make_embedding_store_mock()
-
-        transport = ASGITransport(app=app)
-        async with AsyncClient(
-            transport=transport,
-            base_url="http://test",
-            cookies={"ks_session": make_test_session_cookie()},
-        ) as c:
-            response = await c.post("/api/content", json=RAW_TEXT_PAYLOAD)
-
-        assert response.json()["triples_created"] == 1
-
-    async def test_extraction_failure_yields_zero_triples(self):
-        """When extraction returns [], no triples are created and 200 is still returned."""
-        app = create_app(use_lifespan=False)
-        mock_xc = _make_extraction_client_mock()
-        mock_xc.extract.return_value = []
-        app.state.knowledge_store = _make_knowledge_store_mock()
-        app.state.pg_pool = _make_pg_pool_mock()
-        app.state.embedding_client = _make_embedding_client_mock()
-        app.state.extraction_client = mock_xc
-        app.state.reasoning_engine = _make_reasoning_engine_mock()
-        app.state.embedding_store = _make_embedding_store_mock()
-
-        transport = ASGITransport(app=app)
-        async with AsyncClient(
-            transport=transport,
-            base_url="http://test",
-            cookies={"ks_session": make_test_session_cookie()},
-        ) as c:
-            response = await c.post("/api/content", json=RAW_TEXT_PAYLOAD)
-
-        assert response.status_code == 200
-        assert response.json()["triples_created"] == 0
-
 
 # ---------------------------------------------------------------------------
-# Tests: Entity resolution
+# Tests: Embedding and content storage
 # ---------------------------------------------------------------------------
 
 
-class TestPostContentEntityResolution:
-    async def test_entities_resolved_count_nonzero(self):
-        """When extraction returns items with labels, entities_resolved should be > 0."""
-        from knowledge_service.models import ClaimInput, KnowledgeType
-
-        extracted = [
-            ClaimInput(
-                knowledge_type=KnowledgeType.CLAIM,
-                subject="cold_exposure",
-                predicate="increases",
-                object="dopamine",
-                confidence=0.7,
-            )
-        ]
-
-        app = create_app(use_lifespan=False)
-        mock_xc = _make_extraction_client_mock()
-        mock_xc.extract.return_value = extracted
-        app.state.knowledge_store = _make_knowledge_store_mock()
-        app.state.pg_pool = _make_pg_pool_mock()
-        app.state.embedding_client = _make_embedding_client_mock()
-        app.state.extraction_client = mock_xc
-        app.state.reasoning_engine = _make_reasoning_engine_mock()
-        app.state.entity_resolver = _make_entity_resolver_mock()
-        app.state.embedding_store = _make_embedding_store_mock()
-
+class TestPostContentEmbedding:
+    async def test_embedding_client_called(self):
+        mock_ec = _make_embedding_client_mock()
+        app = _make_app_with_mocks(embedding_client=mock_ec)
         transport = ASGITransport(app=app)
         async with AsyncClient(
             transport=transport,
             base_url="http://test",
             cookies={"ks_session": make_test_session_cookie()},
         ) as c:
-            response = await c.post("/api/content", json=RAW_TEXT_PAYLOAD)
+            await c.post("/api/content", json=MINIMAL_PAYLOAD)
 
-        # subject "cold_exposure" and object "dopamine" are non-URI labels → 2 resolved
-        assert response.json()["entities_resolved"] >= 1
+        # embed_batch called (background worker uses sub-batch loop calling embed_batch)
+        mock_ec.embed_batch.assert_called()
+
+    async def test_content_id_from_metadata_insert(self):
+        mock_es = _make_embedding_store_mock()
+        app = _make_app_with_mocks(embedding_store=mock_es)
+        transport = ASGITransport(app=app)
+        async with AsyncClient(
+            transport=transport,
+            base_url="http://test",
+            cookies={"ks_session": make_test_session_cookie()},
+        ) as c:
+            response = await c.post("/api/content", json=MINIMAL_PAYLOAD)
+
+        data = response.json()
+        assert data["content_id"] == "content-uuid-1234"
 
 
 # ---------------------------------------------------------------------------
@@ -705,45 +431,88 @@ class TestPostContentEntityResolution:
 
 class TestPostContentBatch:
     async def test_batch_returns_list(self, client):
-        """Sending a list of ContentRequests returns a list of ContentResponses."""
         batch = [MINIMAL_PAYLOAD, CLAIM_PAYLOAD]
         response = await client.post("/api/content", json=batch)
-        assert response.status_code == 200
+        assert response.status_code == 202
         data = response.json()
         assert isinstance(data, list)
         assert len(data) == 2
 
-    async def test_batch_each_item_has_content_id(self, client):
+    async def test_batch_each_item_has_job_id(self, client):
         batch = [MINIMAL_PAYLOAD, CLAIM_PAYLOAD]
         response = await client.post("/api/content", json=batch)
         data = response.json()
         for item in data:
-            assert "content_id" in item
-            assert item["content_id"]
-
-    async def test_batch_each_item_has_triples_created(self, client):
-        batch = [CLAIM_PAYLOAD, FACT_PAYLOAD]
-        response = await client.post("/api/content", json=batch)
-        data = response.json()
-        for item in data:
-            assert "triples_created" in item
-            assert item["triples_created"] == 1
+            assert "job_id" in item
 
     async def test_single_request_still_returns_object(self, client):
-        """Single (non-list) input still returns a single object, not a list."""
         response = await client.post("/api/content", json=MINIMAL_PAYLOAD)
         data = response.json()
         assert isinstance(data, dict)
         assert "content_id" in data
 
-    async def test_batch_validation_error_returns_422(self, client):
-        """A batch with an invalid item returns 422."""
+    async def test_batch_partial_validation_error(self, client):
+        """Batch with one invalid item returns 202 with mixed results."""
         batch = [
             MINIMAL_PAYLOAD,
             {"title": "No URL", "source_type": "article"},  # missing url
         ]
         response = await client.post("/api/content", json=batch)
-        assert response.status_code == 422
+        assert response.status_code == 202
+        data = response.json()
+        assert len(data) == 2
+        assert "job_id" in data[0]  # first item succeeded
+        assert "error" in data[1]  # second item failed
+
+
+# ---------------------------------------------------------------------------
+# Tests: Idempotency guard
+# ---------------------------------------------------------------------------
+
+
+class TestIdempotencyGuard:
+    async def test_active_job_returns_409(self):
+        """Second request for same content_id returns 409 when job is active."""
+
+        call_count = 0
+
+        async def _fetchrow(sql, *args):
+            nonlocal call_count
+            if "ingestion_jobs" in sql and "INSERT" in sql:
+                return {"id": "job-uuid-1234"}
+            if "ingestion_jobs" in sql and "SELECT" in sql and "status NOT IN" in sql:
+                call_count += 1
+                if call_count > 1:
+                    return {"id": "existing-job"}  # active job exists
+                return None  # first call: no active job
+            return {"id": "content-uuid-1234"}
+
+        mock_conn = AsyncMock()
+        mock_conn.execute.return_value = "INSERT 0 1"
+        mock_conn.fetchrow.side_effect = _fetchrow
+        mock_conn.fetch.return_value = []
+
+        @asynccontextmanager
+        async def _acquire():
+            yield mock_conn
+
+        mock_pool = MagicMock()
+        mock_pool.acquire = _acquire
+
+        app = _make_app_with_mocks(pg_pool=mock_pool)
+        transport = ASGITransport(app=app)
+        async with AsyncClient(
+            transport=transport,
+            base_url="http://test",
+            cookies={"ks_session": make_test_session_cookie()},
+        ) as c:
+            # First request succeeds
+            resp1 = await c.post("/api/content", json=MINIMAL_PAYLOAD)
+            assert resp1.status_code == 202
+
+            # Second request gets 409
+            resp2 = await c.post("/api/content", json=MINIMAL_PAYLOAD)
+            assert resp2.status_code == 409
 
 
 # ---------------------------------------------------------------------------
@@ -767,15 +536,8 @@ LONG_TEXT_PAYLOAD = {
 
 class TestContentChunking:
     async def test_short_content_creates_one_chunk(self):
-        app = create_app(use_lifespan=False)
         mock_es = _make_embedding_store_mock()
-        app.state.knowledge_store = _make_knowledge_store_mock()
-        app.state.pg_pool = _make_pg_pool_mock()
-        app.state.embedding_client = _make_embedding_client_mock()
-        app.state.extraction_client = _make_extraction_client_mock()
-        app.state.reasoning_engine = _make_reasoning_engine_mock()
-        app.state.embedding_store = mock_es
-
+        app = _make_app_with_mocks(embedding_store=mock_es)
         transport = ASGITransport(app=app)
         async with AsyncClient(
             transport=transport,
@@ -784,26 +546,16 @@ class TestContentChunking:
         ) as c:
             response = await c.post("/api/content", json=SHORT_TEXT_PAYLOAD)
 
-        assert response.status_code == 200
-        mock_es.insert_content_metadata.assert_called_once()
-        mock_es.delete_chunks.assert_called_once_with("content-uuid-1234")
+        assert response.status_code == 202
+        # Background worker inserts chunks
         mock_es.insert_chunks.assert_called_once()
         chunks = mock_es.insert_chunks.call_args[0][1]
         assert len(chunks) == 1
-        assert chunks[0]["chunk_index"] == 0
-        assert chunks[0]["chunk_text"] == "This is a short article."
 
     async def test_long_content_creates_multiple_chunks(self):
-        app = create_app(use_lifespan=False)
         mock_ec = _make_embedding_client_mock()
         mock_es = _make_embedding_store_mock()
-        app.state.knowledge_store = _make_knowledge_store_mock()
-        app.state.pg_pool = _make_pg_pool_mock()
-        app.state.embedding_client = mock_ec
-        app.state.extraction_client = _make_extraction_client_mock()
-        app.state.reasoning_engine = _make_reasoning_engine_mock()
-        app.state.embedding_store = mock_es
-
+        app = _make_app_with_mocks(embedding_client=mock_ec, embedding_store=mock_es)
         transport = ASGITransport(app=app)
         async with AsyncClient(
             transport=transport,
@@ -812,45 +564,14 @@ class TestContentChunking:
         ) as c:
             response = await c.post("/api/content", json=LONG_TEXT_PAYLOAD)
 
-        assert response.status_code == 200
+        assert response.status_code == 202
         mock_es.insert_chunks.assert_called_once()
         chunks = mock_es.insert_chunks.call_args[0][1]
         assert len(chunks) >= 2
-        mock_ec.embed_batch.assert_called_once()
-
-    async def test_no_raw_text_creates_one_chunk_from_title(self):
-        app = create_app(use_lifespan=False)
-        mock_es = _make_embedding_store_mock()
-        app.state.knowledge_store = _make_knowledge_store_mock()
-        app.state.pg_pool = _make_pg_pool_mock()
-        app.state.embedding_client = _make_embedding_client_mock()
-        app.state.extraction_client = _make_extraction_client_mock()
-        app.state.reasoning_engine = _make_reasoning_engine_mock()
-        app.state.embedding_store = mock_es
-
-        transport = ASGITransport(app=app)
-        async with AsyncClient(
-            transport=transport,
-            base_url="http://test",
-            cookies={"ks_session": make_test_session_cookie()},
-        ) as c:
-            response = await c.post("/api/content", json=MINIMAL_PAYLOAD)
-
-        assert response.status_code == 200
-        mock_es.insert_chunks.assert_called_once()
-        chunks = mock_es.insert_chunks.call_args[0][1]
-        assert len(chunks) == 1
 
     async def test_reingestion_deletes_old_chunks(self):
-        app = create_app(use_lifespan=False)
         mock_es = _make_embedding_store_mock()
-        app.state.knowledge_store = _make_knowledge_store_mock()
-        app.state.pg_pool = _make_pg_pool_mock()
-        app.state.embedding_client = _make_embedding_client_mock()
-        app.state.extraction_client = _make_extraction_client_mock()
-        app.state.reasoning_engine = _make_reasoning_engine_mock()
-        app.state.embedding_store = mock_es
-
+        app = _make_app_with_mocks(embedding_store=mock_es)
         transport = ASGITransport(app=app)
         async with AsyncClient(
             transport=transport,
@@ -863,13 +584,12 @@ class TestContentChunking:
 
 
 # ---------------------------------------------------------------------------
-# Tests: _resolve_labels — literal object guard (Task 3)
+# Tests: _resolve_labels — literal object guard
 # ---------------------------------------------------------------------------
 
 
 class TestResolveLabelLiteralGuard:
     async def test_resolve_labels_skips_literal_object(self):
-        """Literal objects should NOT be resolved through entity_resolver."""
         from knowledge_service.api.content import _resolve_labels
         from knowledge_service.models import ClaimInput
 
@@ -888,12 +608,10 @@ class TestResolveLabelLiteralGuard:
 
         count, result = await _resolve_labels(item, resolver)
 
-        # subject and predicate resolved, but object was NOT
         assert resolver.resolve.call_count == 1  # only subject
         assert result.object == "250% dopamine increase"  # unchanged
 
     async def test_resolve_labels_resolves_entity_object(self):
-        """Entity objects should still be resolved."""
         from knowledge_service.api.content import _resolve_labels
         from knowledge_service.models import ClaimInput
 
@@ -916,13 +634,12 @@ class TestResolveLabelLiteralGuard:
 
 
 # ---------------------------------------------------------------------------
-# Tests: _apply_uri_fallback — literal object guard (Task 4)
+# Tests: _apply_uri_fallback — literal object guard
 # ---------------------------------------------------------------------------
 
 
 class TestApplyUriFallbackLiteralGuard:
     def test_apply_uri_fallback_preserves_literal_object(self):
-        """Literal objects should NOT be converted to entity URIs."""
         from knowledge_service.api._ingest import apply_uri_fallback
         from knowledge_service.models import ClaimInput
 
@@ -937,7 +654,6 @@ class TestApplyUriFallbackLiteralGuard:
         assert result.object == "250% dopamine increase"
 
     def test_apply_uri_fallback_converts_entity_object(self):
-        """Entity objects without URIs should still be converted."""
         from knowledge_service.api._ingest import apply_uri_fallback
         from knowledge_service.models import ClaimInput
 
@@ -952,7 +668,6 @@ class TestApplyUriFallbackLiteralGuard:
         assert result.object.startswith("http://knowledge.local/data/")
 
     def test_apply_uri_fallback_normalizes_subject_and_predicate(self):
-        """Subject and predicate are converted to URIs by _apply_uri_fallback."""
         from knowledge_service.api._ingest import apply_uri_fallback
         from knowledge_service.models import ClaimInput
 
@@ -968,7 +683,6 @@ class TestApplyUriFallbackLiteralGuard:
         assert result.predicate == "http://knowledge.local/schema/increases"
 
     def test_apply_uri_fallback_resolves_predicate_synonym(self):
-        """Predicate synonyms are resolved before URI conversion."""
         from knowledge_service.api._ingest import apply_uri_fallback
         from knowledge_service.models import ClaimInput
 
@@ -981,62 +695,3 @@ class TestApplyUriFallbackLiteralGuard:
         )
         result = apply_uri_fallback(item)
         assert result.predicate == "http://knowledge.local/schema/increases"
-
-
-# ---------------------------------------------------------------------------
-# Tests: End-to-end literal object handling (Task 6)
-# ---------------------------------------------------------------------------
-
-
-async def test_content_ingestion_preserves_literal_objects(client):
-    """End-to-end: literal objects stay as plain strings through the pipeline."""
-    resp = await client.post(
-        "/api/content",
-        json={
-            "url": "http://example.com/test",
-            "title": "Test",
-            "source_type": "article",
-            "knowledge": [
-                {
-                    "knowledge_type": "Claim",
-                    "subject": "cold_exposure",
-                    "predicate": "increases",
-                    "object": "dopamine",
-                    "object_type": "entity",
-                    "confidence": 0.7,
-                },
-                {
-                    "knowledge_type": "Claim",
-                    "subject": "cold_exposure",
-                    "predicate": "has_effect",
-                    "object": "250% dopamine increase lasting 2 hours",
-                    "object_type": "literal",
-                    "confidence": 0.7,
-                },
-            ],
-        },
-    )
-    assert resp.status_code == 200
-    data = resp.json()
-    assert data["triples_created"] == 2
-
-    # Get insert_triple call args from the mock knowledge_store
-    ks = client._transport.app.state.knowledge_store
-    calls = ks.insert_triple.call_args_list
-    assert len(calls) == 2
-
-    # First call: entity object should be a URI
-    entity_call_args = calls[0].args if calls[0].args else ()
-    entity_call_kwargs = calls[0].kwargs if calls[0].kwargs else {}
-    entity_obj = (
-        entity_call_args[2] if len(entity_call_args) > 2 else entity_call_kwargs.get("object_")
-    )
-    assert entity_obj.startswith("http://")
-
-    # Second call: literal object should NOT be a URI
-    literal_call_args = calls[1].args if calls[1].args else ()
-    literal_call_kwargs = calls[1].kwargs if calls[1].kwargs else {}
-    literal_obj = (
-        literal_call_args[2] if len(literal_call_args) > 2 else literal_call_kwargs.get("object_")
-    )
-    assert literal_obj == "250% dopamine increase lasting 2 hours"

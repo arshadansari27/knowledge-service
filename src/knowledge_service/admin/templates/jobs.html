@@ -1,0 +1,61 @@
+{% extends "base.html" %}
+{% block title %}Ingestion Jobs{% endblock %}
+{% block content %}
+<h2 class="text-2xl font-bold mb-6">Ingestion Jobs</h2>
+<div class="bg-gray-800 rounded-lg overflow-hidden"
+     x-data="{ jobs: null, loading: true }"
+     x-init="fetch('/api/admin/jobs?limit=100').then(r => r.json()).then(d => { jobs = d; loading = false }); setInterval(() => fetch('/api/admin/jobs?limit=100').then(r => r.json()).then(d => jobs = d), 5000)">
+    <table class="w-full text-sm">
+        <thead>
+            <tr class="text-gray-400 border-b border-gray-700">
+                <th class="text-left p-3">Status</th>
+                <th class="text-left p-3">Title / URL</th>
+                <th class="text-left p-3">Embedded</th>
+                <th class="text-left p-3">Extracted</th>
+                <th class="text-left p-3">Triples</th>
+                <th class="text-left p-3">Created</th>
+            </tr>
+        </thead>
+        <tbody>
+            <template x-for="job in (jobs || [])" :key="job.id">
+                <tr class="border-b border-gray-700/50 hover:bg-gray-700/30">
+                    <td class="p-3">
+                        <span class="px-2 py-0.5 rounded text-xs font-medium"
+                              :class="{
+                                  'bg-gray-600 text-gray-200': job.status === 'accepted',
+                                  'bg-blue-600 text-white': job.status === 'embedding',
+                                  'bg-yellow-600 text-white': job.status === 'extracting',
+                                  'bg-purple-600 text-white': job.status === 'processing',
+                                  'bg-green-600 text-white': job.status === 'completed',
+                                  'bg-red-600 text-white': job.status === 'failed',
+                              }"
+                              x-text="job.status"></span>
+                        <template x-if="job.chunks_capped_from">
+                            <span class="ml-1 px-1.5 py-0.5 rounded text-xs bg-orange-700 text-orange-200"
+                                  x-text="'capped from ' + job.chunks_capped_from"></span>
+                        </template>
+                    </td>
+                    <td class="p-3">
+                        <div class="text-white truncate max-w-xs" x-text="job.title || '(untitled)'"></div>
+                        <div class="text-gray-500 text-xs truncate max-w-xs" x-text="job.url"></div>
+                    </td>
+                    <td class="p-3">
+                        <span x-text="job.chunks_embedded + '/' + job.chunks_total"></span>
+                    </td>
+                    <td class="p-3">
+                        <span x-text="job.chunks_extracted + '/' + job.chunks_total"></span>
+                        <template x-if="job.chunks_failed > 0">
+                            <span class="text-red-400 text-xs ml-1" x-text="'(' + job.chunks_failed + ' failed)'"></span>
+                        </template>
+                    </td>
+                    <td class="p-3" x-text="job.triples_created"></td>
+                    <td class="p-3 text-gray-400 text-xs" x-text="new Date(job.created_at).toLocaleString()"></td>
+                </tr>
+            </template>
+            <template x-if="jobs && jobs.length === 0">
+                <tr><td colspan="6" class="p-6 text-center text-gray-500">No ingestion jobs yet.</td></tr>
+            </template>
+        </tbody>
+    </table>
+</div>
+{% endblock %}

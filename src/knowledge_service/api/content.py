@@ -1,11 +1,11 @@
-"""POST /api/content endpoint — ingest content with embedded knowledge."""
+"""POST /api/content endpoint — async ingest content with embedded knowledge."""
 
 from __future__ import annotations
 
-import asyncio
 import json
+import logging
 
-from fastapi import APIRouter, Request
+from fastapi import APIRouter, BackgroundTasks, Request
 from fastapi.responses import JSONResponse
 from pydantic import ValidationError
 
@@ -13,15 +13,20 @@ from knowledge_service._utils import _is_uri, is_object_entity
 from knowledge_service.api._ingest import apply_uri_fallback, process_triple
 from knowledge_service.chunking import chunk_text as split_into_chunks
 from knowledge_service.config import settings
-from knowledge_service.models import ContentRequest, ContentResponse, expand_to_triples
+from knowledge_service.models import (
+    ContentAcceptedResponse,
+    ContentRequest,
+    expand_to_triples,
+)
 from knowledge_service.stores.provenance import ProvenanceStore
 
 router = APIRouter()
+logger = logging.getLogger(__name__)
 
 _CHUNK_SIZE = 4000
 _CHUNK_OVERLAP = 200
-_MAX_CONCURRENT_EXTRACTIONS = 2  # Bound parallel LLM calls per content request
-_MAX_CONCURRENT_CONTENT = 3  # Bound parallel content requests in batch mode
+_MAX_CHUNKS = 50
+_EMBED_BATCH_SIZE = 20
 
 
 async def _resolve_labels(item, entity_resolver) -> tuple[int, object]:
@@ -100,24 +105,17 @@ def _dedup_extracted_items(
     return deduped, deduped_cids
 
 
-async def _process_one_content_request(body: ContentRequest, request: Request) -> ContentResponse:
-    """Process a single ContentRequest and return its response."""
-    knowledge_store = request.app.state.knowledge_store
-    pg_pool = request.app.state.pg_pool
-    embedding_client = request.app.state.embedding_client
-    extraction_client = request.app.state.extraction_client
-    reasoning_engine = request.app.state.reasoning_engine
-    provenance_store = ProvenanceStore(pg_pool)
+# ---------------------------------------------------------------------------
+# Synchronous acceptance phase
+# ---------------------------------------------------------------------------
 
-    embedding_store = getattr(request.app.state, "embedding_store", None)
-    entity_resolver = getattr(request.app.state, "entity_resolver", None)
 
-    # Fall back to local EmbeddingStore if not on app.state
-    if embedding_store is None:
-        from knowledge_service.stores.embedding import EmbeddingStore
+async def _accept_content_request(body: ContentRequest, pg_pool, embedding_store) -> dict:
+    """Synchronous phase: validate, upsert metadata, chunk, create job.
 
-        embedding_store = EmbeddingStore(pg_pool)
-
+    Returns dict with content_id, job_id, chunks_total, chunks_capped_from,
+    and chunk_records for the background worker.
+    """
     # Step 1: Upsert content metadata
     content_id = await embedding_store.insert_content_metadata(
         url=body.url,
@@ -129,7 +127,7 @@ async def _process_one_content_request(body: ContentRequest, request: Request) -
         metadata=body.metadata,
     )
 
-    # Step 2: Chunk and embed
+    # Step 2: Chunk the text
     text = body.raw_text or body.summary or body.title
     raw_chunks = split_into_chunks(text, chunk_size=_CHUNK_SIZE, chunk_overlap=_CHUNK_OVERLAP)
 
@@ -145,138 +143,351 @@ async def _process_one_content_request(body: ContentRequest, request: Request) -
             }
         )
 
-    # Embed chunks (batch for multiple, single for one)
-    if len(chunk_records) == 1:
-        embeddings = [await embedding_client.embed(chunk_records[0]["chunk_text"])]
-    else:
-        embeddings = await embedding_client.embed_batch([c["chunk_text"] for c in chunk_records])
-    for rec, emb in zip(chunk_records, embeddings):
-        rec["embedding"] = emb
+    # Step 3: Cap chunks
+    chunks_capped_from = None
+    if len(chunk_records) > _MAX_CHUNKS:
+        chunks_capped_from = len(chunk_records)
+        logger.warning(
+            "Capping %d chunks to %d for url=%s", len(chunk_records), _MAX_CHUNKS, body.url
+        )
+        chunk_records = chunk_records[:_MAX_CHUNKS]
 
-    # Null out provenance chunk_ids before deleting old chunks to avoid dangling FKs
+    # Step 4: Check for active job (idempotency guard)
     async with pg_pool.acquire() as conn:
-        await conn.execute(
-            """UPDATE provenance SET chunk_id = NULL
-               WHERE chunk_id IN (SELECT id FROM content WHERE content_id = $1::uuid)""",
+        active = await conn.fetchrow(
+            """SELECT id FROM ingestion_jobs
+               WHERE content_id = $1::uuid AND status NOT IN ('completed', 'failed')""",
             content_id,
         )
+    if active:
+        return {"conflict": True, "content_id": content_id}
 
-    # Delete old chunks (re-ingestion) and insert new
-    await embedding_store.delete_chunks(content_id)
-    chunk_id_pairs = await embedding_store.insert_chunks(content_id, chunk_records)
-    chunk_id_map = dict(chunk_id_pairs) if chunk_id_pairs else {}  # {chunk_index: chunk_id}
+    # Step 5: Create ingestion job
+    async with pg_pool.acquire() as conn:
+        job_row = await conn.fetchrow(
+            """INSERT INTO ingestion_jobs (content_id, chunks_total, chunks_capped_from)
+               VALUES ($1::uuid, $2, $3)
+               RETURNING id""",
+            content_id,
+            len(chunk_records),
+            chunks_capped_from,
+        )
+    job_id = str(job_row["id"])
 
-    # Step 2.5: Auto-extract knowledge per chunk if none provided
-    chunks_failed = 0
-    if not body.knowledge and body.raw_text:
-        # Extract from all chunks concurrently (bounded by semaphore)
-        sem = asyncio.Semaphore(_MAX_CONCURRENT_EXTRACTIONS)
+    return {
+        "conflict": False,
+        "content_id": content_id,
+        "job_id": job_id,
+        "chunks_total": len(chunk_records),
+        "chunks_capped_from": chunks_capped_from,
+        "chunk_records": chunk_records,
+    }
 
-        async def _extract_chunk(chunk):
-            async with sem:
-                return await extraction_client.extract(
+
+# ---------------------------------------------------------------------------
+# Background worker
+# ---------------------------------------------------------------------------
+
+
+async def _run_ingestion_worker(
+    job_id: str,
+    content_id: str,
+    body: ContentRequest,
+    chunk_records: list[dict],
+    app_state,
+) -> None:
+    """Background worker: embed, extract, process triples, update job progress."""
+    pg_pool = app_state.pg_pool
+    embedding_client = app_state.embedding_client
+    extraction_client = app_state.extraction_client
+    knowledge_store = app_state.knowledge_store
+    reasoning_engine = app_state.reasoning_engine
+    embedding_store = getattr(app_state, "embedding_store", None)
+    entity_resolver = getattr(app_state, "entity_resolver", None)
+    provenance_store = ProvenanceStore(pg_pool)
+
+    if embedding_store is None:
+        from knowledge_service.stores.embedding import EmbeddingStore
+
+        embedding_store = EmbeddingStore(pg_pool)
+
+    current_phase = "embedding"
+    try:
+        # --- Phase 1: Embedding ---
+        async with pg_pool.acquire() as conn:
+            await conn.execute(
+                "UPDATE ingestion_jobs SET status = 'embedding' WHERE id = $1::uuid", job_id
+            )
+
+        texts = [c["chunk_text"] for c in chunk_records]
+        embeddings: list[list[float]] = []
+        for i in range(0, len(texts), _EMBED_BATCH_SIZE):
+            batch = texts[i : i + _EMBED_BATCH_SIZE]
+            batch_embeddings = await embedding_client.embed_batch(batch)
+            embeddings.extend(batch_embeddings)
+            async with pg_pool.acquire() as conn:
+                await conn.execute(
+                    "UPDATE ingestion_jobs SET chunks_embedded = $1 WHERE id = $2::uuid",
+                    len(embeddings),
+                    job_id,
+                )
+        for rec, emb in zip(chunk_records, embeddings):
+            rec["embedding"] = emb
+
+        # Null out old provenance chunk_ids, delete old chunks, insert new
+        async with pg_pool.acquire() as conn:
+            await conn.execute(
+                """UPDATE provenance SET chunk_id = NULL
+                   WHERE chunk_id IN (SELECT id FROM content WHERE content_id = $1::uuid)""",
+                content_id,
+            )
+        await embedding_store.delete_chunks(content_id)
+        chunk_id_pairs = await embedding_store.insert_chunks(content_id, chunk_records)
+        chunk_id_map = dict(chunk_id_pairs) if chunk_id_pairs else {}
+
+        # --- Phase 2: Extraction ---
+        current_phase = "extracting"
+        async with pg_pool.acquire() as conn:
+            await conn.execute(
+                "UPDATE ingestion_jobs SET status = 'extracting' WHERE id = $1::uuid", job_id
+            )
+
+        chunks_failed = 0
+        if not body.knowledge and body.raw_text:
+            knowledge = []
+            chunk_ids_for_items: list[str | None] = []
+            for chunk in chunk_records:
+                cid = chunk_id_map.get(chunk["chunk_index"])
+                items = await extraction_client.extract(
                     chunk["chunk_text"], title=body.title, source_type=body.source_type
                 )
+                if items is None:
+                    chunks_failed += 1
+                    async with pg_pool.acquire() as conn:
+                        await conn.execute(
+                            """UPDATE ingestion_jobs
+                               SET chunks_extracted = chunks_extracted + 1,
+                                   chunks_failed = chunks_failed + 1
+                               WHERE id = $1::uuid""",
+                            job_id,
+                        )
+                    continue
+                for item in items:
+                    knowledge.append(item)
+                    chunk_ids_for_items.append(cid)
+                async with pg_pool.acquire() as conn:
+                    await conn.execute(
+                        """UPDATE ingestion_jobs SET chunks_extracted = chunks_extracted + 1
+                           WHERE id = $1::uuid""",
+                        job_id,
+                    )
+            knowledge, chunk_ids_for_items = _dedup_extracted_items(knowledge, chunk_ids_for_items)
+            extracted_by_llm = bool(knowledge)
+        else:
+            knowledge = list(body.knowledge)
+            chunk_ids_for_items = [None] * len(knowledge)
+            extracted_by_llm = False
+            # Mark all chunks as "extracted" (no LLM needed)
+            async with pg_pool.acquire() as conn:
+                await conn.execute(
+                    "UPDATE ingestion_jobs SET chunks_extracted = $1 WHERE id = $2::uuid",
+                    len(chunk_records),
+                    job_id,
+                )
 
-        extraction_results = await asyncio.gather(*[_extract_chunk(c) for c in chunk_records])
+        extractor = f"llm_{settings.llm_chat_model}" if extracted_by_llm else "api"
 
-        knowledge_by_chunk: list[tuple[list, str | None]] = []
-        for chunk, items in zip(chunk_records, extraction_results):
-            cid = chunk_id_map.get(chunk["chunk_index"])
-            if items is None:
-                chunks_failed += 1
-                continue
-            knowledge_by_chunk.append((items, cid))
-        knowledge = []
-        chunk_ids_for_items: list[str | None] = []
-        for items, cid in knowledge_by_chunk:
-            for item in items:
-                knowledge.append(item)
-                chunk_ids_for_items.append(cid)
-        # Deduplicate items across overlapping chunks — keep highest confidence
-        knowledge, chunk_ids_for_items = _dedup_extracted_items(knowledge, chunk_ids_for_items)
-        extracted_by_llm = bool(knowledge)
-    else:
-        knowledge = list(body.knowledge)
-        chunk_ids_for_items = [None] * len(knowledge)
-        extracted_by_llm = False
-
-    extractor = f"llm_{settings.llm_chat_model}" if extracted_by_llm else "api"
-
-    # Step 2.75: Resolve entity labels through EntityResolver
-    entities_resolved = 0
-    if entity_resolver is not None:
-        for i, item in enumerate(knowledge):
-            count, knowledge[i] = await _resolve_labels(item, entity_resolver)
-            entities_resolved += count
-
-    # Step 2.8: Ensure all fields are proper URIs (fallback for unresolved fields)
-    for i, item in enumerate(knowledge):
-        knowledge[i] = apply_uri_fallback(item)
-
-    # Step 3: Expand all knowledge items to triples and process
-    triples_created = 0
-    contradictions_all: list[dict] = []
-
-    for i, item in enumerate(knowledge):
-        for t in expand_to_triples(item):
-            cid = chunk_ids_for_items[i] if i < len(chunk_ids_for_items) else None
-            is_new, contras = await process_triple(
-                t,
-                knowledge_store,
-                provenance_store,
-                reasoning_engine,
-                body.url,
-                body.source_type,
-                extractor,
-                chunk_id=cid,
+        # --- Phase 3: Processing ---
+        current_phase = "processing"
+        async with pg_pool.acquire() as conn:
+            await conn.execute(
+                "UPDATE ingestion_jobs SET status = 'processing' WHERE id = $1::uuid", job_id
             )
-            if is_new:
-                triples_created += 1
-            contradictions_all.extend(contras)
 
-    # Step 4: Log ingestion event
-    async with pg_pool.acquire() as conn:
-        await conn.execute(
-            """INSERT INTO ingestion_events (event_type, payload, source)
-               VALUES ($1, $2, $3)""",
-            "content_ingested",
-            json.dumps({"url": body.url, "triples_created": triples_created}),
-            body.url,
+        # Resolve entity labels
+        entities_resolved = 0
+        if entity_resolver is not None:
+            for i, item in enumerate(knowledge):
+                count, knowledge[i] = await _resolve_labels(item, entity_resolver)
+                entities_resolved += count
+
+        # URI fallback
+        for i, item in enumerate(knowledge):
+            knowledge[i] = apply_uri_fallback(item)
+
+        # Expand to triples and process
+        triples_created = 0
+        for i, item in enumerate(knowledge):
+            for t in expand_to_triples(item):
+                cid = chunk_ids_for_items[i] if i < len(chunk_ids_for_items) else None
+                is_new, _contras = await process_triple(
+                    t,
+                    knowledge_store,
+                    provenance_store,
+                    reasoning_engine,
+                    body.url,
+                    body.source_type,
+                    extractor,
+                    chunk_id=cid,
+                )
+                if is_new:
+                    triples_created += 1
+
+        # Log ingestion event
+        async with pg_pool.acquire() as conn:
+            await conn.execute(
+                """INSERT INTO ingestion_events (event_type, payload, source)
+                   VALUES ($1, $2, $3)""",
+                "content_ingested",
+                json.dumps({"url": body.url, "triples_created": triples_created}),
+                body.url,
+            )
+
+        # --- Done ---
+        async with pg_pool.acquire() as conn:
+            await conn.execute(
+                """UPDATE ingestion_jobs
+                   SET status = 'completed', triples_created = $1,
+                       entities_resolved = $2, chunks_failed = $3
+                   WHERE id = $4::uuid""",
+                triples_created,
+                entities_resolved,
+                chunks_failed,
+                job_id,
+            )
+
+    except Exception as exc:
+        error_json = json.dumps(
+            {
+                "type": type(exc).__name__,
+                "message": str(exc),
+                "phase": current_phase,
+            }
         )
+        try:
+            async with pg_pool.acquire() as conn:
+                await conn.execute(
+                    "UPDATE ingestion_jobs SET status = 'failed', error = $1 WHERE id = $2::uuid",
+                    error_json,
+                    job_id,
+                )
+        except Exception:
+            logger.exception("Failed to update job %s to failed status", job_id)
+        logger.exception("Ingestion worker failed for job %s in phase %s", job_id, current_phase)
 
-    return ContentResponse(
-        content_id=content_id,
-        triples_created=triples_created,
-        contradictions_detected=contradictions_all,
-        entities_resolved=entities_resolved,
-        chunks_total=len(chunk_records),
-        chunks_failed=chunks_failed,
-    )
+
+# ---------------------------------------------------------------------------
+# Endpoints
+# ---------------------------------------------------------------------------
 
 
 @router.post("/content")
-async def post_content(request: Request):
-    """Ingest a piece of content and its associated knowledge items.
+async def post_content(request: Request, background_tasks: BackgroundTasks):
+    """Ingest content asynchronously.
 
     Accepts a single ContentRequest or a list for batch processing.
-    Returns a single ContentResponse or a list, matching the input shape.
+    Returns 202 Accepted with job info. Processing happens in background.
     """
     raw = await request.json()
+    pg_pool = request.app.state.pg_pool
+    embedding_store = getattr(request.app.state, "embedding_store", None)
+    if embedding_store is None:
+        from knowledge_service.stores.embedding import EmbeddingStore
+
+        embedding_store = EmbeddingStore(pg_pool)
 
     try:
         if isinstance(raw, list):
-            items = [ContentRequest(**item) for item in raw]
-            sem = asyncio.Semaphore(_MAX_CONCURRENT_CONTENT)
-
-            async def _bounded(item):
-                async with sem:
-                    return await _process_one_content_request(item, request)
-
-            results = await asyncio.gather(*[_bounded(item) for item in items])
-            return JSONResponse([r.model_dump() for r in results])
+            results = []
+            for item_raw in raw:
+                try:
+                    body = ContentRequest(**item_raw)
+                except ValidationError as exc:
+                    results.append({"error": exc.errors(), "status_code": 422})
+                    continue
+                result = await _accept_content_request(body, pg_pool, embedding_store)
+                if result.get("conflict"):
+                    results.append(
+                        {
+                            "error": "Active job exists for this content",
+                            "content_id": result["content_id"],
+                            "status_code": 409,
+                        }
+                    )
+                    continue
+                background_tasks.add_task(
+                    _run_ingestion_worker,
+                    result["job_id"],
+                    result["content_id"],
+                    body,
+                    result["chunk_records"],
+                    request.app.state,
+                )
+                results.append(
+                    ContentAcceptedResponse(
+                        content_id=result["content_id"],
+                        job_id=result["job_id"],
+                        chunks_total=result["chunks_total"],
+                        chunks_capped_from=result["chunks_capped_from"],
+                    ).model_dump()
+                )
+            return JSONResponse(results, status_code=202)
 
         body = ContentRequest(**raw)
-        return await _process_one_content_request(body, request)
+        result = await _accept_content_request(body, pg_pool, embedding_store)
+        if result.get("conflict"):
+            return JSONResponse(
+                status_code=409,
+                content={"detail": "Active ingestion job exists for this content"},
+            )
+        background_tasks.add_task(
+            _run_ingestion_worker,
+            result["job_id"],
+            result["content_id"],
+            body,
+            result["chunk_records"],
+            request.app.state,
+        )
+        return JSONResponse(
+            ContentAcceptedResponse(
+                content_id=result["content_id"],
+                job_id=result["job_id"],
+                chunks_total=result["chunks_total"],
+                chunks_capped_from=result["chunks_capped_from"],
+            ).model_dump(),
+            status_code=202,
+        )
     except ValidationError as exc:
         return JSONResponse(status_code=422, content={"detail": exc.errors()})
+
+
+@router.get("/content/{content_id}/status")
+async def get_content_status(content_id: str, request: Request):
+    """Return the latest ingestion job status for a content item."""
+    pg_pool = request.app.state.pg_pool
+    async with pg_pool.acquire() as conn:
+        row = await conn.fetchrow(
+            """SELECT id, content_id, status, chunks_total, chunks_embedded,
+                      chunks_extracted, chunks_failed, triples_created,
+                      entities_resolved, error, created_at, updated_at
+               FROM ingestion_jobs
+               WHERE content_id = $1::uuid
+               ORDER BY created_at DESC LIMIT 1""",
+            content_id,
+        )
+    if row is None:
+        return JSONResponse(status_code=404, content={"detail": "No job found"})
+    return {
+        "content_id": str(row["content_id"]),
+        "job_id": str(row["id"]),
+        "status": row["status"],
+        "chunks_total": row["chunks_total"],
+        "chunks_embedded": row["chunks_embedded"],
+        "chunks_extracted": row["chunks_extracted"],
+        "chunks_failed": row["chunks_failed"],
+        "triples_created": row["triples_created"],
+        "entities_resolved": row["entities_resolved"],
+        "error": row["error"],
+        "created_at": row["created_at"].isoformat() if row["created_at"] else None,
+        "updated_at": row["updated_at"].isoformat() if row["updated_at"] else None,
+    }

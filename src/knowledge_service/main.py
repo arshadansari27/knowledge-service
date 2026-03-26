@@ -137,6 +137,16 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     app.state.pg_pool = await asyncpg.create_pool(settings.database_url)
     await run_migrations(app.state.pg_pool)
 
+    # Mark orphaned ingestion jobs as failed (lost on restart)
+    async with app.state.pg_pool.acquire() as conn:
+        updated = await conn.execute(
+            """UPDATE ingestion_jobs SET status = 'failed',
+                      error = '{"type": "ServiceRestart", "message": "interrupted by service restart", "phase": "unknown"}'
+               WHERE status NOT IN ('completed', 'failed')"""
+        )
+        if updated != "UPDATE 0":
+            logger.info("Marked orphaned ingestion jobs as failed: %s", updated)
+
     from knowledge_service.stores.graph_migration import migrate_to_named_graphs  # noqa: PLC0415
 
     await migrate_to_named_graphs(app.state.knowledge_store.store, app.state.pg_pool)
@@ -295,11 +305,13 @@ def create_app(use_lifespan: bool = True) -> FastAPI:
 
     from knowledge_service.admin.stats import router as stats_router
     from knowledge_service.admin.communities import router as communities_router
+    from knowledge_service.admin.jobs import router as jobs_router
 
     app.include_router(login_router)
     app.include_router(admin_router)
     app.include_router(stats_router, prefix="/api/admin")
     app.include_router(communities_router, prefix="/api/admin")
+    app.include_router(jobs_router, prefix="/api/admin")
 
     app.add_middleware(
         AuthMiddleware,
