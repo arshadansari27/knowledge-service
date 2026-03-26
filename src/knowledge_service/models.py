@@ -302,15 +302,6 @@ class ClaimsRequest(BaseModel):
     knowledge: list[KnowledgeInput] = []  # Type-specific
 
 
-class ContentResponse(BaseModel):
-    content_id: str
-    triples_created: int
-    contradictions_detected: list[dict] = []
-    entities_resolved: int = 0  # How many were matched to existing entities
-    chunks_total: int = 0  # Total chunks processed
-    chunks_failed: int = 0  # Chunks where LLM extraction failed
-
-
 class ContentAcceptedResponse(BaseModel):
     content_id: str
     job_id: str
