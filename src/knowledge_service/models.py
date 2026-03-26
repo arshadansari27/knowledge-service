@@ -311,6 +311,29 @@ class ContentResponse(BaseModel):
     chunks_failed: int = 0  # Chunks where LLM extraction failed
 
 
+class ContentAcceptedResponse(BaseModel):
+    content_id: str
+    job_id: str
+    status: str = "accepted"
+    chunks_total: int
+    chunks_capped_from: int | None = None
+
+
+class IngestionJobStatus(BaseModel):
+    content_id: str
+    job_id: str
+    status: str
+    chunks_total: int
+    chunks_embedded: int
+    chunks_extracted: int
+    chunks_failed: int
+    triples_created: int
+    entities_resolved: int
+    error: str | None
+    created_at: str
+    updated_at: str
+
+
 class ClaimsResponse(BaseModel):
     triples_created: int
     contradictions_detected: list[dict] = []
