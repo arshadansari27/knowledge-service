@@ -158,31 +158,36 @@ class EmbeddingStore:
         if not chunks:
             return []
 
-        sql = """
+        placeholders = []
+        values: list = []
+        for i, chunk in enumerate(chunks):
+            base = i * 7
+            placeholders.append(
+                f"(${base + 1}, ${base + 2}, ${base + 3},"
+                f" ${base + 4}::vector(768), ${base + 5}, ${base + 6}, ${base + 7})"
+            )
+            values.extend([
+                content_id,
+                chunk["chunk_index"],
+                chunk["chunk_text"],
+                self._vector_to_str(chunk["embedding"]),
+                chunk["char_start"],
+                chunk["char_end"],
+                chunk.get("section_header"),
+            ])
+
+        sql = f"""
             INSERT INTO content (
                 content_id, chunk_index, chunk_text, embedding,
                 char_start, char_end, section_header
             )
-            VALUES ($1, $2, $3, $4::vector(768), $5, $6, $7)
-            RETURNING id
+            VALUES {', '.join(placeholders)}
+            RETURNING chunk_index, id
         """
 
-        results = []
         async with self._pool.acquire() as conn:
-            for chunk in chunks:
-                embedding_str = self._vector_to_str(chunk["embedding"])
-                row = await conn.fetchrow(
-                    sql,
-                    content_id,
-                    chunk["chunk_index"],
-                    chunk["chunk_text"],
-                    embedding_str,
-                    chunk["char_start"],
-                    chunk["char_end"],
-                    chunk.get("section_header"),
-                )
-                results.append((chunk["chunk_index"], str(row["id"])))
-        return results
+            rows = await conn.fetch(sql, *values)
+        return [(row["chunk_index"], str(row["id"])) for row in rows]
 
     async def get_chunks_by_ids(self, chunk_ids: list[str]) -> dict[str, str]:
         """Return {chunk_id: chunk_text} for the given IDs."""

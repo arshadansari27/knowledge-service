@@ -165,7 +165,10 @@ class TestDeleteChunks:
 class TestInsertChunks:
     async def test_inserts_multiple_chunks(self, store, mock_pool):
         _, conn = mock_pool
-        conn.fetchrow.return_value = {"id": "chunk-uuid-1"}
+        conn.fetch.return_value = [
+            {"chunk_index": 0, "id": "chunk-uuid-1"},
+            {"chunk_index": 1, "id": "chunk-uuid-2"},
+        ]
         chunks = [
             {
                 "chunk_index": 0,
@@ -183,12 +186,12 @@ class TestInsertChunks:
             },
         ]
         results = await store.insert_chunks("content-uuid-123", chunks)
-        assert conn.fetchrow.call_count == 2
+        assert conn.fetch.call_count == 1
         assert len(results) == 2
 
     async def test_sql_targets_content_table(self, store, mock_pool):
         _, conn = mock_pool
-        conn.fetchrow.return_value = {"id": "chunk-uuid-1"}
+        conn.fetch.return_value = [{"chunk_index": 0, "id": "chunk-uuid-1"}]
         chunks = [
             {
                 "chunk_index": 0,
@@ -199,13 +202,13 @@ class TestInsertChunks:
             },
         ]
         await store.insert_chunks("uuid-1", chunks)
-        sql = conn.fetchrow.call_args[0][0]
+        sql = conn.fetch.call_args[0][0]
         assert "INSERT INTO content" in sql
-        assert "RETURNING id" in sql
+        assert "RETURNING chunk_index, id" in sql
 
     async def test_passes_content_id(self, store, mock_pool):
         _, conn = mock_pool
-        conn.fetchrow.return_value = {"id": "chunk-uuid-1"}
+        conn.fetch.return_value = [{"chunk_index": 0, "id": "chunk-uuid-1"}]
         chunks = [
             {
                 "chunk_index": 0,
@@ -216,12 +219,12 @@ class TestInsertChunks:
             },
         ]
         await store.insert_chunks("my-content-id", chunks)
-        args = conn.fetchrow.call_args[0]
+        args = conn.fetch.call_args[0]
         assert "my-content-id" in args
 
     async def test_returns_chunk_index_and_id(self, store, mock_pool):
         _, conn = mock_pool
-        conn.fetchrow.return_value = {"id": "chunk-uuid-42"}
+        conn.fetch.return_value = [{"chunk_index": 3, "id": "chunk-uuid-42"}]
         chunks = [
             {
                 "chunk_index": 3,
@@ -237,7 +240,7 @@ class TestInsertChunks:
     async def test_no_chunks_returns_empty_list(self, store, mock_pool):
         _, conn = mock_pool
         results = await store.insert_chunks("uuid-1", [])
-        conn.fetchrow.assert_not_called()
+        conn.fetch.assert_not_called()
         assert results == []
 
 
