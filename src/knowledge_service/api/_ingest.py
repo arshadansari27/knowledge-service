@@ -101,24 +101,27 @@ async def process_triple(
 
     graph = _extractor_to_graph(extractor)
 
-    triple_hash, is_new = await asyncio.to_thread(
-        knowledge_store.insert_triple,
-        t["subject"],
-        t["predicate"],
-        t["object"],
-        t["confidence"],
-        t["knowledge_type"],
-        t["valid_from"],
-        t["valid_until"],
-        graph,
+    def _insert_and_check():
+        triple_hash, is_new = knowledge_store.insert_triple(
+            t["subject"],
+            t["predicate"],
+            t["object"],
+            t["confidence"],
+            t["knowledge_type"],
+            t["valid_from"],
+            t["valid_until"],
+            graph,
+        )
+        contras = knowledge_store.find_contradictions(t["subject"], t["predicate"], t["object"])
+        opp_contras = knowledge_store.find_opposite_predicate_contradictions(
+            t["subject"], t["predicate"], t["object"]
+        )
+        return triple_hash, is_new, contras, opp_contras
+
+    triple_hash, is_new, contradictions_raw, opp_contradictions_raw = await asyncio.to_thread(
+        _insert_and_check
     )
 
-    contradictions_raw: list[dict] = await asyncio.to_thread(
-        knowledge_store.find_contradictions,
-        t["subject"],
-        t["predicate"],
-        t["object"],
-    )
     contradictions = [
         {
             "subject": t["subject"],
@@ -130,13 +133,6 @@ async def process_triple(
         }
         for c in contradictions_raw
     ]
-
-    opp_contradictions_raw: list[dict] = await asyncio.to_thread(
-        knowledge_store.find_opposite_predicate_contradictions,
-        t["subject"],
-        t["predicate"],
-        t["object"],
-    )
     for c in opp_contradictions_raw:
         contradictions.append(
             {
