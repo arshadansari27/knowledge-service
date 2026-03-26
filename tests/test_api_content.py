@@ -451,6 +451,69 @@ class TestPostContentBatch:
         assert isinstance(data, dict)
         assert "content_id" in data
 
+    async def test_batch_partial_validation_error(self, client):
+        """Batch with one invalid item returns 202 with mixed results."""
+        batch = [
+            MINIMAL_PAYLOAD,
+            {"title": "No URL", "source_type": "article"},  # missing url
+        ]
+        response = await client.post("/api/content", json=batch)
+        assert response.status_code == 202
+        data = response.json()
+        assert len(data) == 2
+        assert "job_id" in data[0]  # first item succeeded
+        assert "error" in data[1]  # second item failed
+
+
+# ---------------------------------------------------------------------------
+# Tests: Idempotency guard
+# ---------------------------------------------------------------------------
+
+
+class TestIdempotencyGuard:
+    async def test_active_job_returns_409(self):
+        """Second request for same content_id returns 409 when job is active."""
+
+        call_count = 0
+
+        async def _fetchrow(sql, *args):
+            nonlocal call_count
+            if "ingestion_jobs" in sql and "INSERT" in sql:
+                return {"id": "job-uuid-1234"}
+            if "ingestion_jobs" in sql and "SELECT" in sql and "status NOT IN" in sql:
+                call_count += 1
+                if call_count > 1:
+                    return {"id": "existing-job"}  # active job exists
+                return None  # first call: no active job
+            return {"id": "content-uuid-1234"}
+
+        mock_conn = AsyncMock()
+        mock_conn.execute.return_value = "INSERT 0 1"
+        mock_conn.fetchrow.side_effect = _fetchrow
+        mock_conn.fetch.return_value = []
+
+        @asynccontextmanager
+        async def _acquire():
+            yield mock_conn
+
+        mock_pool = MagicMock()
+        mock_pool.acquire = _acquire
+
+        app = _make_app_with_mocks(pg_pool=mock_pool)
+        transport = ASGITransport(app=app)
+        async with AsyncClient(
+            transport=transport,
+            base_url="http://test",
+            cookies={"ks_session": make_test_session_cookie()},
+        ) as c:
+            # First request succeeds
+            resp1 = await c.post("/api/content", json=MINIMAL_PAYLOAD)
+            assert resp1.status_code == 202
+
+            # Second request gets 409
+            resp2 = await c.post("/api/content", json=MINIMAL_PAYLOAD)
+            assert resp2.status_code == 409
+
 
 # ---------------------------------------------------------------------------
 # Tests: Content chunking
