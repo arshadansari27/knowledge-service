@@ -488,3 +488,103 @@ class TestGetContradictionsMultiple:
         data = response.json()
         assert len(data) == 1
         assert data[0]["contradiction_probability"] == pytest.approx(0.63, abs=1e-6)
+
+
+# ---------------------------------------------------------------------------
+# Tests: non-numeric confidence values (error handling)
+# ---------------------------------------------------------------------------
+
+
+class TestGetContradictionsNonNumericConfidence:
+    async def test_returns_200_with_non_numeric_confidence(self):
+        """Endpoint returns 200 (not crash) when SPARQL returns non-numeric confidence."""
+        rows = [
+            {
+                "s": _FakeNamedNode(_SUBJECT),
+                "p": _FakeNamedNode(_PREDICATE),
+                "o1": _FakeNamedNode(_OBJECT_A),
+                "o2": _FakeNamedNode(_OBJECT_B),
+                "conf1": _FakeLiteral("invalid_number"),
+                "conf2": _FakeLiteral("0.6"),
+            },
+        ]
+        app = create_app(use_lifespan=False)
+        app.state.knowledge_store = _make_knowledge_store_mock(rows=rows)
+        app.state.pg_pool = _make_pg_pool_mock(provenance_rows=[])
+
+        transport = ASGITransport(app=app)
+        async with AsyncClient(
+            transport=transport,
+            base_url="http://test",
+            cookies={"ks_session": make_test_session_cookie()},
+        ) as c:
+            response = await c.get("/api/knowledge/contradictions")
+
+        assert response.status_code == 200
+        # Row is skipped due to invalid conf1, so empty list
+        assert response.json() == []
+
+    async def test_skips_row_with_non_numeric_conf2(self):
+        """Row with non-numeric conf2 is skipped."""
+        rows = [
+            {
+                "s": _FakeNamedNode(_SUBJECT),
+                "p": _FakeNamedNode(_PREDICATE),
+                "o1": _FakeNamedNode(_OBJECT_A),
+                "o2": _FakeNamedNode(_OBJECT_B),
+                "conf1": _FakeLiteral("0.8"),
+                "conf2": _FakeLiteral("not_a_number"),
+            },
+        ]
+        app = create_app(use_lifespan=False)
+        app.state.knowledge_store = _make_knowledge_store_mock(rows=rows)
+        app.state.pg_pool = _make_pg_pool_mock(provenance_rows=[])
+
+        transport = ASGITransport(app=app)
+        async with AsyncClient(
+            transport=transport,
+            base_url="http://test",
+            cookies={"ks_session": make_test_session_cookie()},
+        ) as c:
+            response = await c.get("/api/knowledge/contradictions")
+
+        assert response.status_code == 200
+        assert response.json() == []
+
+    async def test_mixed_valid_and_invalid_confidence_rows(self):
+        """Valid rows are returned, invalid rows are skipped."""
+        rows = [
+            {
+                "s": _FakeNamedNode(_SUBJECT),
+                "p": _FakeNamedNode(_PREDICATE),
+                "o1": _FakeNamedNode(_OBJECT_A),
+                "o2": _FakeNamedNode(_OBJECT_B),
+                "conf1": _FakeLiteral("invalid"),
+                "conf2": _FakeLiteral("0.6"),
+            },
+            {
+                "s": _FakeNamedNode("http://example.com/subject2"),
+                "p": _FakeNamedNode(_PREDICATE),
+                "o1": _FakeNamedNode("http://example.com/objC"),
+                "o2": _FakeNamedNode("http://example.com/objD"),
+                "conf1": _FakeLiteral("0.9"),
+                "conf2": _FakeLiteral("0.7"),
+            },
+        ]
+        app = create_app(use_lifespan=False)
+        app.state.knowledge_store = _make_knowledge_store_mock(rows=rows)
+        app.state.pg_pool = _make_pg_pool_mock(provenance_rows=[])
+
+        transport = ASGITransport(app=app)
+        async with AsyncClient(
+            transport=transport,
+            base_url="http://test",
+            cookies={"ks_session": make_test_session_cookie()},
+        ) as c:
+            response = await c.get("/api/knowledge/contradictions")
+
+        assert response.status_code == 200
+        data = response.json()
+        # Only the second (valid) row is returned
+        assert len(data) == 1
+        assert data[0]["contradiction_probability"] == pytest.approx(0.63, abs=1e-6)
