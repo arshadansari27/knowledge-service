@@ -35,10 +35,10 @@ class JobPhase(StrEnum):
     FAILED = "failed"
 
 
-_CHUNK_SIZE = 4000
-_CHUNK_OVERLAP = 200
-_MAX_CHUNKS = 50
-_EMBED_BATCH_SIZE = 20
+_CHUNK_SIZE = settings.chunk_size
+_CHUNK_OVERLAP = settings.chunk_overlap
+_MAX_CHUNKS = settings.max_chunks
+_EMBED_BATCH_SIZE = settings.embed_batch_size
 
 
 async def _resolve_labels(

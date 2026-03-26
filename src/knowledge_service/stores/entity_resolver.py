@@ -12,11 +12,12 @@ import logging
 import re
 from collections import OrderedDict
 
+from knowledge_service.config import settings
 from knowledge_service.ontology.namespaces import KS, KS_DATA, KS_GRAPH_FEDERATED, OWL
 
 logger = logging.getLogger(__name__)
 
-_CACHE_MAX_SIZE = 1000
+_CACHE_MAX_SIZE = settings.entity_cache_max_size
 
 
 class EntityResolver:

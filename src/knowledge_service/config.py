@@ -18,6 +18,13 @@ class Settings(BaseSettings):
     admin_password: str  # Required — no default; also accepted as X-API-Key for m2m calls
     secret_key: str  # Required — no default; must be set via SECRET_KEY env var
 
+    # Operational limits
+    chunk_size: int = 4000
+    chunk_overlap: int = 200
+    max_chunks: int = 50
+    embed_batch_size: int = 20
+    entity_cache_max_size: int = 1000
+
     model_config = {"env_file": ".env"}
 
 
