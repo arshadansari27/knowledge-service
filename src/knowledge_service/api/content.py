@@ -29,7 +29,9 @@ _MAX_CHUNKS = 50
 _EMBED_BATCH_SIZE = 20
 
 
-async def _resolve_labels(item, entity_resolver) -> tuple[int, object]:
+async def _resolve_labels(
+    item, entity_resolver, job_id: str | None = None, pg_pool=None
+) -> tuple[int, object]:
     """Resolve entity labels in a knowledge item via embedding similarity.
 
     Returns (count_resolved, updated_item).
@@ -39,24 +41,24 @@ async def _resolve_labels(item, entity_resolver) -> tuple[int, object]:
 
     if kt in ("Claim", "Fact", "Relationship"):
         if not _is_uri(item.subject):
-            item.subject = await entity_resolver.resolve(item.subject)
+            item.subject = await entity_resolver.resolve(item.subject, job_id=job_id, pg_pool=pg_pool)
             resolved += 1
         if not _is_uri(item.predicate):
             item.predicate = await entity_resolver.resolve_predicate(item.predicate)
             resolved += 1
         if not _is_uri(item.object) and is_object_entity(item):
-            item.object = await entity_resolver.resolve(item.object)
+            item.object = await entity_resolver.resolve(item.object, job_id=job_id, pg_pool=pg_pool)
             resolved += 1
     elif kt == "TemporalState":
         if not _is_uri(item.subject):
-            item.subject = await entity_resolver.resolve(item.subject)
+            item.subject = await entity_resolver.resolve(item.subject, job_id=job_id, pg_pool=pg_pool)
             resolved += 1
         if not _is_uri(item.property):
             item.property = await entity_resolver.resolve_predicate(item.property)
             resolved += 1
     elif kt == "Event":
         if not _is_uri(item.subject):
-            item.subject = await entity_resolver.resolve(item.subject)
+            item.subject = await entity_resolver.resolve(item.subject, job_id=job_id, pg_pool=pg_pool)
             resolved += 1
 
     return resolved, item
@@ -308,7 +310,9 @@ async def _run_ingestion_worker(
         entities_resolved = 0
         if entity_resolver is not None:
             for i, item in enumerate(knowledge):
-                count, knowledge[i] = await _resolve_labels(item, entity_resolver)
+                count, knowledge[i] = await _resolve_labels(
+                    item, entity_resolver, job_id=job_id, pg_pool=pg_pool
+                )
                 entities_resolved += count
 
         # URI fallback
