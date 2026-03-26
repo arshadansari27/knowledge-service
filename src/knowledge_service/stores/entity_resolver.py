@@ -76,7 +76,7 @@ class EntityResolver:
         if self._federation_client is not None:
             try:
                 ext = await self._federation_client.lookup_entity(label)
-            except Exception:
+            except (OSError, TimeoutError):
                 logger.debug("Federation lookup failed for '%s'", label)
                 ext = None
 

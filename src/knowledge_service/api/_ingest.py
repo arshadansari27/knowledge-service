@@ -167,7 +167,7 @@ async def process_triple(
                     t["object"],
                     effective_confidence,
                 )
-            except Exception:
+            except (OSError, ValueError):
                 logger.exception(
                     "Failed to apply contradiction penalty for triple %s",
                     triple_hash[:12],
@@ -208,7 +208,7 @@ async def process_triple(
                 t["object"],
                 combined,
             )
-        except Exception:
+        except (OSError, ValueError):
             logger.exception(
                 "Failed to update combined confidence for triple %s",
                 triple_hash[:12],
