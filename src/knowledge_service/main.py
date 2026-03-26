@@ -260,6 +260,10 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     # --- Shutdown ---
     if hasattr(app.state, "_community_rebuild_task") and app.state._community_rebuild_task:
         app.state._community_rebuild_task.cancel()
+        try:
+            await app.state._community_rebuild_task
+        except asyncio.CancelledError:
+            pass
     app.state.knowledge_store.flush()
     await app.state.pg_pool.close()
     if app.state.federation_client is not None:

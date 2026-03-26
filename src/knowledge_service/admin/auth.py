@@ -22,11 +22,19 @@ _RATE_LIMIT = 5  # attempts
 _RATE_WINDOW = 60  # seconds
 
 
+_MAX_TRACKED_IPS = 1000
+
+
 def _is_rate_limited(ip: str) -> bool:
     """Check if an IP has exceeded the login attempt rate limit."""
     now = time.monotonic()
+    # Evict all stale IPs if dict grows too large
+    if len(_login_attempts) > _MAX_TRACKED_IPS:
+        stale = [k for k, v in _login_attempts.items() if all(now - t >= _RATE_WINDOW for t in v)]
+        for k in stale:
+            del _login_attempts[k]
     attempts = _login_attempts[ip]
-    # Remove expired entries
+    # Remove expired entries for this IP
     _login_attempts[ip] = [t for t in attempts if now - t < _RATE_WINDOW]
     return len(_login_attempts[ip]) >= _RATE_LIMIT
 
