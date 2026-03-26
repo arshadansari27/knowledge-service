@@ -10,12 +10,14 @@ from __future__ import annotations
 import asyncio
 import logging
 import re
+from collections import OrderedDict
 
+from knowledge_service.config import settings
 from knowledge_service.ontology.namespaces import KS, KS_DATA, KS_GRAPH_FEDERATED, OWL
 
 logger = logging.getLogger(__name__)
 
-_CACHE_MAX_SIZE = 1000
+_CACHE_MAX_SIZE = settings.entity_cache_max_size
 
 
 class EntityResolver:
@@ -30,8 +32,8 @@ class EntityResolver:
         self._embedding_client = embedding_client
         self._federation_client = federation_client
         # In-memory caches to avoid redundant embedding calls for the same label
-        self._entity_cache: dict[str, str] = {}  # label_lower -> URI
-        self._predicate_cache: dict[str, str] = {}  # label_lower -> URI
+        self._entity_cache: OrderedDict[str, str] = OrderedDict()  # label_lower -> URI
+        self._predicate_cache: OrderedDict[str, str] = OrderedDict()  # label_lower -> URI
         self._enrichment_tasks: set[asyncio.Task] = set()
 
     def _slugify(self, label: str) -> str:
@@ -58,6 +60,7 @@ class EntityResolver:
         """
         cache_key = label.lower()
         if cache_key in self._entity_cache:
+            self._entity_cache.move_to_end(cache_key)
             return self._entity_cache[cache_key]
 
         embedding = await self._embedding_client.embed(label)
@@ -156,6 +159,7 @@ class EntityResolver:
         """
         cache_key = label.lower()
         if cache_key in self._predicate_cache:
+            self._predicate_cache.move_to_end(cache_key)
             return self._predicate_cache[cache_key]
 
         from knowledge_service.clients.llm import (  # noqa: PLC0415
@@ -199,11 +203,15 @@ class EntityResolver:
             await asyncio.gather(*self._enrichment_tasks, return_exceptions=True)
 
     def _cache_entity(self, key: str, uri: str) -> None:
-        if len(self._entity_cache) >= _CACHE_MAX_SIZE:
-            self._entity_cache.clear()
+        if key in self._entity_cache:
+            self._entity_cache.move_to_end(key)
+        elif len(self._entity_cache) >= _CACHE_MAX_SIZE:
+            self._entity_cache.popitem(last=False)
         self._entity_cache[key] = uri
 
     def _cache_predicate(self, key: str, uri: str) -> None:
-        if len(self._predicate_cache) >= _CACHE_MAX_SIZE:
-            self._predicate_cache.clear()
+        if key in self._predicate_cache:
+            self._predicate_cache.move_to_end(key)
+        elif len(self._predicate_cache) >= _CACHE_MAX_SIZE:
+            self._predicate_cache.popitem(last=False)
         self._predicate_cache[key] = uri

@@ -8,6 +8,7 @@ import re
 import httpx
 from pydantic import TypeAdapter, ValidationError
 
+from knowledge_service.clients.base import BaseLLMClient
 from knowledge_service.ontology.namespaces import KS, KS_DATA
 
 logger = logging.getLogger(__name__)
@@ -17,22 +18,11 @@ class LLMClientError(RuntimeError):
     """Raised when the LLM API returns an error or unexpected response."""
 
 
-class EmbeddingClient:
+class EmbeddingClient(BaseLLMClient):
     """HTTP client wrapping the OpenAI-compatible embeddings API."""
 
     def __init__(self, base_url: str, model: str, api_key: str) -> None:
-        self._model = model
-        headers = {}
-        if api_key:
-            headers["Authorization"] = f"Bearer {api_key}"
-        url = base_url.rstrip("/")
-        if url.endswith("/v1"):
-            url = url[:-3]
-        self._client = httpx.AsyncClient(
-            base_url=url,
-            headers=headers,
-            timeout=httpx.Timeout(connect=5.0, read=30.0, write=10.0, pool=5.0),
-        )
+        super().__init__(base_url, model, api_key, read_timeout=30.0)
 
     async def embed(self, text: str) -> list[float]:
         """Generate embedding vector for a single text."""
@@ -70,11 +60,6 @@ class EmbeddingClient:
             raise LLMClientError(f"LLM API request timed out: {exc}") from exc
         data = response.json()
         return [item["embedding"] for item in data["data"]]
-
-    async def close(self) -> None:
-        """Close the underlying HTTP client."""
-        if not self._client.is_closed:
-            await self._client.aclose()
 
 
 # ---------------------------------------------------------------------------
@@ -298,7 +283,7 @@ Text:
 ---"""
 
 
-class ExtractionClient:
+class ExtractionClient(BaseLLMClient):
     """HTTP client that calls the OpenAI-compatible chat API to extract knowledge items.
 
     Uses a two-phase extraction strategy:
@@ -308,26 +293,7 @@ class ExtractionClient:
     """
 
     def __init__(self, base_url: str, model: str, api_key: str) -> None:
-        self._model = model
-        headers = {}
-        if api_key:
-            headers["Authorization"] = f"Bearer {api_key}"
-        url = base_url.rstrip("/")
-        if url.endswith("/v1"):
-            url = url[:-3]
-        self._client = httpx.AsyncClient(
-            base_url=url,
-            headers=headers,
-            timeout=httpx.Timeout(connect=5.0, read=600.0, write=10.0, pool=5.0),
-        )
-
-    @property
-    def client(self) -> httpx.AsyncClient:
-        return self._client
-
-    @property
-    def model(self) -> str:
-        return self._model
+        super().__init__(base_url, model, api_key, read_timeout=600.0)
 
     async def _call_llm(self, prompt: str) -> list[dict] | None:
         """Send a prompt to the LLM and return parsed item dicts.
@@ -420,8 +386,3 @@ class ExtractionClient:
                 logger.warning("ExtractionClient: skipping invalid item %s: %s", item_dict, exc)
 
         return phase1_items + phase2_items
-
-    async def close(self) -> None:
-        """Close the underlying HTTP client."""
-        if not self._client.is_closed:
-            await self._client.aclose()

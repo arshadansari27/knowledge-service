@@ -1,5 +1,3 @@
-import secrets
-
 from pydantic_settings import BaseSettings
 
 
@@ -18,7 +16,14 @@ class Settings(BaseSettings):
     federation_timeout: float = 3.0
     community_rebuild_interval: int = 0  # seconds, 0 = disabled
     admin_password: str  # Required — no default; also accepted as X-API-Key for m2m calls
-    secret_key: str = secrets.token_hex(32)
+    secret_key: str  # Required — no default; must be set via SECRET_KEY env var
+
+    # Operational limits
+    chunk_size: int = 4000
+    chunk_overlap: int = 200
+    max_chunks: int = 50
+    embed_batch_size: int = 20
+    entity_cache_max_size: int = 1000
 
     model_config = {"env_file": ".env"}
 

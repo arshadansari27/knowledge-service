@@ -120,8 +120,14 @@ async def get_contradictions(
         p_str = _rdf_value_to_str(row.get("p"))
         o1_str = _rdf_value_to_str(row.get("o1"))
         o2_str = _rdf_value_to_str(row.get("o2"))
-        conf1 = float(_rdf_value_to_str(row.get("conf1")) or "0.0")
-        conf2 = float(_rdf_value_to_str(row.get("conf2")) or "0.0")
+        try:
+            conf1 = float(_rdf_value_to_str(row.get("conf1")) or "0.0")
+        except (ValueError, TypeError):
+            continue
+        try:
+            conf2 = float(_rdf_value_to_str(row.get("conf2")) or "0.0")
+        except (ValueError, TypeError):
+            continue
 
         contradiction_probability = conf1 * conf2
 

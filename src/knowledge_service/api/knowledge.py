@@ -7,7 +7,12 @@ import asyncio
 from fastapi import APIRouter, HTTPException, Query, Request
 from pydantic import BaseModel
 
-from knowledge_service._utils import _is_uri, _triple_hash, _rdf_value_to_str
+from knowledge_service._utils import (
+    _is_uri,
+    _triple_hash,
+    _rdf_value_to_str,
+    sanitize_sparql_string,
+)
 from knowledge_service.ontology.namespaces import (
     KS,
     KS_CONFIDENCE,
@@ -72,14 +77,14 @@ async def get_knowledge_query(
     # Build SPARQL filters
     filters = []
     if subject:
-        filters.append(f"FILTER(?s = <{subject}>)")
+        filters.append(f"FILTER(?s = <{sanitize_sparql_string(subject)}>)")
     if predicate:
-        filters.append(f"FILTER(?p = <{predicate}>)")
+        filters.append(f"FILTER(?p = <{sanitize_sparql_string(predicate)}>)")
     if object:
         if _is_uri(object):
-            filters.append(f"FILTER(?o = <{object}>)")
+            filters.append(f"FILTER(?o = <{sanitize_sparql_string(object)}>)")
         else:
-            filters.append(f'FILTER(?o = "{object}")')
+            filters.append(f'FILTER(?o = "{sanitize_sparql_string(object)}")')
 
     sparql = f"""
         SELECT ?s ?p ?o ?conf ?ktype ?vfrom ?vuntil WHERE {{
@@ -103,7 +108,10 @@ async def get_knowledge_query(
         }}
     """
 
-    rows: list[dict] = await asyncio.to_thread(knowledge_store.query, sparql)
+    try:
+        rows: list[dict] = await asyncio.to_thread(knowledge_store.query, sparql)
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=f"SPARQL query failed: {exc}") from exc
 
     results: list[KnowledgeResult] = []
     for row in rows:
@@ -170,7 +178,10 @@ async def post_knowledge_sparql(
     if not sparql or not sparql.strip():
         raise HTTPException(status_code=422, detail="No SPARQL query provided.")
 
-    rows: list[dict] = await asyncio.to_thread(knowledge_store.query, sparql)
+    try:
+        rows: list[dict] = await asyncio.to_thread(knowledge_store.query, sparql)
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=f"SPARQL query failed: {exc}") from exc
 
     serialised: list[dict] = []
     for row in rows:

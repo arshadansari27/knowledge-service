@@ -195,7 +195,7 @@ async def process_triple(
             triple_hash[:12],
             source_url,
         )
-        return is_new, contradictions, True
+        return False, contradictions, True
 
     prov_rows = await provenance_store.get_by_triple(triple_hash)
     if len(prov_rows) > 1:

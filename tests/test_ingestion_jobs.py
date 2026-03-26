@@ -164,8 +164,7 @@ class TestChunkCap:
 
         mock_conn = AsyncMock()
         mock_conn.fetchrow.side_effect = [
-            None,  # no active job
-            {"id": "job-uuid"},  # job insert
+            {"id": "job-uuid"},  # job insert (atomic: no prior SELECT)
         ]
 
         @asynccontextmanager
