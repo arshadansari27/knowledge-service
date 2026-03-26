@@ -368,6 +368,12 @@ async def _run_ingestion_worker(
             )
 
     except Exception as exc:
+        # Clean up orphaned chunks from Phase 1
+        try:
+            await embedding_store.delete_chunks(content_id)
+        except Exception:
+            logger.warning("Failed to clean up chunks for failed job %s", job_id)
+
         error_json = json.dumps(
             {
                 "type": type(exc).__name__,
