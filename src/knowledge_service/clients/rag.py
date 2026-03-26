@@ -5,8 +5,6 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass, field
 
-import httpx
-
 from knowledge_service._utils import _extract_json
 from knowledge_service.clients.base import BaseLLMClient
 from knowledge_service.stores.rag import RetrievalContext

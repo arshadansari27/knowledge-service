@@ -1,7 +1,5 @@
 """Tests for Settings configuration."""
 
-import os
-
 import pytest
 from pydantic import ValidationError
 

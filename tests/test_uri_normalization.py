@@ -21,7 +21,10 @@ def test_ensure_entity_uri_slugifies():
 
 
 def test_ensure_predicate_uri_passthrough():
-    assert ensure_predicate_uri("http://knowledge.local/schema/causes") == "http://knowledge.local/schema/causes"
+    assert (
+        ensure_predicate_uri("http://knowledge.local/schema/causes")
+        == "http://knowledge.local/schema/causes"
+    )
 
 
 def test_ensure_predicate_uri_bare_label():

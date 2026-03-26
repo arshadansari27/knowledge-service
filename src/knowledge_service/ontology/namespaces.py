@@ -77,6 +77,7 @@ def ensure_entity_uri(value: str) -> str:
     if value.startswith(("http://", "https://", "urn:")):
         return value
     from urllib.parse import quote
+
     slug = quote(value, safe="/_-:.~")
     return f"{KS_DATA}{slug}"
 
@@ -86,5 +87,6 @@ def ensure_predicate_uri(value: str) -> str:
     if value.startswith(("http://", "https://", "urn:")):
         return value
     from urllib.parse import quote
+
     slug = quote(value, safe="/_-:.~")
     return f"{KS}{slug}"

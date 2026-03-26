@@ -30,7 +30,6 @@ from knowledge_service._utils import _is_uri, _rdf_value_to_str, _to_rdf_term
 from knowledge_service.ontology.namespaces import (
     KS,
     KS_CONFIDENCE,
-    KS_DATA,
     KS_GRAPH_EXTRACTED,
     KS_KNOWLEDGE_TYPE,
     KS_OPPOSITE_PREDICATE,

@@ -7,7 +7,12 @@ import asyncio
 from fastapi import APIRouter, HTTPException, Query, Request
 from pydantic import BaseModel
 
-from knowledge_service._utils import _is_uri, _triple_hash, _rdf_value_to_str, sanitize_sparql_string
+from knowledge_service._utils import (
+    _is_uri,
+    _triple_hash,
+    _rdf_value_to_str,
+    sanitize_sparql_string,
+)
 from knowledge_service.ontology.namespaces import (
     KS,
     KS_CONFIDENCE,
