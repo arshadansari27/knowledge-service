@@ -39,9 +39,23 @@ class EmbeddingClient:
         vectors = await self._request([text])
         return vectors[0]
 
-    async def embed_batch(self, texts: list[str]) -> list[list[float]]:
-        """Generate embeddings for multiple texts in a single request."""
-        return await self._request(texts)
+    async def embed_batch(
+        self, texts: list[str], batch_size: int | None = None
+    ) -> list[list[float]]:
+        """Generate embeddings for multiple texts.
+
+        When batch_size is set, splits into sub-batches to avoid overwhelming
+        the embedding endpoint. Default (None) sends all texts in one request.
+        """
+        if not texts:
+            return []
+        if batch_size is None or batch_size >= len(texts):
+            return await self._request(texts)
+        results: list[list[float]] = []
+        for i in range(0, len(texts), batch_size):
+            batch = texts[i : i + batch_size]
+            results.extend(await self._request(batch))
+        return results
 
     async def _request(self, texts: list[str]) -> list[list[float]]:
         try:
