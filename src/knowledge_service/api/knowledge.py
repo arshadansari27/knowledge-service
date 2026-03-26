@@ -103,7 +103,10 @@ async def get_knowledge_query(
         }}
     """
 
-    rows: list[dict] = await asyncio.to_thread(knowledge_store.query, sparql)
+    try:
+        rows: list[dict] = await asyncio.to_thread(knowledge_store.query, sparql)
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=f"SPARQL query failed: {exc}") from exc
 
     results: list[KnowledgeResult] = []
     for row in rows:
@@ -170,7 +173,10 @@ async def post_knowledge_sparql(
     if not sparql or not sparql.strip():
         raise HTTPException(status_code=422, detail="No SPARQL query provided.")
 
-    rows: list[dict] = await asyncio.to_thread(knowledge_store.query, sparql)
+    try:
+        rows: list[dict] = await asyncio.to_thread(knowledge_store.query, sparql)
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=f"SPARQL query failed: {exc}") from exc
 
     serialised: list[dict] = []
     for row in rows:
