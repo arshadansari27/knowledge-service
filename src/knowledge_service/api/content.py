@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
+from enum import StrEnum
 
 import asyncpg.exceptions
 
@@ -24,6 +25,15 @@ from knowledge_service.stores.provenance import ProvenanceStore
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
+
+
+class JobPhase(StrEnum):
+    EMBEDDING = "embedding"
+    EXTRACTING = "extracting"
+    PROCESSING = "processing"
+    COMPLETED = "completed"
+    FAILED = "failed"
+
 
 _CHUNK_SIZE = 4000
 _CHUNK_OVERLAP = 200
@@ -214,7 +224,7 @@ async def _run_ingestion_worker(
 
         embedding_store = EmbeddingStore(pg_pool)
 
-    current_phase = "embedding"
+    current_phase = JobPhase.EMBEDDING
     try:
         # --- Phase 1: Embedding ---
         async with pg_pool.acquire() as conn:
@@ -249,7 +259,7 @@ async def _run_ingestion_worker(
         chunk_id_map = dict(chunk_id_pairs) if chunk_id_pairs else {}
 
         # --- Phase 2: Extraction ---
-        current_phase = "extracting"
+        current_phase = JobPhase.EXTRACTING
         async with pg_pool.acquire() as conn:
             await conn.execute(
                 "UPDATE ingestion_jobs SET status = 'extracting' WHERE id = $1::uuid", job_id
@@ -301,7 +311,7 @@ async def _run_ingestion_worker(
         extractor = f"llm_{settings.llm_chat_model}" if extracted_by_llm else "api"
 
         # --- Phase 3: Processing ---
-        current_phase = "processing"
+        current_phase = JobPhase.PROCESSING
         async with pg_pool.acquire() as conn:
             await conn.execute(
                 "UPDATE ingestion_jobs SET status = 'processing' WHERE id = $1::uuid", job_id
