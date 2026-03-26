@@ -28,9 +28,7 @@ class TestEmbedBatchSubbatching:
                 [[0.5] * 768],
             ]
         )
-        result = await embedding_client.embed_batch(
-            ["t1", "t2", "t3", "t4", "t5"], batch_size=2
-        )
+        result = await embedding_client.embed_batch(["t1", "t2", "t3", "t4", "t5"], batch_size=2)
         assert len(result) == 5
         assert embedding_client._request.call_count == 3
 

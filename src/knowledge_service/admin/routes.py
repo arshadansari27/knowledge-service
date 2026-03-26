@@ -83,6 +83,11 @@ async def contradictions_page(request: Request):
     return templates.TemplateResponse(request, "contradictions.html", {"active": "contradictions"})
 
 
+@router.get("/admin/jobs", response_class=HTMLResponse)
+async def jobs_page(request: Request):
+    return templates.TemplateResponse(request, "jobs.html", {"active": "jobs"})
+
+
 @router.post("/admin/chat/send", response_class=HTMLResponse)
 async def chat_send(request: Request):
     """Process a chat question and return an HTML partial with the answer."""

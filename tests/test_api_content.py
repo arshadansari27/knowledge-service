@@ -108,9 +108,7 @@ def _make_app_with_mocks(**overrides):
     app.state.knowledge_store = overrides.get("knowledge_store", _make_knowledge_store_mock())
     app.state.pg_pool = overrides.get("pg_pool", _make_pg_pool_mock())
     app.state.embedding_client = overrides.get("embedding_client", _make_embedding_client_mock())
-    app.state.extraction_client = overrides.get(
-        "extraction_client", _make_extraction_client_mock()
-    )
+    app.state.extraction_client = overrides.get("extraction_client", _make_extraction_client_mock())
     app.state.reasoning_engine = overrides.get("reasoning_engine", _make_reasoning_engine_mock())
     app.state.embedding_store = overrides.get("embedding_store", _make_embedding_store_mock())
     if "entity_resolver" in overrides:
