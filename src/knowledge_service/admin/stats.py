@@ -3,11 +3,10 @@
 from __future__ import annotations
 
 import asyncio
-import re
 
 from fastapi import APIRouter, HTTPException, Query, Request
 
-from knowledge_service._utils import _rdf_value_to_str
+from knowledge_service._utils import _rdf_value_to_str, sanitize_sparql_string
 from knowledge_service.ontology.namespaces import (
     KS,
     KS_CONFIDENCE,
@@ -17,11 +16,6 @@ from knowledge_service.ontology.namespaces import (
 )
 
 router = APIRouter()
-
-
-def _sanitize_sparql_string(value: str) -> str:
-    """Sanitize a string for safe inclusion in SPARQL queries."""
-    return re.sub(r'["\\\n\r]', "", value)
 
 
 @router.get("/stats/counts")
@@ -192,10 +186,10 @@ async def browse_triples(
 
     filters = []
     if subject:
-        safe_subj = _sanitize_sparql_string(subject)
+        safe_subj = sanitize_sparql_string(subject)
         filters.append(f'FILTER(STR(?s) = "{safe_subj}")')
     elif q:
-        safe_q = _sanitize_sparql_string(q)
+        safe_q = sanitize_sparql_string(q)
         filters.append(
             f'FILTER(CONTAINS(LCASE(STR(?s)), LCASE("{safe_q}")) || '
             f'CONTAINS(LCASE(STR(?p)), LCASE("{safe_q}")) || '
