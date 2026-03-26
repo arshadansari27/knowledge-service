@@ -16,7 +16,6 @@ from __future__ import annotations
 
 import hashlib
 from datetime import date, datetime
-from urllib.parse import quote
 
 from pyoxigraph import (
     Literal,
@@ -38,6 +37,8 @@ from knowledge_service.ontology.namespaces import (
     KS_VALID_FROM,
     KS_VALID_UNTIL,
     XSD,
+    ensure_entity_uri,
+    ensure_predicate_uri,
 )
 
 
@@ -121,14 +122,8 @@ class KnowledgeStore:
             Tuple of (SHA-256 hex digest of the canonical triple form, is_new).
             is_new is True if the triple did not previously exist, False otherwise.
         """
-        # Defensive URI normalization — catch any bare labels that slip through
-        # upstream normalization (_apply_uri_fallback, _ensure_uri, etc.)
-        if not subject.startswith(("http://", "https://", "urn:")):
-            slug = quote(subject, safe="/_-:.~")
-            subject = f"{KS_DATA}{slug}"
-        if not predicate.startswith(("http://", "https://", "urn:")):
-            slug = quote(predicate, safe="/_-:.~")
-            predicate = f"{KS}{slug}"
+        subject = ensure_entity_uri(subject)
+        predicate = ensure_predicate_uri(predicate)
 
         s = NamedNode(subject)
         p = NamedNode(predicate)

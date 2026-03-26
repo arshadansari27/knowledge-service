@@ -70,3 +70,21 @@ KS_GRAPH_ASSERTED = f"{KS}graph/asserted"
 KS_GRAPH_EXTRACTED = f"{KS}graph/extracted"
 KS_GRAPH_INFERRED = f"{KS}graph/inferred"
 KS_GRAPH_FEDERATED = f"{KS}graph/federated"
+
+
+def ensure_entity_uri(value: str) -> str:
+    """Ensure a value is a valid entity URI. Bare labels are slugified under KS_DATA."""
+    if value.startswith(("http://", "https://", "urn:")):
+        return value
+    from urllib.parse import quote
+    slug = quote(value, safe="/_-:.~")
+    return f"{KS_DATA}{slug}"
+
+
+def ensure_predicate_uri(value: str) -> str:
+    """Ensure a value is a valid predicate URI. Bare labels are slugified under KS."""
+    if value.startswith(("http://", "https://", "urn:")):
+        return value
+    from urllib.parse import quote
+    slug = quote(value, safe="/_-:.~")
+    return f"{KS}{slug}"
