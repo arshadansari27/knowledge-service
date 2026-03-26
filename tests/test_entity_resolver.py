@@ -192,3 +192,102 @@ class TestFederationFallback:
         """When federation_client is None, resolve works as before."""
         uri = await resolver.resolve("PostgreSQL")
         assert uri.startswith("http://knowledge.local/data/")
+
+
+@pytest.fixture
+def resolver_with_federation_enrichment(store, federation_client):
+    """EntityResolver with federation enabled and enrich_entity configured."""
+    mock_embedding_store = AsyncMock()
+    mock_embedding_client = AsyncMock()
+    mock_embedding_client.embed.return_value = [0.1] * 768
+    mock_embedding_store.search_entities.return_value = []
+    federation_client.lookup_entity.return_value = {
+        "uri": "http://dbpedia.org/resource/PostgreSQL",
+        "rdf_type": "http://dbpedia.org/ontology/Software",
+        "description": "PostgreSQL is a database.",
+    }
+    federation_client.enrich_entity.return_value = [
+        {
+            "subject": "http://dbpedia.org/resource/PostgreSQL",
+            "predicate": "http://www.w3.org/1999/02/22-rdf-syntax-ns#type",
+            "object": "http://dbpedia.org/ontology/Software",
+        },
+        {
+            "subject": "http://dbpedia.org/resource/PostgreSQL",
+            "predicate": "http://www.w3.org/2002/07/owl#sameAs",
+            "object": "http://www.wikidata.org/entity/Q192490",
+        },
+    ]
+    return EntityResolver(
+        knowledge_store=store,
+        embedding_store=mock_embedding_store,
+        embedding_client=mock_embedding_client,
+        federation_client=federation_client,
+    )
+
+
+class TestFederationEnrichment:
+    async def test_enrichment_stores_triples_in_federated_graph(
+        self, resolver_with_federation_enrichment, federation_client, store
+    ):
+        """Federation enrichment should store external triples in ks:graph/federated."""
+        await resolver_with_federation_enrichment.resolve("PostgreSQL")
+
+        # Wait for fire-and-forget task to complete
+        await resolver_with_federation_enrichment.drain_enrichment()
+
+        # Check that enrichment triples are in the federated graph
+        triples = store.query("""
+            SELECT ?s ?p ?o WHERE {
+                GRAPH <http://knowledge.local/schema/graph/federated> {
+                    ?s ?p ?o .
+                }
+            }
+        """)
+        # Should have at least the 2 enrichment triples (type + sameAs)
+        assert len(triples) >= 2
+        federation_client.enrich_entity.assert_called_once_with(
+            "http://dbpedia.org/resource/PostgreSQL"
+        )
+
+    async def test_enrichment_failure_does_not_affect_resolution(
+        self, resolver_with_federation_enrichment, federation_client
+    ):
+        """If enrich_entity raises, resolve() still returns a valid URI."""
+        federation_client.enrich_entity.side_effect = Exception("network error")
+        uri = await resolver_with_federation_enrichment.resolve("PostgreSQL")
+        assert uri.startswith("http://knowledge.local/data/")
+        # Wait for task to complete (it should swallow the error)
+        await resolver_with_federation_enrichment.drain_enrichment()
+
+    async def test_enrichment_updates_job_counter(
+        self, resolver_with_federation_enrichment, federation_client, store
+    ):
+        """When job_id and pg_pool are provided, federation_enriched counter is updated."""
+        from unittest.mock import MagicMock
+
+        mock_conn = AsyncMock()
+        mock_acquire_cm = MagicMock()
+        mock_acquire_cm.__aenter__ = AsyncMock(return_value=mock_conn)
+        mock_acquire_cm.__aexit__ = AsyncMock(return_value=False)
+        mock_pg_pool = MagicMock()
+        mock_pg_pool.acquire.return_value = mock_acquire_cm
+
+        await resolver_with_federation_enrichment.resolve(
+            "PostgreSQL", job_id="test-job-id", pg_pool=mock_pg_pool
+        )
+        # Wait for fire-and-forget task
+        await resolver_with_federation_enrichment.drain_enrichment()
+
+        mock_conn.execute.assert_called_once()
+        call_args = mock_conn.execute.call_args
+        assert "federation_enriched" in call_args[0][0]
+        assert call_args[0][1] == 2  # 2 triples enriched
+
+    async def test_no_enrichment_without_federation_hit(
+        self, resolver_with_federation, federation_client
+    ):
+        """When federation lookup returns None, no enrichment task is spawned."""
+        federation_client.lookup_entity.return_value = None
+        await resolver_with_federation.resolve("PostgreSQL")
+        federation_client.enrich_entity.assert_not_called()

@@ -85,18 +85,19 @@ async def process_triple(
     source_type: str,
     extractor: str,
     chunk_id: str | None = None,
-) -> tuple[bool, list[dict]]:
+) -> tuple[bool, list[dict], bool]:
     """Insert one triple, detect contradictions, record provenance, combine evidence.
 
     If contradictions are found, the new triple's confidence is penalized
     proportionally to the strongest contradicting triple's confidence.
 
     If the pyoxigraph insert succeeds but provenance fails, the triple is still
-    in the graph (idempotent on retry) but the error is logged. Callers see
-    is_new=False so the triple isn't double-counted.
+    in the graph (idempotent on retry) but the error is logged.
 
     Returns:
-        (is_new, contradictions): is_new=True if this triple did not already exist.
+        (is_new, contradictions, provenance_failed):
+          is_new=True if this triple did not already exist.
+          provenance_failed=True if the provenance insert raised an exception.
     """
 
     graph = _extractor_to_graph(extractor)
@@ -194,7 +195,7 @@ async def process_triple(
             triple_hash[:12],
             source_url,
         )
-        return is_new, contradictions
+        return is_new, contradictions, True
 
     prov_rows = await provenance_store.get_by_triple(triple_hash)
     if len(prov_rows) > 1:
@@ -213,4 +214,4 @@ async def process_triple(
                 triple_hash[:12],
             )
 
-    return is_new, contradictions
+    return is_new, contradictions, False

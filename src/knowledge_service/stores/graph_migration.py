@@ -11,6 +11,7 @@ from knowledge_service.ontology.namespaces import (
     KS,
     KS_GRAPH_ASSERTED,
     KS_GRAPH_EXTRACTED,
+    KS_GRAPH_FEDERATED,  # noqa: F401
     KS_GRAPH_ONTOLOGY,
 )
 

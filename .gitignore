@@ -11,3 +11,4 @@ dist/
 .ruff_cache/
 .firecrawl/
 CLAUDE.md
+.worktrees/

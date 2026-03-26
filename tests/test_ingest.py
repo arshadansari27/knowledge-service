@@ -28,9 +28,43 @@ def _make_engine():
     return m
 
 
+class TestProvenanceFailure:
+    async def test_provenance_failure_returns_provenance_error_flag(self):
+        """When provenance insert fails, the result should signal the failure."""
+        mock_knowledge_store = _make_ks(is_new=True)
+
+        mock_provenance_store = AsyncMock()
+        mock_provenance_store.insert.side_effect = Exception("DB connection lost")
+
+        mock_reasoning = _make_engine()
+
+        triple = {
+            "subject": "http://example.com/s",
+            "predicate": "http://example.com/p",
+            "object": "http://example.com/o",
+            "confidence": 0.9,
+            "knowledge_type": "Claim",
+            "valid_from": None,
+            "valid_until": None,
+        }
+
+        is_new, contradictions, provenance_failed = await process_triple(
+            triple,
+            mock_knowledge_store,
+            mock_provenance_store,
+            mock_reasoning,
+            source_url="http://example.com",
+            source_type="article",
+            extractor="api",
+        )
+
+        assert is_new is True
+        assert provenance_failed is True
+
+
 async def test_process_triple_returns_true_for_new():
     ks = _make_ks(is_new=True)
-    is_new, contras = await process_triple(
+    is_new, contras, prov_failed = await process_triple(
         {
             "subject": "http://s",
             "predicate": "http://p",
@@ -49,11 +83,12 @@ async def test_process_triple_returns_true_for_new():
     )
     assert is_new is True
     assert contras == []
+    assert prov_failed is False
 
 
 async def test_process_triple_returns_false_for_existing():
     ks = _make_ks(is_new=False)
-    is_new, _ = await process_triple(
+    is_new, _, _pf = await process_triple(
         {
             "subject": "http://s",
             "predicate": "http://p",
@@ -75,7 +110,7 @@ async def test_process_triple_returns_false_for_existing():
 
 async def test_process_triple_returns_contradictions():
     ks = _make_ks(is_new=True, contradictions=[{"object": "other", "confidence": 0.6}])
-    _, contras = await process_triple(
+    _, contras, _pf = await process_triple(
         {
             "subject": "http://s",
             "predicate": "http://p",
@@ -142,7 +177,9 @@ async def test_process_triple_detects_opposite_predicate_contradiction():
         "valid_from": None,
         "valid_until": None,
     }
-    _, contras = await process_triple(t, ks, prov_store, engine, "http://src", "article", "manual")
+    _, contras, _pf = await process_triple(
+        t, ks, prov_store, engine, "http://src", "article", "manual"
+    )
     # Should have detected the opposite-predicate contradiction
     opp = [c for c in contras if "opposite_predicate_in_store" in c]
     assert len(opp) == 1

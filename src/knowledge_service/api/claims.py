@@ -31,7 +31,7 @@ async def _process_one_claims_request(body: ClaimsRequest, request: Request) -> 
     for item in body.knowledge:
         item = apply_uri_fallback(item)
         for t in expand_to_triples(item):
-            is_new, contras = await process_triple(
+            is_new, contras, prov_failed = await process_triple(
                 t,
                 knowledge_store,
                 provenance_store,
@@ -42,6 +42,11 @@ async def _process_one_claims_request(body: ClaimsRequest, request: Request) -> 
             )
             if is_new:
                 triples_created += 1
+            if prov_failed:
+                logger.warning(
+                    "Provenance lost for triple from %s",
+                    body.source_url,
+                )
             contradictions_all.extend(contras)
 
     # Log ingestion event (parity with content pipeline)

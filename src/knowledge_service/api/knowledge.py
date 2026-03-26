@@ -145,58 +145,6 @@ async def get_knowledge_query(
             )
         )
 
-    # Federation enrichment (optional)
-    federation_client = getattr(request.app.state, "federation_client", None)
-    embedding_store = getattr(request.app.state, "embedding_store", None)
-
-    if federation_client and embedding_store and subject:
-        try:
-            entity_info = await embedding_store.get_entity_by_uri(subject)
-            if entity_info:
-                # Look up owl:sameAs to find external URI
-                same_as_rows: list[dict] = await asyncio.to_thread(
-                    knowledge_store.query,
-                    f"SELECT ?o WHERE {{ GRAPH ?g {{ <{subject}> <http://www.w3.org/2002/07/owl#sameAs> ?o }} }}",
-                )
-                external_uri = None
-                for row in same_as_rows:
-                    val = _rdf_value_to_str(row.get("o"))
-                    if val and ("dbpedia.org" in val or "wikidata.org" in val):
-                        external_uri = val
-                        break
-
-                if external_uri:
-                    ext_triples = await federation_client.enrich_entity(external_uri)
-                elif entity_info.get("label"):
-                    # No owl:sameAs stored — try lookup by label first
-                    found = await federation_client.lookup_entity(entity_info["label"])
-                    if found and found.get("uri"):
-                        ext_triples = await federation_client.enrich_entity(found["uri"])
-                    else:
-                        ext_triples = []
-                else:
-                    ext_triples = []
-
-                for et in ext_triples:
-                    source = None
-                    if "dbpedia.org" in et.get("subject", ""):
-                        source = "dbpedia"
-                    elif "wikidata.org" in et.get("subject", ""):
-                        source = "wikidata"
-                    results.append(
-                        KnowledgeResult(
-                            subject=et["subject"],
-                            predicate=et["predicate"],
-                            object=et["object"],
-                            confidence=0.0,
-                            knowledge_type="federated",
-                            provenance=[],
-                            source=source,
-                        )
-                    )
-        except Exception:
-            pass  # Federation failure is silent — local results are enough
-
     return results
 
 

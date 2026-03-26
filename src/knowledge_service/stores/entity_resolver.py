@@ -11,7 +11,7 @@ import asyncio
 import logging
 import re
 
-from knowledge_service.ontology.namespaces import KS, KS_DATA, OWL
+from knowledge_service.ontology.namespaces import KS, KS_DATA, KS_GRAPH_FEDERATED, OWL
 
 logger = logging.getLogger(__name__)
 
@@ -32,6 +32,7 @@ class EntityResolver:
         # In-memory caches to avoid redundant embedding calls for the same label
         self._entity_cache: dict[str, str] = {}  # label_lower -> URI
         self._predicate_cache: dict[str, str] = {}  # label_lower -> URI
+        self._enrichment_tasks: set[asyncio.Task] = set()
 
     def _slugify(self, label: str) -> str:
         """Convert label to URI-safe slug."""
@@ -43,7 +44,9 @@ class EntityResolver:
         self._entity_cache.clear()
         self._predicate_cache.clear()
 
-    async def resolve(self, label: str, rdf_type: str | None = None) -> str:
+    async def resolve(
+        self, label: str, rdf_type: str | None = None, job_id: str | None = None, pg_pool=None
+    ) -> str:
         """Resolve a concept label to an entity URI.
 
         1. Check in-memory cache for previously resolved label
@@ -96,6 +99,12 @@ class EntityResolver:
                     uri=uri, label=label, rdf_type=resolved_type, embedding=embedding
                 )
                 self._cache_entity(cache_key, uri)
+
+                # Fire-and-forget enrichment
+                task = asyncio.create_task(self._enrich_entity(ext["uri"], job_id, pg_pool))
+                self._enrichment_tasks.add(task)
+                task.add_done_callback(self._enrichment_tasks.discard)
+
                 return uri
 
         # No match — create new entity
@@ -105,6 +114,36 @@ class EntityResolver:
         )
         self._cache_entity(cache_key, uri)
         return uri
+
+    async def _enrich_entity(self, external_uri: str, job_id: str | None, pg_pool) -> None:
+        """Fire-and-forget: fetch enrichment triples and store in ks:graph/federated."""
+        try:
+            triples = await self._federation_client.enrich_entity(external_uri)
+            count = 0
+            for t in triples:
+                await asyncio.to_thread(
+                    self._knowledge_store.insert_triple,
+                    t["subject"],
+                    t["predicate"],
+                    t["object"],
+                    0.8,
+                    "Entity",
+                    None,
+                    None,
+                    KS_GRAPH_FEDERATED,
+                )
+                count += 1
+            if job_id and pg_pool and count > 0:
+                async with pg_pool.acquire() as conn:
+                    await conn.execute(
+                        "UPDATE ingestion_jobs SET federation_enriched = federation_enriched + $1"
+                        " WHERE id = $2::uuid",
+                        count,
+                        job_id,
+                    )
+            logger.info("Federation enrichment stored %d triples for %s", count, external_uri)
+        except Exception:
+            logger.debug("Federation enrichment failed for %s", external_uri, exc_info=True)
 
     async def resolve_predicate(self, label: str) -> str:
         """Resolve a predicate label to a canonical predicate URI.
@@ -153,6 +192,11 @@ class EntityResolver:
         )
         self._cache_predicate(cache_key, uri)
         return uri
+
+    async def drain_enrichment(self) -> None:
+        """Await all pending enrichment tasks. Used in tests."""
+        if self._enrichment_tasks:
+            await asyncio.gather(*self._enrichment_tasks, return_exceptions=True)
 
     def _cache_entity(self, key: str, uri: str) -> None:
         if len(self._entity_cache) >= _CACHE_MAX_SIZE:
