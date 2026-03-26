@@ -58,8 +58,49 @@ class TestProvenanceFailure:
             extractor="api",
         )
 
-        assert is_new is True
+        assert is_new is False
         assert provenance_failed is True
+
+    async def test_provenance_failure_returns_not_new(self):
+        """When provenance insert raises, is_new must be False (not counted as new triple)."""
+        ks = _make_ks(is_new=True)
+        prov_store = AsyncMock()
+        prov_store.insert.side_effect = RuntimeError("connection refused")
+        engine = _make_engine()
+        triple = {
+            "subject": "http://example.com/s",
+            "predicate": "http://example.com/p",
+            "object": "http://example.com/o",
+            "confidence": 0.8,
+            "knowledge_type": "Claim",
+            "valid_from": None,
+            "valid_until": None,
+        }
+        is_new, _contras, prov_failed = await process_triple(
+            triple, ks, prov_store, engine, "http://example.com", "article", "api"
+        )
+        assert is_new is False
+        assert prov_failed is True
+
+    async def test_provenance_success_returns_is_new(self):
+        """When provenance insert succeeds, is_new reflects the knowledge_store result."""
+        ks = _make_ks(is_new=True)
+        prov_store = _make_provenance_store()
+        engine = _make_engine()
+        triple = {
+            "subject": "http://example.com/s",
+            "predicate": "http://example.com/p",
+            "object": "http://example.com/o",
+            "confidence": 0.8,
+            "knowledge_type": "Claim",
+            "valid_from": None,
+            "valid_until": None,
+        }
+        is_new, _contras, prov_failed = await process_triple(
+            triple, ks, prov_store, engine, "http://example.com", "article", "api"
+        )
+        assert is_new is True
+        assert prov_failed is False
 
 
 async def test_process_triple_returns_true_for_new():
