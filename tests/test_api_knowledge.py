@@ -472,92 +472,16 @@ class TestPostKnowledgeSparql:
 
 
 # ---------------------------------------------------------------------------
-# Tests: GET /api/knowledge/query — federation enrichment
+# Tests: GET /api/knowledge/query — local-only results
 # ---------------------------------------------------------------------------
 
 
 class TestGetKnowledgeQueryFederation:
-    async def test_federated_results_merged(self):
-        """When federation returns triples, they are merged into the response."""
+    async def test_query_returns_local_results(self):
+        """Local results are returned correctly without any federation logic."""
         app = create_app(use_lifespan=False)
         app.state.knowledge_store = _make_knowledge_store_mock()
         app.state.pg_pool = _make_pg_pool_mock()
-
-        mock_federation = AsyncMock()
-        mock_federation.enrich_entity.return_value = [
-            {
-                "subject": "http://dbpedia.org/resource/Subject",
-                "predicate": "http://www.w3.org/1999/02/22-rdf-syntax-ns#type",
-                "object": "http://dbpedia.org/ontology/Software",
-            }
-        ]
-        mock_federation.lookup_entity.return_value = {
-            "uri": "http://dbpedia.org/resource/Subject",
-            "rdf_type": "Software",
-            "description": "A subject",
-        }
-        app.state.federation_client = mock_federation
-
-        mock_embedding_store = AsyncMock()
-        mock_embedding_store.get_entity_by_uri.return_value = {
-            "label": "Subject",
-            "rdf_type": "Software",
-        }
-        app.state.embedding_store = mock_embedding_store
-
-        transport = ASGITransport(app=app)
-        async with AsyncClient(
-            transport=transport,
-            base_url="http://test",
-            cookies={"ks_session": make_test_session_cookie()},
-        ) as c:
-            response = await c.get("/api/knowledge/query", params={"subject": _SAMPLE_SUBJECT})
-
-        data = response.json()
-        # Should have local results + federated results
-        federated = [r for r in data if r.get("knowledge_type") == "federated"]
-        assert len(federated) == 1
-        assert federated[0]["object"] == "http://dbpedia.org/ontology/Software"
-        assert federated[0]["source"] == "dbpedia"
-
-    async def test_federation_timeout_returns_local_only(self):
-        """When federation fails, only local results are returned."""
-        app = create_app(use_lifespan=False)
-        app.state.knowledge_store = _make_knowledge_store_mock()
-        app.state.pg_pool = _make_pg_pool_mock()
-
-        mock_federation = AsyncMock()
-        mock_federation.enrich_entity.side_effect = Exception("timeout")
-        mock_federation.lookup_entity.return_value = {
-            "uri": "http://dbpedia.org/resource/Subject",
-        }
-        app.state.federation_client = mock_federation
-
-        mock_embedding_store = AsyncMock()
-        mock_embedding_store.get_entity_by_uri.return_value = {"label": "Subject", "rdf_type": ""}
-        app.state.embedding_store = mock_embedding_store
-
-        transport = ASGITransport(app=app)
-        async with AsyncClient(
-            transport=transport,
-            base_url="http://test",
-            cookies={"ks_session": make_test_session_cookie()},
-        ) as c:
-            response = await c.get("/api/knowledge/query", params={"subject": _SAMPLE_SUBJECT})
-
-        assert response.status_code == 200
-        data = response.json()
-        federated = [r for r in data if r.get("knowledge_type") == "federated"]
-        assert len(federated) == 0
-
-    async def test_no_federation_client_returns_local_only(self):
-        """When no federation_client on app.state, only local results returned."""
-        app = create_app(use_lifespan=False)
-        app.state.knowledge_store = _make_knowledge_store_mock()
-        app.state.pg_pool = _make_pg_pool_mock()
-        # Explicitly set to None
-        app.state.federation_client = None
-        app.state.embedding_store = None
 
         transport = ASGITransport(app=app)
         async with AsyncClient(
