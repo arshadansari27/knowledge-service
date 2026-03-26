@@ -76,7 +76,7 @@ class EntityResolver:
         if self._federation_client is not None:
             try:
                 ext = await self._federation_client.lookup_entity(label)
-            except (OSError, TimeoutError):
+            except Exception:
                 logger.debug("Federation lookup failed for '%s'", label)
                 ext = None
 
@@ -192,6 +192,11 @@ class EntityResolver:
         )
         self._cache_predicate(cache_key, uri)
         return uri
+
+    async def drain_enrichment(self) -> None:
+        """Await all pending enrichment tasks. Used in tests."""
+        if self._enrichment_tasks:
+            await asyncio.gather(*self._enrichment_tasks, return_exceptions=True)
 
     def _cache_entity(self, key: str, uri: str) -> None:
         if len(self._entity_cache) >= _CACHE_MAX_SIZE:

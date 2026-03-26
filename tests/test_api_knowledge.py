@@ -476,7 +476,7 @@ class TestPostKnowledgeSparql:
 # ---------------------------------------------------------------------------
 
 
-class TestGetKnowledgeQueryFederation:
+class TestGetKnowledgeQueryLocal:
     async def test_query_returns_local_results(self):
         """Local results are returned correctly without any federation logic."""
         app = create_app(use_lifespan=False)

@@ -1,5 +1,3 @@
-import asyncio
-
 import pytest
 from unittest.mock import AsyncMock
 from knowledge_service.stores.entity_resolver import EntityResolver
@@ -236,7 +234,7 @@ class TestFederationEnrichment:
         await resolver_with_federation_enrichment.resolve("PostgreSQL")
 
         # Wait for fire-and-forget task to complete
-        await asyncio.sleep(0.1)
+        await resolver_with_federation_enrichment.drain_enrichment()
 
         # Check that enrichment triples are in the federated graph
         triples = store.query("""
@@ -260,7 +258,7 @@ class TestFederationEnrichment:
         uri = await resolver_with_federation_enrichment.resolve("PostgreSQL")
         assert uri.startswith("http://knowledge.local/data/")
         # Wait for task to complete (it should swallow the error)
-        await asyncio.sleep(0.1)
+        await resolver_with_federation_enrichment.drain_enrichment()
 
     async def test_enrichment_updates_job_counter(
         self, resolver_with_federation_enrichment, federation_client, store
@@ -279,7 +277,7 @@ class TestFederationEnrichment:
             "PostgreSQL", job_id="test-job-id", pg_pool=mock_pg_pool
         )
         # Wait for fire-and-forget task
-        await asyncio.sleep(0.1)
+        await resolver_with_federation_enrichment.drain_enrichment()
 
         mock_conn.execute.assert_called_once()
         call_args = mock_conn.execute.call_args
