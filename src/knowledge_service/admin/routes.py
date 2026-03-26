@@ -60,7 +60,7 @@ async def content_detail(request: Request, content_id: str):
     pg_pool = request.app.state.pg_pool
     async with pg_pool.acquire() as conn:
         row = await conn.fetchrow(
-            "SELECT id, url, title, summary, raw_text, source_type, tags, ingested_at FROM content WHERE id = $1",
+            "SELECT id, url, title, summary, raw_text, source_type, tags, ingested_at FROM content_metadata WHERE id = $1",
             cid,
         )
     if row is None:
