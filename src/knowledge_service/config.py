@@ -24,6 +24,12 @@ class Settings(BaseSettings):
     embed_batch_size: int = 20
     entity_cache_max_size: int = 1000
 
+    # Ingestion pipeline
+    spacy_data_dir: str = "/app/data/spacy"
+    max_upload_size: int = 50 * 1024 * 1024  # 50MB
+    url_fetch_timeout: int = 30
+    nlp_entity_confidence: float = 0.5
+
     model_config = {"env_file": ".env"}
 
 

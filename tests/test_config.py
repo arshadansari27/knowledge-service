@@ -3,6 +3,21 @@
 import pytest
 from pydantic import ValidationError
 
+from knowledge_service.config import Settings
+
+
+def test_ingestion_pipeline_config_defaults(monkeypatch):
+    """New ingestion pipeline fields should have correct default values."""
+    monkeypatch.setenv("ADMIN_PASSWORD", "test-password")
+    monkeypatch.setenv("SECRET_KEY", "test-secret-key")
+
+    settings = Settings()
+
+    assert settings.spacy_data_dir == "/app/data/spacy"
+    assert settings.max_upload_size == 50 * 1024 * 1024
+    assert settings.url_fetch_timeout == 30
+    assert settings.nlp_entity_confidence == 0.5
+
 
 def test_secret_key_is_required_no_default(monkeypatch):
     """secret_key must be explicitly provided — no auto-generated default.
