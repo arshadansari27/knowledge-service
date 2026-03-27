@@ -37,6 +37,7 @@ class IngestResult:
     contradictions: list[dict]
     confidence: float
     thesis_breaks: list[dict] = field(default_factory=list)
+    inferred_triples: list[dict] = field(default_factory=list)
 
 
 def compute_hash(triple: dict) -> str:
@@ -123,10 +124,129 @@ async def check_thesis_impact(triple_hash, contradictions, stores) -> list[dict]
     return await stores.theses.find_by_hashes(affected_hashes, status="active")
 
 
-async def ingest_triple(triple: dict, stores, context: IngestContext) -> IngestResult:
+async def run_inference(triple: dict, engine, stores, context: IngestContext) -> list[dict]:
+    """Run inference engine and persist derived triples with RDF-star annotations."""
+    if engine is None:
+        return []
+
+    from knowledge_service.ontology.namespaces import KS_GRAPH_INFERRED
+    from knowledge_service.ontology.uri import KS as KS_NS
+
+    derived_list = engine.run(triple)
+    results = []
+
+    for derived in derived_list:
+        derived_hash, _ = await asyncio.to_thread(
+            stores.triples.insert,
+            derived.subject,
+            derived.predicate,
+            derived.object_,
+            derived.confidence,
+            "inferred",
+            None,
+            None,
+            KS_GRAPH_INFERRED,
+        )
+
+        # Add inference-specific RDF-star annotations (ks:derivedFrom + ks:inferenceMethod)
+        obj_sparql = f"<{derived.object_}>" if is_uri(derived.object_) else f'"{derived.object_}"'
+        quoted = f"<< <{derived.subject}> <{derived.predicate}> {obj_sparql} >>"
+
+        annotation_lines = [
+            f'{quoted} <{KS_NS}inferenceMethod> "{derived.inference_method}" .',
+        ]
+        for source_hash in derived.derived_from:
+            annotation_lines.append(f'{quoted} <{KS_NS}derivedFrom> "{source_hash}" .')
+
+        body = "\n                    ".join(annotation_lines)
+        await asyncio.to_thread(
+            stores.triples.store.update,
+            f"""INSERT DATA {{
+                GRAPH <{KS_GRAPH_INFERRED}> {{
+                    {body}
+                }}
+            }}""",
+        )
+
+        # Provenance for inferred triple
+        await stores.provenance.insert(
+            derived_hash,
+            derived.subject,
+            derived.predicate,
+            derived.object_,
+            context.source_url,
+            context.source_type,
+            f"inference:{derived.inference_method}",
+            derived.confidence,
+            {"derived_from": derived.derived_from},
+            None,
+            None,
+            None,
+        )
+
+        results.append(derived.to_dict())
+
+    return results
+
+
+def retract_stale_inferences(triple_hash: str, triple_store) -> int:
+    """Remove inferred triples that depend on a changed source triple.
+
+    Synchronous — operates directly on the TripleStore. Wrap in asyncio.to_thread()
+    at the call site.
+    """
+    from knowledge_service.ontology.namespaces import KS_GRAPH_INFERRED
+    from knowledge_service.ontology.uri import KS as KS_NS
+    from pyoxigraph import Literal as Lit
+    from pyoxigraph import NamedNode as NN
+    from pyoxigraph import Quad
+
+    rows = triple_store.query(f"""
+        SELECT ?s ?p ?o WHERE {{
+            GRAPH <{KS_GRAPH_INFERRED}> {{
+                ?s ?p ?o .
+                << ?s ?p ?o >> <{KS_NS}derivedFrom> "{triple_hash}" .
+            }}
+        }}
+    """)
+    if not rows:
+        return 0
+
+    removed = 0
+    for row in rows:
+        s_val = row["s"].value if hasattr(row["s"], "value") else str(row["s"])
+        p_val = row["p"].value if hasattr(row["p"], "value") else str(row["p"])
+        o_val = row["o"].value if hasattr(row["o"], "value") else str(row["o"])
+
+        s = NN(s_val)
+        p = NN(p_val)
+        o = NN(o_val) if is_uri(o_val) else Lit(o_val)
+        g = NN(KS_GRAPH_INFERRED)
+        triple_store.store.remove(Quad(s, p, o, g))
+        removed += 1
+
+        # Cascade: retract inferences that depended on this inferred triple
+        dep = {"subject": s_val, "predicate": p_val, "object": o_val}
+        dep_hash = compute_hash(dep)
+        removed += retract_stale_inferences(dep_hash, triple_store)
+
+    return removed
+
+
+async def ingest_triple(triple: dict, stores, context: IngestContext, engine=None) -> IngestResult:
     triple_hash = compute_hash(triple)
 
     delta = await detect_delta(triple, stores.triples)
+
+    # Retract stale inferences when a delta is detected
+    if delta is not None:
+        old_triple = {
+            "subject": triple["subject"],
+            "predicate": triple["predicate"],
+            "object": delta["prior_value"],
+        }
+        old_hash = compute_hash(old_triple)
+        await asyncio.to_thread(retract_stale_inferences, old_hash, stores.triples)
 
     _, is_new = await insert_triple(triple, stores.triples, context.graph)
 
@@ -164,6 +284,9 @@ async def ingest_triple(triple: dict, stores, context: IngestContext) -> IngestR
             combined,
         )
 
+    # Run inference engine and persist derived triples
+    inferred = await run_inference(triple, engine, stores, context)
+
     thesis_breaks = await check_thesis_impact(triple_hash, contradictions, stores)
 
-    return IngestResult(is_new, delta, contradictions, combined, thesis_breaks)
+    return IngestResult(is_new, delta, contradictions, combined, thesis_breaks, inferred)
