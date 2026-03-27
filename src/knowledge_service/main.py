@@ -172,20 +172,20 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     # Seed predicate embeddings
     await _seed_predicate_embeddings(entity_store, embedding_client, domain_registry)
 
-    # Query classifier
-    from knowledge_service.clients.classifier import QueryClassifier  # noqa: PLC0415
-
-    app.state.query_classifier = QueryClassifier(
-        base_url=settings.llm_base_url,
-        model=settings.llm_chat_model,
-        api_key=settings.llm_api_key,
-    )
-
     # RAG components
     rag_model = settings.llm_rag_model or settings.llm_chat_model
     app.state.rag_client = RAGClient(
         base_url=settings.llm_base_url,
         model=rag_model,
+        api_key=settings.llm_api_key,
+    )
+
+    # Classify client (reuses extraction_client as the LLM backend for query classification)
+    from knowledge_service.clients.base import BaseLLMClient  # noqa: PLC0415
+
+    classify_client = BaseLLMClient(
+        base_url=settings.llm_base_url,
+        model=settings.llm_chat_model,
         api_key=settings.llm_api_key,
     )
 
@@ -199,6 +199,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         embedding_store=stores.content,
         knowledge_store=triple_store,
         community_store=app.state.community_store,
+        classify_client=classify_client,
     )
 
     # Optional periodic community rebuild
@@ -249,7 +250,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             pass
     triple_store.flush()
     await pg_pool.close()
-    await app.state.query_classifier.close()
+    await classify_client.close()
     await app.state.rag_client.close()
     await embedding_client.close()
     await extraction_client.close()

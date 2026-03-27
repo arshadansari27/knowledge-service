@@ -6,8 +6,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 from pyoxigraph import Literal, NamedNode
 
-from knowledge_service.clients.classifier import QueryIntent
-from knowledge_service.stores.rag import RAGRetriever, RetrievalContext
+from knowledge_service.stores.rag import QueryIntent, RAGRetriever, RetrievalContext
 
 
 def _make_embedding_client():

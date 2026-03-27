@@ -10,7 +10,7 @@ from httpx import ASGITransport, AsyncClient
 
 from knowledge_service.clients.rag import RAGAnswer
 from knowledge_service.main import create_app
-from knowledge_service.stores.rag import RetrievalContext
+from knowledge_service.stores.rag import QueryIntent, RetrievalContext
 from tests.conftest import make_test_session_cookie
 
 
@@ -45,6 +45,7 @@ def _make_rag_retriever(context=None):
         )
     mock = AsyncMock()
     mock.retrieve.return_value = context
+    mock.classify.return_value = QueryIntent(intent="semantic")
     return mock
 
 

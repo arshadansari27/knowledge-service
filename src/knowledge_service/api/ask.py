@@ -58,11 +58,8 @@ async def post_ask(body: AskRequest, request: Request) -> AskResponse:
     retriever = request.app.state.rag_retriever
     rag_client = request.app.state.rag_client
 
-    # Classify query intent
-    classifier = getattr(request.app.state, "query_classifier", None)
-    intent = None
-    if classifier:
-        intent = await classifier.classify(body.question)
+    # Classify query intent (inlined into RAGRetriever)
+    intent = await retriever.classify(body.question)
 
     context = await retriever.retrieve(
         body.question,

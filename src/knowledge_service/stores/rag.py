@@ -6,17 +6,47 @@ import asyncio
 import logging
 from dataclasses import dataclass, field
 
-from knowledge_service._utils import _rdf_value_to_str
-from knowledge_service.clients.classifier import QueryIntent
+import httpx
+
+from knowledge_service._utils import _extract_json, _rdf_value_to_str
 from knowledge_service.ontology.namespaces import KS_GRAPH_ASSERTED, KS_GRAPH_FEDERATED
 from knowledge_service.ontology.uri import to_entity_uri
-from knowledge_service.stores.graph_traversal import GraphTraverser
 
 logger = logging.getLogger(__name__)
 
 _ENTITY_MATCH_THRESHOLD = 0.80
 _PREDICATE_MATCH_THRESHOLD = 0.80
 _PREDICATE_TRIPLE_LIMIT = 10
+
+_VALID_INTENTS = {"semantic", "entity", "graph", "global"}
+
+_CLASSIFICATION_PROMPT = """Classify this question into one category:
+- "semantic": searching for documents about a topic (e.g., "find articles about stress management")
+- "entity": asking about a specific thing (e.g., "what is dopamine?", "tell me about PostgreSQL")
+- "graph": asking about relationships between things (e.g., "how is cortisol connected to inflammation?", "what causes dopamine release?")
+- "global": asking about themes, summaries, or overviews across the entire knowledge base (e.g., "what are the main topics?", "summarize what I know about health", "what areas have I collected knowledge on?")
+
+Also extract any named entities mentioned in the question.
+
+Return JSON: {{"intent": "semantic|entity|graph|global", "entities": ["entity1", "entity2"]}}
+
+Question: {question}"""
+
+
+@dataclass
+class QueryIntent:
+    """Classified question intent with extracted entity names."""
+
+    intent: str  # "semantic", "entity", "graph", or "global"
+    entities: list[str] = field(default_factory=list)
+
+
+@dataclass
+class _TraversalResult:
+    """Result of a multi-hop graph expansion."""
+
+    edges: list[dict] = field(default_factory=list)
+    nodes: list[dict] = field(default_factory=list)
 
 
 @dataclass
@@ -29,6 +59,41 @@ class RetrievalContext:
     inferred_triples: int | None = None
 
 
+def _expand_graph(
+    knowledge_store,
+    entity_uris: str | list[str],
+    max_hops: int = 2,
+    min_confidence: float = 0.0,
+) -> _TraversalResult:
+    """BFS expansion through the knowledge graph for multi-hop retrieval."""
+    if isinstance(entity_uris, str):
+        entity_uris = [entity_uris]
+
+    visited: set[str] = set()
+    edges: list[dict] = []
+    nodes: list[dict] = []
+    frontier = [(uri, 0) for uri in entity_uris]
+
+    while frontier:
+        uri, hop = frontier.pop(0)
+        if uri in visited or hop > max_hops:
+            continue
+        visited.add(uri)
+        nodes.append({"uri": uri, "hop_distance": hop})
+
+        triples = knowledge_store.get_triples(subject=uri)
+        for t in triples:
+            conf = t.get("confidence", 0)
+            if conf is not None and conf >= min_confidence:
+                edges.append(t)
+                obj = t.get("object", "")
+                if isinstance(obj, str) and obj.startswith(("http://", "https://", "urn:")):
+                    if obj not in visited and hop + 1 <= max_hops:
+                        frontier.append((obj, hop + 1))
+
+    return _TraversalResult(edges=edges, nodes=nodes)
+
+
 class RAGRetriever:
     def __init__(
         self,
@@ -37,6 +102,7 @@ class RAGRetriever:
         knowledge_store,
         community_store=None,
         entity_store=None,
+        classify_client=None,
     ) -> None:
         self._embedding_client = embedding_client
         self._embedding_store = embedding_store  # ContentStore (search, get_chunks_by_ids)
@@ -45,7 +111,54 @@ class RAGRetriever:
         # entity_store has search_entities/search_predicates; fall back to embedding_store
         # for backward compat (old EmbeddingStore had all methods)
         self._entity_store = entity_store or embedding_store
-        self._graph_traverser = GraphTraverser(knowledge_store)
+        self._classify_client = classify_client  # BaseLLMClient for query classification
+
+    async def classify(self, question: str) -> QueryIntent:
+        """Classify a question into a retrieval intent via LLM.
+
+        Falls back to ``QueryIntent(intent="semantic")`` on any failure.
+        """
+        if self._classify_client is None:
+            return QueryIntent(intent="semantic")
+
+        prompt = _CLASSIFICATION_PROMPT.format(question=question)
+        try:
+            response = await self._classify_client.client.post(
+                "/v1/chat/completions",
+                json={
+                    "model": self._classify_client.model,
+                    "messages": [{"role": "user", "content": prompt}],
+                },
+            )
+            response.raise_for_status()
+        except httpx.HTTPError as exc:
+            logger.warning("QueryClassifier: LLM call failed, defaulting to semantic: %s", exc)
+            return QueryIntent(intent="semantic")
+
+        raw = response.json()["choices"][0]["message"]["content"]
+        parsed = _extract_json(raw)
+        if parsed is None:
+            logger.warning("QueryClassifier: bad JSON response, defaulting to semantic")
+            return QueryIntent(intent="semantic")
+
+        intent_str = parsed.get("intent", "semantic")
+        if intent_str not in _VALID_INTENTS:
+            logger.warning(
+                "QueryClassifier: invalid intent '%s', defaulting to semantic", intent_str
+            )
+            intent_str = "semantic"
+
+        entities = parsed.get("entities", [])
+        if not isinstance(entities, list):
+            entities = []
+
+        logger.info(
+            "QueryClassifier: question='%s' → intent=%s, entities=%s",
+            question[:80],
+            intent_str,
+            entities,
+        )
+        return QueryIntent(intent=intent_str, entities=entities)
 
     async def retrieve(
         self,
@@ -138,7 +251,8 @@ class RAGRetriever:
 
         # Multi-hop BFS traversal with confidence propagation
         traversal = await asyncio.to_thread(
-            self._graph_traverser.expand,
+            _expand_graph,
+            self._knowledge_store,
             resolved_uris,
             max_hops=4,
             min_confidence=max(min_confidence, 0.1),
