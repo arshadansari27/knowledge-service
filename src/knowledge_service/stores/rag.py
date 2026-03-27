@@ -31,12 +31,20 @@ class RetrievalContext:
 
 class RAGRetriever:
     def __init__(
-        self, embedding_client, embedding_store, knowledge_store, community_store=None
+        self,
+        embedding_client,
+        embedding_store,
+        knowledge_store,
+        community_store=None,
+        entity_store=None,
     ) -> None:
         self._embedding_client = embedding_client
-        self._embedding_store = embedding_store
-        self._knowledge_store = knowledge_store
+        self._embedding_store = embedding_store  # ContentStore (search, get_chunks_by_ids)
+        self._knowledge_store = knowledge_store  # TripleStore
         self._community_store = community_store
+        # entity_store has search_entities/search_predicates; fall back to embedding_store
+        # for backward compat (old EmbeddingStore had all methods)
+        self._entity_store = entity_store or embedding_store
         self._graph_traverser = GraphTraverser(knowledge_store)
 
     async def retrieve(
@@ -79,9 +87,7 @@ class RAGRetriever:
         content_results = await self._embedding_store.search(
             query_embedding=embedding, limit=max_sources, query_text=question
         )
-        entity_rows = await self._embedding_store.search_entities(
-            query_embedding=embedding, limit=3
-        )
+        entity_rows = await self._entity_store.search_entities(query_embedding=embedding, limit=3)
         entities_found = [row["uri"] for row in entity_rows]
         triples = await self._lookup_triples_by_subject(entities_found)
         predicate_triples = await self._lookup_triples_by_predicate(embedding)
@@ -306,7 +312,7 @@ class RAGRetriever:
         embeddings = await self._embedding_client.embed_batch(names)
         resolved = []
         for name, emb in zip(names, embeddings):
-            rows = await self._embedding_store.search_entities(query_embedding=emb, limit=1)
+            rows = await self._entity_store.search_entities(query_embedding=emb, limit=1)
             if rows and rows[0].get("similarity", 0) >= _ENTITY_MATCH_THRESHOLD:
                 resolved.append(rows[0]["uri"])
             else:
@@ -361,9 +367,7 @@ class RAGRetriever:
         self, embedding, limit=_PREDICATE_TRIPLE_LIMIT
     ) -> list[dict]:
         """Find triples by predicate similarity to the query embedding."""
-        pred_rows = await self._embedding_store.search_predicates(
-            query_embedding=embedding, limit=3
-        )
+        pred_rows = await self._entity_store.search_predicates(query_embedding=embedding, limit=3)
         matched_uris = [
             r["uri"] for r in pred_rows if r.get("similarity", 0) >= _PREDICATE_MATCH_THRESHOLD
         ]

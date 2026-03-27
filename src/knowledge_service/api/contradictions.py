@@ -9,7 +9,6 @@ from pydantic import BaseModel
 
 from knowledge_service._utils import _triple_hash, _rdf_value_to_str
 from knowledge_service.ontology.namespaces import KS_CONFIDENCE, KS_OPPOSITE_PREDICATE, OWL
-from knowledge_service.stores.provenance import ProvenanceStore
 
 router = APIRouter()
 
@@ -60,10 +59,9 @@ async def get_contradictions(
 
     The contradiction probability is the product of both claims' confidence scores.
     """
-    knowledge_store = request.app.state.knowledge_store
-    pg_pool = request.app.state.pg_pool
-
-    provenance_store = ProvenanceStore(pg_pool)
+    stores = request.app.state.stores
+    triple_store = stores.triples
+    provenance_store = stores.provenance
 
     # Pattern A: same subject+predicate, different objects — only for functional
     # (single-valued) properties. Multi-valued predicates like has_property,
@@ -86,7 +84,7 @@ async def get_contradictions(
         }}
     """
 
-    rows: list[dict] = await asyncio.to_thread(knowledge_store.query, sparql)
+    rows: list[dict] = await asyncio.to_thread(triple_store.query, sparql)
 
     # Pattern B: opposite predicates (e.g., increases vs decreases)
     opposite_sparql = f"""
@@ -105,7 +103,7 @@ async def get_contradictions(
             FILTER(STR(?p1) < STR(?p2))
         }}
     """
-    opposite_rows: list[dict] = await asyncio.to_thread(knowledge_store.query, opposite_sparql)
+    opposite_rows: list[dict] = await asyncio.to_thread(triple_store.query, opposite_sparql)
 
     # Convert opposite-predicate rows to same format as same-predicate rows
     for orow in opposite_rows:

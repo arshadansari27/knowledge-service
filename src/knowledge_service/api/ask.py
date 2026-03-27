@@ -5,6 +5,8 @@ from __future__ import annotations
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field
 
+from knowledge_service.reasoning.noisy_or import noisy_or
+
 router = APIRouter()
 
 _MAX_QUESTION_LEN = 4000
@@ -55,7 +57,7 @@ async def post_ask(body: AskRequest, request: Request) -> AskResponse:
     """Answer a natural language question using the knowledge base."""
     retriever = request.app.state.rag_retriever
     rag_client = request.app.state.rag_client
-    reasoning_engine = request.app.state.reasoning_engine
+    reasoning_engine = getattr(request.app.state, "reasoning_engine", None)
 
     # Classify query intent
     classifier = getattr(request.app.state, "query_classifier", None)
@@ -81,7 +83,7 @@ async def post_ask(body: AskRequest, request: Request) -> AskResponse:
     confidences = [
         t["confidence"] for t in context.knowledge_triples if t.get("confidence") is not None
     ]
-    confidence = reasoning_engine.combine_evidence(confidences) if confidences else None
+    confidence = noisy_or(confidences) if confidences else None
 
     # Sources: deduplicated from content results
     seen_urls: set[str] = set()
@@ -116,14 +118,13 @@ async def post_ask(body: AskRequest, request: Request) -> AskResponse:
 
     # Evidence snippets: link triples back to their source chunks
     evidence: list[EvidenceSnippet] = []
-    pg_pool = getattr(request.app.state, "pg_pool", None)
-    embedding_store = getattr(request.app.state, "embedding_store", None)
+    stores = getattr(request.app.state, "stores", None)
 
-    if pg_pool and embedding_store and context.knowledge_triples:
+    if stores and context.knowledge_triples:
         from knowledge_service._utils import _triple_hash
-        from knowledge_service.stores.provenance import ProvenanceStore
 
-        provenance_store = ProvenanceStore(pg_pool)
+        provenance_store = stores.provenance
+        content_store = stores.content
 
         chunk_ids_to_fetch: list[str] = []
         triple_prov_map: dict[str, list[dict]] = {}
@@ -137,7 +138,7 @@ async def post_ask(body: AskRequest, request: Request) -> AskResponse:
             triple_prov_map[th] = prov_rows
 
         if chunk_ids_to_fetch:
-            chunk_texts = await embedding_store.get_chunks_by_ids(chunk_ids_to_fetch)
+            chunk_texts = await content_store.get_chunks_by_ids(chunk_ids_to_fetch)
             for t in context.knowledge_triples:
                 th = _triple_hash(t["subject"], t["predicate"], t["object"])
                 for row in triple_prov_map.get(th, []):
