@@ -6,6 +6,7 @@ from knowledge_service.ontology.bootstrap import bootstrap_ontology
 from knowledge_service.ontology.namespaces import KS, KS_DATA, KS_GRAPH_EXTRACTED
 from knowledge_service.reasoning.engine import (
     DerivedTriple,
+    InferenceEngine,
     InverseRule,
     TransitiveRule,
     TypeInheritanceRule,
@@ -310,4 +311,137 @@ class TestTypeInheritanceRule:
             "confidence": 0.8,
         }
         results = rule.discover(trigger, ts, depth=1)
+        assert len(results) == 0
+
+
+class TestInferenceEngine:
+    def _make_engine(self, ts, max_depth=3):
+        rules = [InverseRule(), TransitiveRule(), TypeInheritanceRule()]
+        engine = InferenceEngine(ts, rules, max_depth=max_depth)
+        engine.configure()
+        return engine
+
+    def test_single_inverse(self, store_with_ontology):
+        ts = store_with_ontology
+        ts.insert(
+            f"{KS_DATA}a",
+            f"{KS}contains",
+            f"{KS_DATA}b",
+            confidence=0.8,
+            knowledge_type="claim",
+            graph=KS_GRAPH_EXTRACTED,
+        )
+        engine = self._make_engine(ts)
+        trigger = {
+            "subject": f"{KS_DATA}a",
+            "predicate": f"{KS}contains",
+            "object": f"{KS_DATA}b",
+            "confidence": 0.8,
+        }
+        results = engine.run(trigger)
+        inverses = [r for r in results if r.inference_method == "inverse"]
+        assert len(inverses) >= 1
+        assert inverses[0].subject == f"{KS_DATA}b"
+        assert inverses[0].predicate == f"{KS}part_of"
+
+    def test_chaining_inverse_then_transitive(self, store_with_ontology):
+        """A contains B → B part_of A (inverse). C part_of B exists → C part_of A (transitive)."""
+        ts = store_with_ontology
+        ts.insert(
+            f"{KS_DATA}c",
+            f"{KS}part_of",
+            f"{KS_DATA}b",
+            confidence=0.7,
+            knowledge_type="claim",
+            graph=KS_GRAPH_EXTRACTED,
+        )
+        ts.insert(
+            f"{KS_DATA}a",
+            f"{KS}contains",
+            f"{KS_DATA}b",
+            confidence=0.8,
+            knowledge_type="claim",
+            graph=KS_GRAPH_EXTRACTED,
+        )
+        engine = self._make_engine(ts)
+        trigger = {
+            "subject": f"{KS_DATA}a",
+            "predicate": f"{KS}contains",
+            "object": f"{KS_DATA}b",
+            "confidence": 0.8,
+        }
+        results = engine.run(trigger)
+        transitive = [r for r in results if r.inference_method == "transitive"]
+        assert any(r.subject == f"{KS_DATA}c" and r.object_ == f"{KS_DATA}a" for r in transitive)
+
+    def test_max_depth_cap(self, store_with_ontology):
+        """With max_depth=1, chaining should NOT happen."""
+        ts = store_with_ontology
+        ts.insert(
+            f"{KS_DATA}c",
+            f"{KS}part_of",
+            f"{KS_DATA}b",
+            confidence=0.7,
+            knowledge_type="claim",
+            graph=KS_GRAPH_EXTRACTED,
+        )
+        ts.insert(
+            f"{KS_DATA}a",
+            f"{KS}contains",
+            f"{KS_DATA}b",
+            confidence=0.8,
+            knowledge_type="claim",
+            graph=KS_GRAPH_EXTRACTED,
+        )
+        engine = self._make_engine(ts, max_depth=1)
+        trigger = {
+            "subject": f"{KS_DATA}a",
+            "predicate": f"{KS}contains",
+            "object": f"{KS_DATA}b",
+            "confidence": 0.8,
+        }
+        results = engine.run(trigger)
+        assert all(r.depth <= 1 for r in results)
+        transitive = [r for r in results if r.inference_method == "transitive"]
+        assert len(transitive) == 0
+
+    def test_cycle_detection(self, store_with_ontology):
+        """A part_of B, B part_of A should not loop infinitely."""
+        ts = store_with_ontology
+        ts.insert(
+            f"{KS_DATA}a",
+            f"{KS}part_of",
+            f"{KS_DATA}b",
+            confidence=0.8,
+            knowledge_type="claim",
+            graph=KS_GRAPH_EXTRACTED,
+        )
+        ts.insert(
+            f"{KS_DATA}b",
+            f"{KS}part_of",
+            f"{KS_DATA}a",
+            confidence=0.7,
+            knowledge_type="claim",
+            graph=KS_GRAPH_EXTRACTED,
+        )
+        engine = self._make_engine(ts)
+        trigger = {
+            "subject": f"{KS_DATA}a",
+            "predicate": f"{KS}part_of",
+            "object": f"{KS_DATA}b",
+            "confidence": 0.8,
+        }
+        results = engine.run(trigger)
+        assert len(results) < 20
+
+    def test_no_rules_match(self, store_with_ontology):
+        ts = store_with_ontology
+        engine = self._make_engine(ts)
+        trigger = {
+            "subject": f"{KS_DATA}a",
+            "predicate": f"{KS}causes",
+            "object": f"{KS_DATA}b",
+            "confidence": 0.8,
+        }
+        results = engine.run(trigger)
         assert len(results) == 0

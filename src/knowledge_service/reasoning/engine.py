@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import logging
+from collections import deque
 from dataclasses import dataclass
 
 from pyoxigraph import Literal, NamedNode, Triple
@@ -235,6 +236,55 @@ class TypeInheritanceRule(InferenceRule):
                     )
                 )
         return results
+
+
+class InferenceEngine:
+    """BFS forward-chaining engine with depth cap and cycle detection."""
+
+    def __init__(self, triple_store, rules: list[InferenceRule], max_depth: int = 3):
+        self._store = triple_store
+        self._rules = rules
+        self._max_depth = max_depth
+
+    def configure(self) -> None:
+        for rule in self._rules:
+            rule.configure(self._store)
+
+    def run(self, trigger_triple: dict) -> list[DerivedTriple]:
+        all_derived: list[DerivedTriple] = []
+        seen_hashes: set[str] = set()
+
+        trigger_hash = _compute_trigger_hash(trigger_triple)
+        seen_hashes.add(trigger_hash)
+
+        queue: deque[tuple[dict, int]] = deque()
+        queue.append((trigger_triple, 0))
+
+        while queue:
+            current_triple, current_depth = queue.popleft()
+            if current_depth >= self._max_depth:
+                continue
+
+            for rule in self._rules:
+                derived_list = rule.discover(current_triple, self._store, depth=current_depth + 1)
+                for derived in derived_list:
+                    h = derived.compute_hash()
+                    if h in seen_hashes:
+                        continue
+                    seen_hashes.add(h)
+
+                    existing = self._store.get_triples(
+                        subject=derived.subject,
+                        predicate=derived.predicate,
+                        object_=derived.object_,
+                    )
+                    if existing:
+                        continue
+
+                    all_derived.append(derived)
+                    queue.append((derived.to_dict(), current_depth + 1))
+
+        return all_derived
 
 
 def _compute_trigger_hash(triple: dict) -> str:
