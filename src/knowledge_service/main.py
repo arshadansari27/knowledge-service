@@ -130,7 +130,8 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     # --- Startup ---
     Path(settings.oxigraph_data_dir).mkdir(parents=True, exist_ok=True)
     app.state.knowledge_store = KnowledgeStore(data_dir=settings.oxigraph_data_dir)
-    bootstrap_ontology(app.state.knowledge_store._store)
+    ontology_dir = Path(__file__).resolve().parent / "ontology"
+    bootstrap_ontology(app.state.knowledge_store, ontology_dir)
 
     import asyncpg  # noqa: PLC0415 — deferred to avoid import cost in tests
 
