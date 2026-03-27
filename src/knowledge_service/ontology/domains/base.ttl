@@ -116,3 +116,9 @@ ks:associated_with a ks:Predicate ;
     rdfs:label "associated with" ;
     ks:domain "base" ;
     ks:materialityWeight "0.3"^^xsd:float .
+
+# --- Transitive predicate annotations ---
+ks:part_of     ks:transitivePredicate "true"^^xsd:boolean .
+ks:is_a        ks:transitivePredicate "true"^^xsd:boolean .
+ks:located_in  ks:transitivePredicate "true"^^xsd:boolean .
+ks:depends_on  ks:transitivePredicate "true"^^xsd:boolean .

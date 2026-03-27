@@ -63,6 +63,7 @@ KS_CONCLUSION = ks("Conclusion")
 KS_TEMPORAL_STATE = ks("TemporalState")
 KS_OPPOSITE_PREDICATE = ks("oppositePredicate")
 KS_INVERSE_PREDICATE = ks("inversePredicate")
+KS_TRANSITIVE_PREDICATE = ks("transitivePredicate")
 
 # Named graphs for trust-tier separation
 KS_GRAPH_ONTOLOGY = f"{KS}graph/ontology"

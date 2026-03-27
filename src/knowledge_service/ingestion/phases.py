@@ -97,9 +97,10 @@ class ExtractPhase:
 class ProcessPhase:
     """Phase 3: Resolve entities, expand to triples, ingest."""
 
-    def __init__(self, stores: Any, entity_store: Any | None = None):
+    def __init__(self, stores: Any, entity_store: Any | None = None, engine: Any | None = None):
         self._stores = stores
         self._entity_store = entity_store
+        self._engine = engine
 
     async def run(
         self,
@@ -150,7 +151,7 @@ class ProcessPhase:
                         triple["object"] = await self._entity_store.resolve_entity(triple["object"])
                     entities_resolved += 1
 
-                result = await ingest_triple(triple, self._stores, ctx)
+                result = await ingest_triple(triple, self._stores, ctx, engine=self._engine)
                 if result.is_new:
                     triples_created += 1
 

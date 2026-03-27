@@ -27,6 +27,7 @@ ks:amount              rdf:type rdf:Property, owl:FunctionalProperty ; rdfs:labe
 ks:currency            rdf:type rdf:Property, owl:FunctionalProperty ; rdfs:label "currency" .
 ks:oppositePredicate   rdf:type rdf:Property ; rdfs:label "opposite predicate" .
 ks:inversePredicate    rdf:type rdf:Property ; rdfs:label "inverse predicate" .
+ks:transitivePredicate rdf:type rdf:Property ; rdfs:label "transitive predicate" .
 
 # Domain predicates (canonical vocabulary for extraction)
 ks:causes          rdf:type rdf:Property ; rdfs:label "causes" .

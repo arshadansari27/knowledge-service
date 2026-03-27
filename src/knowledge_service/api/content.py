@@ -128,6 +128,7 @@ async def _run_ingestion_worker(
     embedding_client = app_state.embedding_client
     extraction_client = getattr(app_state, "extraction_client", None)
     entity_store = stores.entities
+    engine = getattr(app_state, "inference_engine", None)
 
     await run_ingestion(
         job_id=job_id,
@@ -142,6 +143,7 @@ async def _run_ingestion_worker(
         embedding_client=embedding_client,
         extraction_client=extraction_client,
         entity_store=entity_store,
+        engine=engine,
     )
 
 
