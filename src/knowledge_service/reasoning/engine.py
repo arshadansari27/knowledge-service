@@ -8,7 +8,12 @@ from dataclasses import dataclass
 
 from pyoxigraph import Literal, NamedNode, Triple
 
-from knowledge_service.ontology.namespaces import KS_GRAPH_ONTOLOGY, KS_INVERSE_PREDICATE
+from knowledge_service.ontology.namespaces import (
+    KS_GRAPH_ONTOLOGY,
+    KS_INVERSE_PREDICATE,
+    KS_TRANSITIVE_PREDICATE,
+)
+from knowledge_service.ontology.uri import KS as KS_PREFIX
 from knowledge_service.ontology.uri import is_uri
 
 logger = logging.getLogger(__name__)
@@ -96,6 +101,140 @@ class InverseRule(InferenceRule):
                 depth=depth,
             )
         ]
+
+
+class TransitiveRule(InferenceRule):
+    """Closes transitive predicates. A p B, B p C → A p C."""
+
+    name = "transitive"
+
+    def __init__(self):
+        self._transitive_predicates: set[str] = set()
+
+    def configure(self, triple_store) -> None:
+        rows = triple_store.query(f"""
+            SELECT ?p WHERE {{
+                GRAPH <{KS_GRAPH_ONTOLOGY}> {{
+                    ?p <{KS_TRANSITIVE_PREDICATE.value}> "true"^^<http://www.w3.org/2001/XMLSchema#boolean> .
+                }}
+            }}
+        """)
+        for row in rows:
+            uri = row["p"].value if hasattr(row["p"], "value") else str(row["p"])
+            self._transitive_predicates.add(uri)
+        logger.info(
+            "TransitiveRule loaded %d transitive predicates", len(self._transitive_predicates)
+        )
+
+    def discover(self, triple: dict, triple_store, depth: int) -> list[DerivedTriple]:
+        pred = triple["predicate"]
+        if pred not in self._transitive_predicates:
+            return []
+        subj = triple["subject"]
+        obj = triple.get("object") or triple.get("object_", "")
+        conf = triple["confidence"]
+        source_hash = _compute_trigger_hash(triple)
+        results = []
+
+        # Forward: (A, p, B) + existing (B, p, ?C) → (A, p, C)
+        forward = triple_store.get_triples(subject=obj, predicate=pred)
+        for existing in forward:
+            c_obj = existing["object"]
+            if c_obj == subj:
+                continue
+            existing_conf = existing.get("confidence") or 0.0
+            existing_hash = _compute_triple_hash_from_parts(obj, pred, c_obj)
+            results.append(
+                DerivedTriple(
+                    subject=subj,
+                    predicate=pred,
+                    object_=c_obj,
+                    confidence=conf * existing_conf,
+                    derived_from=[source_hash, existing_hash],
+                    inference_method="transitive",
+                    depth=depth,
+                )
+            )
+
+        # Backward: existing (?Z, p, A) + (A, p, B) → (Z, p, B)
+        backward = triple_store.get_triples(object_=subj, predicate=pred)
+        for existing in backward:
+            z_subj = existing["subject"]
+            if z_subj == obj:
+                continue
+            existing_conf = existing.get("confidence") or 0.0
+            existing_hash = _compute_triple_hash_from_parts(z_subj, pred, subj)
+            results.append(
+                DerivedTriple(
+                    subject=z_subj,
+                    predicate=pred,
+                    object_=obj,
+                    confidence=existing_conf * conf,
+                    derived_from=[existing_hash, source_hash],
+                    inference_method="transitive",
+                    depth=depth,
+                )
+            )
+        return results
+
+
+class TypeInheritanceRule(InferenceRule):
+    """Propagates has_property through is_a chains."""
+
+    name = "type_inheritance"
+
+    def __init__(self):
+        self._is_a_uri = f"{KS_PREFIX}is_a"
+        self._has_property_uri = f"{KS_PREFIX}has_property"
+
+    def configure(self, triple_store) -> None:
+        pass
+
+    def discover(self, triple: dict, triple_store, depth: int) -> list[DerivedTriple]:
+        pred = triple["predicate"]
+        subj = triple["subject"]
+        obj = triple.get("object") or triple.get("object_", "")
+        conf = triple["confidence"]
+        source_hash = _compute_trigger_hash(triple)
+        results = []
+
+        if pred == self._is_a_uri:
+            # A is_a B → inherit B's properties
+            properties = triple_store.get_triples(subject=obj, predicate=self._has_property_uri)
+            for prop in properties:
+                prop_obj = prop["object"]
+                prop_conf = prop.get("confidence") or 0.0
+                prop_hash = _compute_triple_hash_from_parts(obj, self._has_property_uri, prop_obj)
+                results.append(
+                    DerivedTriple(
+                        subject=subj,
+                        predicate=self._has_property_uri,
+                        object_=prop_obj,
+                        confidence=conf * prop_conf,
+                        derived_from=[source_hash, prop_hash],
+                        inference_method="type_inheritance",
+                        depth=depth,
+                    )
+                )
+        elif pred == self._has_property_uri:
+            # B has_property X → propagate to instances
+            instances = triple_store.get_triples(object_=subj, predicate=self._is_a_uri)
+            for inst in instances:
+                inst_subj = inst["subject"]
+                inst_conf = inst.get("confidence") or 0.0
+                inst_hash = _compute_triple_hash_from_parts(inst_subj, self._is_a_uri, subj)
+                results.append(
+                    DerivedTriple(
+                        subject=inst_subj,
+                        predicate=self._has_property_uri,
+                        object_=obj,
+                        confidence=inst_conf * conf,
+                        derived_from=[inst_hash, source_hash],
+                        inference_method="type_inheritance",
+                        depth=depth,
+                    )
+                )
+        return results
 
 
 def _compute_trigger_hash(triple: dict) -> str:

@@ -4,7 +4,12 @@ from pathlib import Path
 
 from knowledge_service.ontology.bootstrap import bootstrap_ontology
 from knowledge_service.ontology.namespaces import KS, KS_DATA, KS_GRAPH_EXTRACTED
-from knowledge_service.reasoning.engine import DerivedTriple, InverseRule
+from knowledge_service.reasoning.engine import (
+    DerivedTriple,
+    InverseRule,
+    TransitiveRule,
+    TypeInheritanceRule,
+)
 from knowledge_service.stores.triples import TripleStore
 
 
@@ -157,3 +162,152 @@ class TestInverseRule:
         }
         results = rule.discover(trigger, ts, depth=3)
         assert results[0].depth == 3
+
+
+class TestTransitiveRule:
+    def test_forward_transitive(self, store_with_ontology):
+        ts = store_with_ontology
+        ts.insert(
+            f"{KS_DATA}b",
+            f"{KS}part_of",
+            f"{KS_DATA}c",
+            confidence=0.7,
+            knowledge_type="claim",
+            graph=KS_GRAPH_EXTRACTED,
+        )
+        rule = TransitiveRule()
+        rule.configure(ts)
+        trigger = {
+            "subject": f"{KS_DATA}a",
+            "predicate": f"{KS}part_of",
+            "object": f"{KS_DATA}b",
+            "confidence": 0.8,
+        }
+        results = rule.discover(trigger, ts, depth=1)
+        forward = [r for r in results if r.subject == f"{KS_DATA}a" and r.object_ == f"{KS_DATA}c"]
+        assert len(forward) == 1
+        assert forward[0].confidence == pytest.approx(0.56)
+        assert forward[0].inference_method == "transitive"
+
+    def test_backward_transitive(self, store_with_ontology):
+        ts = store_with_ontology
+        ts.insert(
+            f"{KS_DATA}z",
+            f"{KS}part_of",
+            f"{KS_DATA}a",
+            confidence=0.9,
+            knowledge_type="claim",
+            graph=KS_GRAPH_EXTRACTED,
+        )
+        rule = TransitiveRule()
+        rule.configure(ts)
+        trigger = {
+            "subject": f"{KS_DATA}a",
+            "predicate": f"{KS}part_of",
+            "object": f"{KS_DATA}b",
+            "confidence": 0.8,
+        }
+        results = rule.discover(trigger, ts, depth=1)
+        backward = [r for r in results if r.subject == f"{KS_DATA}z" and r.object_ == f"{KS_DATA}b"]
+        assert len(backward) == 1
+        assert backward[0].confidence == pytest.approx(0.72)
+
+    def test_non_transitive_predicate_skipped(self, store_with_ontology):
+        ts = store_with_ontology
+        rule = TransitiveRule()
+        rule.configure(ts)
+        trigger = {
+            "subject": f"{KS_DATA}a",
+            "predicate": f"{KS}causes",
+            "object": f"{KS_DATA}b",
+            "confidence": 0.8,
+        }
+        results = rule.discover(trigger, ts, depth=1)
+        assert len(results) == 0
+
+    def test_confidence_product(self, store_with_ontology):
+        ts = store_with_ontology
+        ts.insert(
+            f"{KS_DATA}b",
+            f"{KS}part_of",
+            f"{KS_DATA}c",
+            confidence=0.7,
+            knowledge_type="claim",
+            graph=KS_GRAPH_EXTRACTED,
+        )
+        rule = TransitiveRule()
+        rule.configure(ts)
+        trigger = {
+            "subject": f"{KS_DATA}a",
+            "predicate": f"{KS}part_of",
+            "object": f"{KS_DATA}b",
+            "confidence": 0.8,
+        }
+        results = rule.discover(trigger, ts, depth=1)
+        forward = [r for r in results if r.object_ == f"{KS_DATA}c"]
+        assert len(forward) == 1
+        assert forward[0].confidence == pytest.approx(0.8 * 0.7)
+
+
+class TestTypeInheritanceRule:
+    def test_inherit_property_from_type(self, store_with_ontology):
+        ts = store_with_ontology
+        ts.insert(
+            f"{KS_DATA}mammal",
+            f"{KS}has_property",
+            f"{KS_DATA}warm_blooded",
+            confidence=0.9,
+            knowledge_type="fact",
+            graph=KS_GRAPH_EXTRACTED,
+        )
+        rule = TypeInheritanceRule()
+        rule.configure(ts)
+        trigger = {
+            "subject": f"{KS_DATA}dog",
+            "predicate": f"{KS}is_a",
+            "object": f"{KS_DATA}mammal",
+            "confidence": 0.95,
+        }
+        results = rule.discover(trigger, ts, depth=1)
+        assert len(results) == 1
+        assert results[0].subject == f"{KS_DATA}dog"
+        assert results[0].predicate == f"{KS}has_property"
+        assert results[0].object_ == f"{KS_DATA}warm_blooded"
+        assert results[0].confidence == pytest.approx(0.95 * 0.9)
+
+    def test_propagate_property_to_instances(self, store_with_ontology):
+        ts = store_with_ontology
+        ts.insert(
+            f"{KS_DATA}dog",
+            f"{KS}is_a",
+            f"{KS_DATA}mammal",
+            confidence=0.95,
+            knowledge_type="fact",
+            graph=KS_GRAPH_EXTRACTED,
+        )
+        rule = TypeInheritanceRule()
+        rule.configure(ts)
+        trigger = {
+            "subject": f"{KS_DATA}mammal",
+            "predicate": f"{KS}has_property",
+            "object": f"{KS_DATA}warm_blooded",
+            "confidence": 0.9,
+        }
+        results = rule.discover(trigger, ts, depth=1)
+        assert len(results) == 1
+        assert results[0].subject == f"{KS_DATA}dog"
+        assert results[0].object_ == f"{KS_DATA}warm_blooded"
+        assert results[0].confidence == pytest.approx(0.95 * 0.9)
+
+    def test_unrelated_predicate_skipped(self, store_with_ontology):
+        ts = store_with_ontology
+        rule = TypeInheritanceRule()
+        rule.configure(ts)
+        trigger = {
+            "subject": f"{KS_DATA}a",
+            "predicate": f"{KS}causes",
+            "object": f"{KS_DATA}b",
+            "confidence": 0.8,
+        }
+        results = rule.discover(trigger, ts, depth=1)
+        assert len(results) == 0
