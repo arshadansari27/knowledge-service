@@ -20,7 +20,16 @@ from knowledge_service.stores.embedding import EmbeddingStore
 from knowledge_service.stores.entity_resolver import EntityResolver
 from knowledge_service.stores.knowledge import KnowledgeStore
 from knowledge_service.stores.rag import RAGRetriever
-from knowledge_service.api import health, content, claims, search, knowledge, contradictions, ask
+from knowledge_service.api import (
+    health,
+    content,
+    claims,
+    search,
+    knowledge,
+    contradictions,
+    ask,
+    changes,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -328,6 +337,7 @@ def create_app(use_lifespan: bool = True) -> FastAPI:
     app.include_router(knowledge.router, prefix="/api")
     app.include_router(contradictions.router, prefix="/api")
     app.include_router(ask.router, prefix="/api")
+    app.include_router(changes.router)
 
     # Admin panel — store credentials on app.state so both middleware and login route use the same values
     from knowledge_service.admin.auth import AuthMiddleware, login_router

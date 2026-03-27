@@ -123,6 +123,20 @@ class ProvenanceStore:
             rows = await conn.fetch(sql, min_confidence, max_confidence)
         return [dict(row) for row in rows]
 
+    async def query_by_entity_and_time(self, entity_uri: str, since: datetime) -> list[dict]:
+        """Return provenance rows where subject = entity_uri AND ingested_at >= since."""
+        async with self._pool.acquire() as conn:
+            rows = await conn.fetch(
+                """SELECT triple_hash, subject, predicate, object, source_url, source_type,
+                          confidence, ingested_at
+                   FROM provenance
+                   WHERE subject = $1 AND ingested_at >= $2
+                   ORDER BY ingested_at DESC""",
+                entity_uri,
+                since,
+            )
+        return [dict(r) for r in rows]
+
     async def query_by_time(
         self,
         since: datetime | None = None,
