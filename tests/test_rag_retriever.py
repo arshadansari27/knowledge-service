@@ -256,11 +256,12 @@ class TestIntentDispatch:
             {"uri": "http://knowledge.local/data/cortisol", "similarity": 0.9}
         ]
         ks = _make_knowledge_store()
+        ks.get_triples.return_value = []
         retriever = RAGRetriever(ec, es, ks)
         intent = QueryIntent(intent="graph", entities=["cortisol", "inflammation"])
         await retriever.retrieve("how is cortisol connected to inflammation?", intent=intent)
-        # GraphTraverser calls get_triples_by_subject internally
-        ks.get_triples_by_subject.assert_called()
+        # GraphTraverser calls get_triples(subject=...) internally
+        ks.get_triples.assert_called()
 
     async def test_entity_below_threshold_skipped(self):
         """Entity with similarity < 0.80 is skipped, falls back to semantic."""

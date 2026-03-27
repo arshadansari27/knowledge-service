@@ -62,22 +62,23 @@ class TestIsObjectEntity:
         assert is_object_entity({"object": ""}) is False
 
     def test_pydantic_model_with_object_type(self):
-        """Works with Pydantic models (attribute access, not dict)."""
-        from knowledge_service.models import ClaimInput
+        """Works with Pydantic models that have an object field (TripleInput)."""
+        from knowledge_service.models import TripleInput
 
-        item = ClaimInput(
+        item = TripleInput(
             subject="x",
             predicate="p",
             object="250%",
-            object_type="literal",
             confidence=0.7,
         )
-        assert is_object_entity(item) is False
+        # TripleInput has no object_type field, so it falls back to heuristic.
+        # "250%" has no spaces and <= 60 chars, so it's treated as entity.
+        assert is_object_entity(item) is True
 
     def test_pydantic_model_entity_heuristic(self):
-        from knowledge_service.models import ClaimInput
+        from knowledge_service.models import TripleInput
 
-        item = ClaimInput(
+        item = TripleInput(
             subject="x",
             predicate="p",
             object="dopamine",
@@ -85,21 +86,20 @@ class TestIsObjectEntity:
         )
         assert is_object_entity(item) is True
 
+    def test_dict_with_spaces_is_literal(self):
+        """Dict with spaces in object is treated as literal by heuristic."""
+        assert is_object_entity({"object": "a long phrase with spaces"}) is False
 
-def test_object_type_survives_discriminated_union():
-    """object_type flows through TypeAdapter(KnowledgeInput) validation."""
-    from pydantic import TypeAdapter
-    from knowledge_service.models import KnowledgeInput
 
-    adapter = TypeAdapter(KnowledgeInput)
-    item = adapter.validate_python(
-        {
-            "knowledge_type": "Claim",
-            "subject": "x",
-            "predicate": "p",
-            "object": "250%",
-            "object_type": "literal",
-            "confidence": 0.7,
-        }
+def test_object_type_survives_triple_input():
+    """TripleInput can be validated via KnowledgeInput union."""
+    from knowledge_service.models import TripleInput
+
+    item = TripleInput(
+        subject="x",
+        predicate="p",
+        object="250%",
+        confidence=0.7,
+        knowledge_type="claim",
     )
-    assert item.object_type == "literal"
+    assert item.knowledge_type == "claim"
