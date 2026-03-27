@@ -317,8 +317,19 @@ async def ingest_triple(triple: dict, stores, context: IngestContext, engine=Non
             combined,
         )
 
-    # Run inference engine and persist derived triples
-    inferred = await run_inference(triple, engine, stores, context)
+    # Run inference engine on URI-normalized triple. TripleStore.insert() normalizes
+    # subjects/predicates to URIs but keeps non-URI objects as literals. The engine
+    # needs the same normalized form so DerivedTriple.compute_hash() can create
+    # NamedNode/Literal objects correctly.
+    from knowledge_service.ontology.uri import to_entity_uri, to_predicate_uri  # noqa: PLC0415
+
+    normalized = {
+        **triple,
+        "subject": to_entity_uri(triple["subject"]),
+        "predicate": to_predicate_uri(triple["predicate"]),
+        "confidence": combined,
+    }
+    inferred = await run_inference(normalized, engine, stores, context)
 
     thesis_breaks = await check_thesis_impact(triple_hash, contradictions, stores)
 

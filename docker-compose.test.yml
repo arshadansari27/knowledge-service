@@ -13,6 +13,7 @@ services:
       LLM_CHAT_MODEL: qwen3:14b
       OXIGRAPH_DATA_DIR: /app/data/oxigraph
       ADMIN_PASSWORD: test-local-123
+      SECRET_KEY: test-secret-key-for-local-testing
     depends_on:
       postgres:
         condition: service_healthy

@@ -89,6 +89,10 @@ class InverseRule(InferenceRule):
         pred = triple["predicate"]
         if pred not in self._inverse_map:
             return []
+        # Object becomes subject in inverse — skip if object is a literal (non-URI)
+        obj = triple.get("object") or triple.get("object_", "")
+        if not is_uri(obj):
+            return []
         inv_pred = self._inverse_map[pred]
         source_hash = _compute_trigger_hash(triple)
         return [
