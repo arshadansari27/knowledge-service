@@ -29,16 +29,22 @@ class TestTripleInput:
 
     def test_fact_type(self):
         t = TripleInput(
-            subject="earth", predicate="is_a", object="planet",
-            knowledge_type="fact", confidence=0.99,
+            subject="earth",
+            predicate="is_a",
+            object="planet",
+            knowledge_type="fact",
+            confidence=0.99,
         )
         assert t.to_triples()[0]["knowledge_type"] == "fact"
 
     def test_temporal_state(self):
         t = TripleInput(
-            subject="acme", predicate="revenue", object="50M",
+            subject="acme",
+            predicate="revenue",
+            object="50M",
             knowledge_type="temporal_state",
-            valid_from=date(2025, 1, 1), valid_until=date(2025, 12, 31),
+            valid_from=date(2025, 1, 1),
+            valid_until=date(2025, 12, 31),
         )
         triple = t.to_triples()[0]
         assert triple["valid_from"] == date(2025, 1, 1)
@@ -62,7 +68,8 @@ class TestEventInput:
 
     def test_with_properties(self):
         e = EventInput(
-            subject="ipo_acme", occurred_at=date(2025, 6, 1),
+            subject="ipo_acme",
+            occurred_at=date(2025, 6, 1),
             properties={"amount": "1B", "currency": "USD"},
         )
         triples = e.to_triples()
@@ -90,7 +97,9 @@ class TestEntityInput:
 
     def test_with_properties(self):
         e = EntityInput(
-            uri="acme_corp", rdf_type="schema:Corporation", label="ACME Corp",
+            uri="acme_corp",
+            rdf_type="schema:Corporation",
+            label="ACME Corp",
             properties={"ticker": "ACME"},
         )
         triples = e.to_triples()

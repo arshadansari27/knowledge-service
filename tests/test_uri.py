@@ -1,4 +1,11 @@
-from knowledge_service.ontology.uri import is_uri, slugify, to_entity_uri, to_predicate_uri, KS, KS_DATA
+from knowledge_service.ontology.uri import (
+    is_uri,
+    slugify,
+    to_entity_uri,
+    to_predicate_uri,
+    KS,
+    KS_DATA,
+)
 
 
 class TestIsUri:
