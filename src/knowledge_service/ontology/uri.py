@@ -1,4 +1,5 @@
 """Canonical URI normalization. Single source of truth for all URI construction."""
+
 import re
 
 KS = "http://knowledge.local/schema/"
