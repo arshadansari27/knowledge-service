@@ -35,7 +35,7 @@ Single-process FastAPI service combining an RDF knowledge graph with Noisy-OR pr
 
 ### Data Flow
 
-Content arrives via `/api/content` or `/api/claims` → text is chunked (short = 1 chunk, long ≥4000 chars = N overlapping chunks) → metadata upserted to `content_metadata`, chunks with embeddings stored in `content` → knowledge items are extracted via two-phase LLM extraction (entities then relations) → items expanded to RDF triples and ingested via the pipeline (`ingestion/pipeline.py`) → triples stored in pyoxigraph with RDF-star annotations (confidence, type, temporal bounds) → provenance rows go to PostgreSQL → Noisy-OR combines multi-source confidence → contradictions detected against existing triples → thesis impact checked.
+Content arrives via `/api/content` or `/api/claims` → text is chunked (short = 1 chunk, long ≥4000 chars = N overlapping chunks) → metadata upserted to `content_metadata`, chunks with embeddings stored in `content` → knowledge items are extracted via two-phase LLM extraction (entities then relations) → items expanded to RDF triples and ingested via the pipeline (`ingestion/pipeline.py`) → triples stored in pyoxigraph with RDF-star annotations (confidence, type, temporal bounds) → provenance rows go to PostgreSQL → Noisy-OR combines multi-source confidence → contradictions detected against existing triples → **inference engine derives new triples** (inverse, transitive, type inheritance) into `ks:graph/inferred` → thesis impact checked.
 
 ### Key Components
 
@@ -51,11 +51,13 @@ Content arrives via `/api/content` or `/api/claims` → text is chunked (short =
 
 - **Stores dataclass** (`stores/__init__.py`): Single `Stores` dataclass holds all stores + pg_pool. Set as `app.state.stores` in lifespan.
 
-- **Ingestion Pipeline** (`ingestion/pipeline.py`): Replaces the old `process_triple()` god function. Discrete steps: delta detection → insert → contradiction detection → penalty → provenance → evidence combination → thesis impact check.
+- **Ingestion Pipeline** (`ingestion/pipeline.py`): Replaces the old `process_triple()` god function. Discrete steps: delta detection → retract stale inferences → insert → contradiction detection → penalty → provenance → evidence combination → **inference** → thesis impact check.
 
 - **Ingestion Worker** (`ingestion/worker.py`): Three-phase worker: Embed → Extract → Process. Job tracking via `JobTracker`.
 
 - **Noisy-OR** (`reasoning/noisy_or.py`): 6-line evidence combination: `P = 1 - product(1 - ci)`. Replaces the 332-line ProbLog-based ReasoningEngine.
+
+- **Inference Engine** (`reasoning/engine.py`): Forward-chaining inference at ingestion time. Three ontology-declared rule types: `InverseRule` (materializes `ks:inversePredicate` pairs), `TransitiveRule` (closes `ks:transitivePredicate` chains), `TypeInheritanceRule` (propagates `has_property` through `is_a`). BFS execution with depth cap of 3 and cycle detection via hash dedup. Confidence = product of source confidences. Derived triples go to `ks:graph/inferred` with `ks:derivedFrom` and `ks:inferenceMethod` RDF-star annotations. Retraction cascades when source triples change. Initialized once in app lifespan, stored on `app.state.inference_engine`.
 
 - **DomainRegistry** (`ontology/registry.py`): Reads predicate metadata (labels, synonyms, materiality weights, domains) from the ontology graph via SPARQL. Enables additive domain vocabulary — new domains = new `.ttl` files in `ontology/domains/`.
 
@@ -68,7 +70,7 @@ Content arrives via `/api/content` or `/api/claims` → text is chunked (short =
 - **URI normalization**: Single source of truth in `ontology/uri.py` — `to_entity_uri()`, `to_predicate_uri()`, `slugify()`, `is_uri()`.
 - **Namespaces**: `ontology/namespaces.py` — NamedNode factories, graph constants, `ks:` prefix helpers.
 - **Schema**: `ontology/schema.ttl` — knowledge type classes, properties, domain predicates, opposite/inverse pairs.
-- **Domains**: `ontology/domains/base.ttl` — 18 canonical predicates with synonyms, materiality weights, opposite predicates.
+- **Domains**: `ontology/domains/base.ttl` — 18 canonical predicates with synonyms, materiality weights, opposite predicates, transitive annotations (`part_of`, `is_a`, `located_in`, `depends_on`), and inverse pairs (`contains ↔ part_of`).
 - **Bootstrap**: `ontology/bootstrap.py` — loads `schema.ttl` + all `domains/*.ttl` into `ks:graph/ontology`. Accepts `TripleStore` wrapper.
 
 ### Models
@@ -119,6 +121,7 @@ Deployed as part of the **AEGIS Docker Swarm stack** on a homelab cluster. Full 
 - **Do NOT use `response_format: {"type": "json_object"}`** with qwen3 via Ollama/LiteLLM. It returns empty `{}` silently, breaking extraction. The `_extract_json()` utility in `_utils.py` already handles freeform LLM output (markdown fences, `<think>` tags, trailing text).
 - All LLM clients (`EmbeddingClient`, `ExtractionClient`, `RAGClient`, health check) strip a trailing `/v1` from `LLM_BASE_URL` at init time, then use `/v1/...` relative paths in requests. This prevents `/v1/v1/...` double-pathing.
 - `TripleStore.insert()` normalizes bare entity labels (e.g. `"cold_exposure"`) to `http://knowledge.local/data/cold_exposure` URIs via `ontology/uri.py` before creating `NamedNode` objects. Without this, pyoxigraph raises `ValueError: No scheme found in an absolute IRI`.
+- **Inference engine URI normalization**: The pipeline normalizes subject/predicate URIs before passing triples to `InferenceEngine.run()`, since the engine's `DerivedTriple.compute_hash()` creates `NamedNode` objects that require full URIs. `InverseRule` also skips when the object is a literal (non-URI), since literals cannot become RDF subjects in the inverse triple.
 
 ## Project Lessons (auto-managed by cmemory)
 - cmemory's readStdin() in shared.ts only resolved on stdin 'end' event, but Claude Code hooks may not immediately close the stdin pipe. Fix: try JSON.parse() eagerly on each 'data' chunk so the promise resolves as soon as complete JSON arrives, without waiting for 'end'.
