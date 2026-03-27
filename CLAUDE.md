@@ -117,7 +117,7 @@ Deployed as part of the **AEGIS Docker Swarm stack** on a homelab cluster. Full 
 ## LLM Integration Gotchas
 
 - **Do NOT use `response_format: {"type": "json_object"}`** with qwen3 via Ollama/LiteLLM. It returns empty `{}` silently, breaking extraction. The `_extract_json()` utility in `_utils.py` already handles freeform LLM output (markdown fences, `<think>` tags, trailing text).
-- All LLM clients (`EmbeddingClient`, `ExtractionClient`, `RAGClient`, `QueryClassifier`, health check) strip a trailing `/v1` from `LLM_BASE_URL` at init time, then use `/v1/...` relative paths in requests. This prevents `/v1/v1/...` double-pathing.
+- All LLM clients (`EmbeddingClient`, `ExtractionClient`, `RAGClient`, health check) strip a trailing `/v1` from `LLM_BASE_URL` at init time, then use `/v1/...` relative paths in requests. This prevents `/v1/v1/...` double-pathing.
 - `TripleStore.insert()` normalizes bare entity labels (e.g. `"cold_exposure"`) to `http://knowledge.local/data/cold_exposure` URIs via `ontology/uri.py` before creating `NamedNode` objects. Without this, pyoxigraph raises `ValueError: No scheme found in an absolute IRI`.
 
 ## Project Lessons (auto-managed by cmemory)
