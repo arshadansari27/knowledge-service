@@ -8,7 +8,7 @@ from dataclasses import dataclass, field
 
 from knowledge_service._utils import _rdf_value_to_str
 from knowledge_service.clients.classifier import QueryIntent
-from knowledge_service.clients.llm import to_entity_uri
+from knowledge_service.ontology.uri import to_entity_uri
 from knowledge_service.ontology.namespaces import KS_GRAPH_ASSERTED, KS_GRAPH_FEDERATED
 from knowledge_service.stores.graph_traversal import GraphTraverser
 

@@ -95,21 +95,49 @@ async def _seed_predicate_embeddings(embedding_store: EmbeddingStore, embedding_
     """
     import logging  # noqa: PLC0415
 
-    from knowledge_service.clients.llm import CANONICAL_PREDICATES  # noqa: PLC0415
     from knowledge_service.ontology.namespaces import KS  # noqa: PLC0415  # noqa: F811
 
     log = logging.getLogger(__name__)
-    labels = [p.replace("_", " ") for p in CANONICAL_PREDICATES]
+
+    # Use DomainRegistry predicates if available, otherwise fall back to hardcoded list
+    registry = getattr(app.state, "domain_registry", None) if "app" in dir() else None
+    if registry is not None:
+        all_preds = registry.get_predicates()
+        pred_labels = [p.label for p in all_preds]
+        pred_uris = [p.uri for p in all_preds]
+    else:
+        _fallback = [
+            "causes",
+            "increases",
+            "decreases",
+            "inhibits",
+            "activates",
+            "is_a",
+            "part_of",
+            "located_in",
+            "created_by",
+            "depends_on",
+            "related_to",
+            "contains",
+            "precedes",
+            "follows",
+            "has_property",
+            "used_for",
+            "produced_by",
+            "associated_with",
+        ]
+        pred_labels = [p.replace("_", " ") for p in _fallback]
+        pred_uris = [f"{KS}{p}" for p in _fallback]
+
     try:
-        embeddings = await embedding_client.embed_batch(labels)
+        embeddings = await embedding_client.embed_batch(pred_labels)
     except (LLMClientError, OSError) as exc:
         log.warning("Failed to seed predicate embeddings — embedding API unavailable: %s", exc)
         return
 
-    for predicate, label, embedding in zip(CANONICAL_PREDICATES, labels, embeddings):
-        uri = f"{KS}{predicate}"
+    for uri, label, embedding in zip(pred_uris, pred_labels, embeddings):
         await embedding_store.insert_predicate_embedding(uri=uri, label=label, embedding=embedding)
-    log.info("Seeded %d canonical predicate embeddings", len(CANONICAL_PREDICATES))
+    log.info("Seeded %d canonical predicate embeddings", len(pred_labels))
 
 
 @asynccontextmanager
