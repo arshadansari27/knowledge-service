@@ -159,6 +159,20 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     domain_registry.load()
     app.state.domain_registry = domain_registry
 
+    # Inference engine
+    from knowledge_service.reasoning.engine import (  # noqa: PLC0415
+        InferenceEngine,
+        InverseRule,
+        TransitiveRule,
+        TypeInheritanceRule,
+    )
+
+    inference_rules = [InverseRule(), TransitiveRule(), TypeInheritanceRule()]
+    inference_engine = InferenceEngine(triple_store, inference_rules, max_depth=3)
+    inference_engine.configure()
+    app.state.inference_engine = inference_engine
+    logger.info("InferenceEngine initialized with %d rules", len(inference_rules))
+
     # ExtractionClient with registry
     extraction_client = ExtractionClient(
         base_url=settings.llm_base_url,

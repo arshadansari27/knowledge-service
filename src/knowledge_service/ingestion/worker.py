@@ -71,6 +71,7 @@ async def run_ingestion(
     embedding_client: Any,
     extraction_client: Any | None,
     entity_store: Any | None = None,
+    engine: Any | None = None,
 ) -> None:
     """Orchestrate the 3-phase ingestion pipeline.
 
@@ -121,7 +122,7 @@ async def run_ingestion(
         # Phase 3: Process
         current_phase = "processing"
         await tracker.update_status("processing")
-        process = ProcessPhase(stores, entity_store)
+        process = ProcessPhase(stores, entity_store, engine=engine)
         triples_created, entities_resolved = await process.run(
             knowledge_items,
             chunk_ids_for_items,

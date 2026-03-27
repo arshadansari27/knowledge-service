@@ -20,6 +20,7 @@ router = APIRouter()
 async def _process_one_claims_request(body: ClaimsRequest, request: Request) -> ClaimsResponse:
     """Process a single ClaimsRequest and return its response."""
     stores = request.app.state.stores
+    engine = getattr(request.app.state, "inference_engine", None)
 
     triples_created = 0
     contradictions_all: list[dict] = []
@@ -41,7 +42,7 @@ async def _process_one_claims_request(body: ClaimsRequest, request: Request) -> 
             continue
 
         for t in triples:
-            result = await ingest_triple(t, stores, ctx)
+            result = await ingest_triple(t, stores, ctx, engine=engine)
             if result.is_new:
                 triples_created += 1
             contradictions_all.extend(result.contradictions)
