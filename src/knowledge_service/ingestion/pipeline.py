@@ -189,6 +189,40 @@ async def run_inference(triple: dict, engine, stores, context: IngestContext) ->
     return results
 
 
+def _remove_inferred_triple_with_annotations(raw_store, s, p, o, graph_node) -> None:
+    """Remove an inferred triple and all its RDF-star annotations from the raw store.
+
+    RDF-star inline annotations (inserted via SPARQL INSERT DATA) are stored as
+    reification bnodes by pyoxigraph. We must find those bnodes via the rdf:reifies
+    predicate and remove all associated quads before removing the base quad.
+
+    Note: DELETE WHERE doesn't work with RDF-star in pyoxigraph — we must use the
+    Python API to find and remove reification bnodes explicitly.
+    """
+    from pyoxigraph import NamedNode as NN
+    from pyoxigraph import Quad
+
+    reifies = NN("http://www.w3.org/1999/02/22-rdf-syntax-ns#reifies")
+
+    # Find all bnodes in the inferred graph that reify (s p o)
+    for reif_quad in list(raw_store.quads_for_pattern(None, reifies, None, graph_node)):
+        bnode = reif_quad.subject
+        reified = reif_quad.object
+        # reified is a Triple object — check it matches our SPO
+        if (
+            hasattr(reified, "subject")
+            and reified.subject == s
+            and reified.predicate == p
+            and reified.object == o
+        ):
+            # Remove all annotation quads attached to this bnode
+            for bnode_quad in list(raw_store.quads_for_pattern(bnode, None, None, graph_node)):
+                raw_store.remove(bnode_quad)
+
+    # Remove the base quad
+    raw_store.remove(Quad(s, p, o, graph_node))
+
+
 def retract_stale_inferences(triple_hash: str, triple_store) -> int:
     """Remove inferred triples that depend on a changed source triple.
 
@@ -199,7 +233,6 @@ def retract_stale_inferences(triple_hash: str, triple_store) -> int:
     from knowledge_service.ontology.uri import KS as KS_NS
     from pyoxigraph import Literal as Lit
     from pyoxigraph import NamedNode as NN
-    from pyoxigraph import Quad
 
     rows = triple_store.query(f"""
         SELECT ?s ?p ?o WHERE {{
@@ -213,6 +246,7 @@ def retract_stale_inferences(triple_hash: str, triple_store) -> int:
         return 0
 
     removed = 0
+    g = NN(KS_GRAPH_INFERRED)
     for row in rows:
         s_val = row["s"].value if hasattr(row["s"], "value") else str(row["s"])
         p_val = row["p"].value if hasattr(row["p"], "value") else str(row["p"])
@@ -221,8 +255,7 @@ def retract_stale_inferences(triple_hash: str, triple_store) -> int:
         s = NN(s_val)
         p = NN(p_val)
         o = NN(o_val) if is_uri(o_val) else Lit(o_val)
-        g = NN(KS_GRAPH_INFERRED)
-        triple_store.store.remove(Quad(s, p, o, g))
+        _remove_inferred_triple_with_annotations(triple_store.store, s, p, o, g)
         removed += 1
 
         # Cascade: retract inferences that depended on this inferred triple
