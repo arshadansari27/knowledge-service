@@ -92,7 +92,7 @@ def _make_entity_store_mock():
         slug = label.lower().replace(" ", "_")
         return f"http://knowledge.local/schema/{slug}"
 
-    mock.resolve.side_effect = _resolve
+    mock.resolve_entity.side_effect = _resolve
     mock.resolve_predicate.side_effect = _resolve_predicate
     return mock
 

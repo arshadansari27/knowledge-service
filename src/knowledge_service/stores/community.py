@@ -8,7 +8,7 @@ from typing import Any
 import httpx
 import igraph
 
-from knowledge_service._utils import _extract_json, _rdf_value_to_str
+from knowledge_service._utils import _extract_json
 
 logger = logging.getLogger(__name__)
 
@@ -216,13 +216,13 @@ class CommunitySummarizer:
         relationships: list[str] = []
         for uri in members[:5]:
             try:
-                triples = self._ks.get_triples_by_subject(uri)
+                triples = self._ks.get_triples(subject=uri)
             except Exception:
                 continue
             for t in triples[:5]:
                 s = uri.rsplit("/", 1)[-1]
-                p = _rdf_value_to_str(t.get("predicate", "")).rsplit("/", 1)[-1]
-                o = _rdf_value_to_str(t.get("object", "")).rsplit("/", 1)[-1]
+                p = t.get("predicate", "").rsplit("/", 1)[-1]
+                o = t.get("object", "").rsplit("/", 1)[-1]
                 relationships.append(f"{s} -> {p} -> {o}")
 
         if relationships:

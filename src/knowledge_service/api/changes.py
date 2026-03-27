@@ -3,7 +3,7 @@
 import logging
 from datetime import datetime
 
-from fastapi import APIRouter, Query, Request
+from fastapi import APIRouter, HTTPException, Query, Request
 
 from knowledge_service.ontology.uri import to_entity_uri
 
@@ -24,7 +24,10 @@ async def get_entity_changes(
     registry = request.app.state.domain_registry
 
     entity_uri = to_entity_uri(entity_id)
-    since_dt = datetime.fromisoformat(since)
+    try:
+        since_dt = datetime.fromisoformat(since)
+    except ValueError:
+        raise HTTPException(status_code=422, detail=f"Invalid date format: {since}")
 
     # 1. Recent provenance rows
     recent = await stores.provenance.query_by_entity_and_time(entity_uri, since_dt)

@@ -6,6 +6,8 @@ import logging
 
 logger = logging.getLogger(__name__)
 
+_ALLOWED_UPDATE_FIELDS = {"name", "description", "status", "owner"}
+
 
 class ThesisStore:
     def __init__(self, pool):
@@ -45,6 +47,9 @@ class ThesisStore:
     async def update(self, thesis_id: str, **fields) -> None:
         if not fields:
             return
+        invalid = set(fields) - _ALLOWED_UPDATE_FIELDS
+        if invalid:
+            raise ValueError(f"Invalid fields: {invalid}")
         sets = ", ".join(f"{k} = ${i + 2}" for i, k in enumerate(fields))
         async with self._pool.acquire() as conn:
             await conn.execute(

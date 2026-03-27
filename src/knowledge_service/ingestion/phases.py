@@ -5,6 +5,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from knowledge_service.ingestion.pipeline import IngestContext, ingest_triple
+from knowledge_service.ontology.uri import is_uri
 
 logger = logging.getLogger(__name__)
 
@@ -137,6 +138,18 @@ class ProcessPhase:
                 continue
 
             for triple in triples:
+                # Resolve entities via embeddings (if entity_store available)
+                if self._entity_store is not None:
+                    triple["subject"] = await self._entity_store.resolve_entity(
+                        triple["subject"], rdf_type=triple.get("rdf_type")
+                    )
+                    triple["predicate"] = await self._entity_store.resolve_predicate(
+                        triple["predicate"]
+                    )
+                    if triple.get("object_type") == "entity" or is_uri(triple.get("object", "")):
+                        triple["object"] = await self._entity_store.resolve_entity(triple["object"])
+                    entities_resolved += 1
+
                 result = await ingest_triple(triple, self._stores, ctx)
                 if result.is_new:
                     triples_created += 1

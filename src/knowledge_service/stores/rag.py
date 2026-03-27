@@ -8,7 +8,7 @@ from dataclasses import dataclass, field
 
 import httpx
 
-from knowledge_service._utils import _extract_json, _rdf_value_to_str
+from knowledge_service._utils import _extract_json
 from knowledge_service.ontology.namespaces import KS_GRAPH_ASSERTED, KS_GRAPH_FEDERATED
 from knowledge_service.ontology.uri import to_entity_uri
 
@@ -365,7 +365,7 @@ class RAGRetriever:
                 # Slug fallback: check if triples exist for this URI
                 slug_uri = to_entity_uri(name)
                 triples = await asyncio.to_thread(
-                    self._knowledge_store.get_triples_by_subject, slug_uri
+                    self._knowledge_store.get_triples, subject=slug_uri
                 )
                 if triples:
                     resolved.append(slug_uri)
@@ -376,11 +376,8 @@ class RAGRetriever:
     async def _lookup_triples_by_subject(self, uris: list[str]) -> list[dict]:
         all_triples = []
         for uri in uris:
-            triples = await asyncio.to_thread(self._knowledge_store.get_triples_by_subject, uri)
+            triples = await asyncio.to_thread(self._knowledge_store.get_triples, subject=uri)
             for t in triples:
-                t["subject"] = uri
-                t["predicate"] = _rdf_value_to_str(t.get("predicate"))
-                t["object"] = _rdf_value_to_str(t.get("object"))
                 graph = t.get("graph", "")
                 if graph == KS_GRAPH_ASSERTED:
                     t["trust_tier"] = "verified"
@@ -394,11 +391,8 @@ class RAGRetriever:
     async def _lookup_triples_by_object(self, uris: list[str]) -> list[dict]:
         all_triples = []
         for uri in uris:
-            triples = await asyncio.to_thread(self._knowledge_store.get_triples_by_object, uri)
+            triples = await asyncio.to_thread(self._knowledge_store.get_triples, object_=uri)
             for t in triples:
-                t["object"] = uri
-                t["subject"] = _rdf_value_to_str(t.get("subject"))
-                t["predicate"] = _rdf_value_to_str(t.get("predicate"))
                 graph = t.get("graph", "")
                 if graph == KS_GRAPH_ASSERTED:
                     t["trust_tier"] = "verified"
@@ -422,11 +416,8 @@ class RAGRetriever:
 
         all_triples = []
         for uri in matched_uris:
-            triples = await asyncio.to_thread(self._knowledge_store.get_triples_by_predicate, uri)
+            triples = await asyncio.to_thread(self._knowledge_store.get_triples, predicate=uri)
             for t in triples:
-                t["subject"] = _rdf_value_to_str(t.get("subject"))
-                t["predicate"] = _rdf_value_to_str(t.get("predicate"))
-                t["object"] = _rdf_value_to_str(t.get("object"))
                 graph = t.get("graph", "")
                 if graph == KS_GRAPH_ASSERTED:
                     t["trust_tier"] = "verified"

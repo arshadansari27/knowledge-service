@@ -1,10 +1,12 @@
 """Thesis API — create, manage, and monitor investment theses."""
 
-import hashlib
 import logging
 
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel
+
+from knowledge_service.ingestion.pipeline import compute_hash
+from knowledge_service.ontology.uri import to_entity_uri, to_predicate_uri
 
 logger = logging.getLogger(__name__)
 
@@ -37,7 +39,9 @@ async def create_thesis(body: ThesisCreate, request: Request):
                 s = claim.get("subject", "")
                 p = claim.get("predicate", "")
                 o = claim.get("object", "")
-                triple_hash = hashlib.sha256(f"{s}|{p}|{o}".encode()).hexdigest()
+                s_uri = to_entity_uri(s)
+                p_uri = to_predicate_uri(p)
+                triple_hash = compute_hash({"subject": s_uri, "predicate": p_uri, "object": o})
                 await stores.theses.add_claim(thesis_id, triple_hash, s, p, o, "supporting")
                 claims.append(
                     {

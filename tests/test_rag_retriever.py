@@ -4,8 +4,6 @@ from __future__ import annotations
 
 from unittest.mock import AsyncMock, MagicMock
 
-from pyoxigraph import Literal, NamedNode
-
 from knowledge_service.stores.rag import QueryIntent, RAGRetriever, RetrievalContext
 
 
@@ -23,10 +21,21 @@ def _make_embedding_store(content_rows=None, entity_rows=None, predicate_rows=No
     return mock
 
 
-def _make_knowledge_store(triples=None, contradictions=None):
+def _make_knowledge_store(triples=None, contradictions=None, predicate_triples=None):
     mock = MagicMock()
-    mock.get_triples_by_subject.return_value = triples or []
-    mock.get_triples_by_object.return_value = []
+    _subject_triples = triples or []
+    _predicate_triples = predicate_triples or []
+
+    def _get_triples(subject=None, predicate=None, object_=None, graphs=None):
+        if subject is not None:
+            return list(_subject_triples)
+        if predicate is not None:
+            return list(_predicate_triples)
+        if object_ is not None:
+            return []
+        return []
+
+    mock.get_triples.side_effect = _get_triples
     mock.find_contradictions.return_value = contradictions or []
     mock.find_connecting_triples.return_value = []
     return mock
@@ -109,6 +118,7 @@ class TestRetrieveEntityDiscovery:
 
     async def test_knowledge_triples_from_entity_lookup(self):
         triple = {
+            "subject": "http://knowledge.local/data/dopamine",
             "predicate": "http://knowledge.local/schema/increases",
             "object": "http://knowledge.local/data/dopamine",
             "confidence": 0.88,
@@ -129,6 +139,7 @@ class TestRetrieveEntityDiscovery:
 class TestRetrieveConfidenceFilter:
     async def test_filters_below_min_confidence(self):
         low = {
+            "subject": "http://knowledge.local/data/dopamine",
             "predicate": "p",
             "object": "o",
             "confidence": 0.2,
@@ -137,6 +148,7 @@ class TestRetrieveConfidenceFilter:
             "valid_until": None,
         }
         high = {
+            "subject": "http://knowledge.local/data/dopamine",
             "predicate": "p2",
             "object": "o2",
             "confidence": 0.9,
@@ -157,6 +169,7 @@ class TestRetrieveConfidenceFilter:
 class TestRetrieveContradictions:
     async def test_contradictions_detected(self):
         triple = {
+            "subject": "http://knowledge.local/data/dopamine",
             "predicate": "http://ks/increases",
             "object": "http://ks/dopamine",
             "confidence": 0.8,
@@ -191,11 +204,12 @@ class TestRetrieveEmpty:
 
 class TestRetrieveTripleSerialization:
     async def test_knowledge_triples_predicate_is_string(self):
-        """Predicates in retrieval context must be plain strings, not NamedNode objects."""
+        """Predicates in retrieval context must be plain strings (get_triples returns strings)."""
         entity_row = {"uri": "http://ks/dopamine", "label": "Dopamine", "similarity": 0.9}
         triple = {
-            "predicate": NamedNode("http://ks/increases"),
-            "object": Literal("serotonin"),
+            "subject": "http://ks/dopamine",
+            "predicate": "http://ks/increases",
+            "object": "serotonin",
             "confidence": 0.8,
             "knowledge_type": "Claim",
             "valid_from": None,
@@ -381,9 +395,9 @@ _PREDICATE_ROW = {
 
 _PREDICATE_TRIPLE = {
     "graph": "http://knowledge.local/graph/extracted",
-    "subject": NamedNode("http://knowledge.local/data/connection_error"),
-    "predicate": NamedNode("http://knowledge.local/schema/sentry_issue"),
-    "object": Literal("error"),
+    "subject": "http://knowledge.local/data/connection_error",
+    "predicate": "http://knowledge.local/schema/sentry_issue",
+    "object": "error",
     "confidence": 0.9,
     "knowledge_type": "Claim",
     "valid_from": None,
@@ -395,8 +409,7 @@ class TestPredicateLookup:
     async def test_returns_triples_for_matching_predicate(self):
         ec = _make_embedding_client()
         es = _make_embedding_store(predicate_rows=[_PREDICATE_ROW])
-        ks = _make_knowledge_store()
-        ks.get_triples_by_predicate.return_value = [_PREDICATE_TRIPLE]
+        ks = _make_knowledge_store(predicate_triples=[_PREDICATE_TRIPLE])
         retriever = RAGRetriever(ec, es, ks)
         embedding = [0.1] * 768
         triples = await retriever._lookup_triples_by_predicate(embedding)
@@ -420,7 +433,7 @@ class TestPredicateLookup:
         embedding = [0.1] * 768
         triples = await retriever._lookup_triples_by_predicate(embedding)
         assert triples == []
-        ks.get_triples_by_predicate.assert_not_called()
+        ks.get_triples.assert_not_called()
 
     async def test_empty_predicate_embeddings(self):
         ec = _make_embedding_client()
@@ -434,14 +447,13 @@ class TestPredicateLookup:
     async def test_limits_to_top_n_by_confidence(self):
         ec = _make_embedding_client()
         es = _make_embedding_store(predicate_rows=[_PREDICATE_ROW])
-        ks = _make_knowledge_store()
         # Return 15 triples, should be limited to 10
         many_triples = []
         for i in range(15):
             t = dict(_PREDICATE_TRIPLE)
             t["confidence"] = round(0.5 + i * 0.03, 2)
             many_triples.append(t)
-        ks.get_triples_by_predicate.return_value = many_triples
+        ks = _make_knowledge_store(predicate_triples=many_triples)
         retriever = RAGRetriever(ec, es, ks)
         embedding = [0.1] * 768
         triples = await retriever._lookup_triples_by_predicate(embedding)
@@ -455,8 +467,7 @@ class TestPredicateIntegration:
     async def test_semantic_includes_predicate_triples(self):
         ec = _make_embedding_client()
         es = _make_embedding_store(predicate_rows=[_PREDICATE_ROW])
-        ks = _make_knowledge_store()
-        ks.get_triples_by_predicate.return_value = [_PREDICATE_TRIPLE]
+        ks = _make_knowledge_store(predicate_triples=[_PREDICATE_TRIPLE])
         retriever = RAGRetriever(ec, es, ks)
         ctx = await retriever.retrieve("any sentry issues?", max_sources=5, min_confidence=0.0)
         assert len(ctx.knowledge_triples) == 1
@@ -469,8 +480,7 @@ class TestPredicateIntegration:
         es.search_entities.return_value = [
             {"uri": "http://knowledge.local/data/sentry", "similarity": 0.5}
         ]
-        ks = _make_knowledge_store()
-        ks.get_triples_by_predicate.return_value = [_PREDICATE_TRIPLE]
+        ks = _make_knowledge_store(predicate_triples=[_PREDICATE_TRIPLE])
         retriever = RAGRetriever(ec, es, ks)
         intent = QueryIntent(intent="entity", entities=["sentry"])
         ctx = await retriever.retrieve("sentry issues?", intent=intent)
@@ -487,8 +497,9 @@ class TestPredicateIntegration:
             "similarity": 0.9,
         }
         subject_triple = {
-            "predicate": NamedNode("http://knowledge.local/schema/sentry_issue"),
-            "object": Literal("error"),
+            "subject": "http://knowledge.local/data/connection_error",
+            "predicate": "http://knowledge.local/schema/sentry_issue",
+            "object": "error",
             "confidence": 0.9,
             "knowledge_type": "Claim",
             "valid_from": None,
@@ -496,8 +507,7 @@ class TestPredicateIntegration:
             "graph": "http://knowledge.local/graph/extracted",
         }
         es = _make_embedding_store(entity_rows=[entity_row], predicate_rows=[_PREDICATE_ROW])
-        ks = _make_knowledge_store(triples=[subject_triple])
-        ks.get_triples_by_predicate.return_value = [_PREDICATE_TRIPLE]
+        ks = _make_knowledge_store(triples=[subject_triple], predicate_triples=[_PREDICATE_TRIPLE])
         retriever = RAGRetriever(ec, es, ks)
         ctx = await retriever.retrieve("sentry", max_sources=5, min_confidence=0.0)
         # Should deduplicate — same (subject, predicate, object) from both lookups
@@ -513,8 +523,9 @@ class TestPredicateIntegration:
             "similarity": 0.9,
         }
         subject_triple = {
-            "predicate": NamedNode("http://knowledge.local/schema/runs_on"),
-            "object": Literal("kubernetes"),
+            "subject": "http://knowledge.local/data/my_service",
+            "predicate": "http://knowledge.local/schema/runs_on",
+            "object": "kubernetes",
             "confidence": 0.8,
             "knowledge_type": "Fact",
             "valid_from": None,
@@ -523,8 +534,7 @@ class TestPredicateIntegration:
         }
         es = _make_embedding_store(predicate_rows=[_PREDICATE_ROW])
         es.search_entities.return_value = [entity_row]
-        ks = _make_knowledge_store(triples=[subject_triple])
-        ks.get_triples_by_predicate.return_value = [_PREDICATE_TRIPLE]
+        ks = _make_knowledge_store(triples=[subject_triple], predicate_triples=[_PREDICATE_TRIPLE])
         retriever = RAGRetriever(ec, es, ks)
         intent = QueryIntent(intent="entity", entities=["my_service"])
         ctx = await retriever.retrieve("my_service sentry issues?", intent=intent)
