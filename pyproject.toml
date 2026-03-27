@@ -17,7 +17,6 @@ dependencies = [
     "fastapi>=0.115.0",
     "uvicorn[standard]>=0.34.0",
     "pyoxigraph>=0.4.0",
-    "problog>=2.2.0",
     "asyncpg>=0.30.0",
     "pgvector>=0.3.0",
     "httpx>=0.28.0",

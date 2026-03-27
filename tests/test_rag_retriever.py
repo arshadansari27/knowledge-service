@@ -291,7 +291,8 @@ class TestIntentDispatch:
         intent = QueryIntent(intent="graph", entities=["dopamine"])
         context = await retriever.retrieve("what affects dopamine?", intent=intent)
         assert context.traversal_depth is not None
-        assert context.inferred_triples is not None
+        # inferred_triples is None — ProbLog inference was removed
+        assert context.inferred_triples is None
 
 
 class TestGlobalIntent:

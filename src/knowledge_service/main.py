@@ -236,7 +236,6 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     app.state.knowledge_store = triple_store
     app.state.embedding_store = stores.content
     app.state.pg_pool = pg_pool
-    app.state.reasoning_engine = None  # Removed, but keep attr to avoid AttributeError
     app.state.entity_resolver = None  # Removed — entity resolution is in EntityStore now
 
     yield

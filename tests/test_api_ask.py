@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import math
-from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -257,12 +256,6 @@ class TestAskConfidence:
         app = create_app(use_lifespan=False)
         app.state.rag_retriever = _make_rag_retriever(context)
         app.state.rag_client = _make_rag_client()
-
-        from knowledge_service.reasoning.engine import ReasoningEngine
-
-        app.state.reasoning_engine = ReasoningEngine(
-            Path(__file__).parent.parent / "src/knowledge_service/reasoning/rules"
-        )
 
         transport = ASGITransport(app=app)
         async with AsyncClient(

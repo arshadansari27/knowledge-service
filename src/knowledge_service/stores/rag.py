@@ -8,8 +8,8 @@ from dataclasses import dataclass, field
 
 from knowledge_service._utils import _rdf_value_to_str
 from knowledge_service.clients.classifier import QueryIntent
-from knowledge_service.ontology.uri import to_entity_uri
 from knowledge_service.ontology.namespaces import KS_GRAPH_ASSERTED, KS_GRAPH_FEDERATED
+from knowledge_service.ontology.uri import to_entity_uri
 from knowledge_service.stores.graph_traversal import GraphTraverser
 
 logger = logging.getLogger(__name__)
@@ -53,8 +53,6 @@ class RAGRetriever:
         max_sources: int = 5,
         min_confidence: float = 0.0,
         intent: QueryIntent | None = None,
-        use_reasoning: bool = False,
-        reasoning_engine=None,
     ) -> RetrievalContext:
         embedding = await self._embedding_client.embed(question)
 
@@ -71,8 +69,6 @@ class RAGRetriever:
                 intent.entities,
                 max_sources,
                 min_confidence,
-                use_reasoning=use_reasoning,
-                reasoning_engine=reasoning_engine,
             )
         elif intent.intent == "global":
             return await self._retrieve_global(question, embedding, max_sources, min_confidence)
@@ -135,8 +131,6 @@ class RAGRetriever:
         entity_names,
         max_sources,
         min_confidence,
-        use_reasoning=False,
-        reasoning_engine=None,
     ) -> RetrievalContext:
         resolved_uris = await self._resolve_entity_names(entity_names)
         if not resolved_uris:
@@ -164,22 +158,12 @@ class RAGRetriever:
         # Traversal metadata
         traversal_depth = max((n["hop_distance"] for n in traversal.nodes), default=0)
 
-        # Optional ProbLog inference
-        inferred_count = 0
-        if use_reasoning and reasoning_engine and filtered:
-            inferred = await self._run_problog_inference(
-                filtered[:50], resolved_uris, reasoning_engine
-            )
-            filtered.extend(inferred)
-            inferred_count = len(inferred)
-
         return RetrievalContext(
             content_results=content_results,
             knowledge_triples=filtered,
             contradictions=contradictions,
             entities_found=entities_found,
             traversal_depth=traversal_depth,
-            inferred_triples=inferred_count,
         )
 
     # --- Strategy: global ---
@@ -250,58 +234,6 @@ class RAGRetriever:
             contradictions=[],
             entities_found=[],
         )
-
-    # --- ProbLog inference ---
-
-    @staticmethod
-    def _uri_to_local(uri: str) -> str:
-        """Strip URI to local name for ProbLog atom compatibility.
-
-        ProbLog rules use short predicate names (causes, increases) but graph
-        data uses full URIs (http://knowledge.local/schema/causes). This
-        extracts the local name so ProbLog rules can match.
-        """
-        if "/" in uri:
-            return uri.rsplit("/", 1)[-1]
-        return uri
-
-    async def _run_problog_inference(self, edges, seed_uris, reasoning_engine):
-        """Run ProbLog causal/indirect inference on discovered subgraph."""
-        from knowledge_service.reasoning.engine import _to_atom
-
-        claims = []
-        for e in edges:
-            claims.append(
-                (
-                    self._uri_to_local(e["subject"]),
-                    self._uri_to_local(e["predicate"]),
-                    self._uri_to_local(e["object"]),
-                    e.get("confidence") or 0.5,
-                    {"knowledge_type": e.get("knowledge_type", "Claim")},
-                )
-            )
-
-        inferred = []
-        for seed in seed_uris:
-            seed_atom = _to_atom(self._uri_to_local(seed))
-            for query_template in [
-                f"causal_propagation({seed_atom}, C)",
-                f"indirect_link({seed_atom}, P, C)",
-            ]:
-                results = await asyncio.to_thread(reasoning_engine.infer, query_template, claims)
-                for r in results:
-                    if r.probability > 0.05:
-                        inferred.append(
-                            {
-                                "subject": seed,
-                                "predicate": r.query,
-                                "object": str(r.probability),
-                                "confidence": r.probability,
-                                "knowledge_type": "Conclusion",
-                                "trust_tier": "inferred",
-                            }
-                        )
-        return inferred
 
     # --- Shared helpers ---
 

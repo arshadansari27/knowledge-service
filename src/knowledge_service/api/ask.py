@@ -16,7 +16,7 @@ class AskRequest(BaseModel):
     question: str = Field(..., min_length=1, max_length=_MAX_QUESTION_LEN)
     max_sources: int = Field(5, ge=1, le=100)
     min_confidence: float = Field(0.0, ge=0.0, le=1.0)
-    use_reasoning: bool = Field(False)
+    use_reasoning: bool = Field(False)  # Reserved for future use
 
 
 class SourceInfo(BaseModel):
@@ -57,7 +57,6 @@ async def post_ask(body: AskRequest, request: Request) -> AskResponse:
     """Answer a natural language question using the knowledge base."""
     retriever = request.app.state.rag_retriever
     rag_client = request.app.state.rag_client
-    reasoning_engine = getattr(request.app.state, "reasoning_engine", None)
 
     # Classify query intent
     classifier = getattr(request.app.state, "query_classifier", None)
@@ -70,8 +69,6 @@ async def post_ask(body: AskRequest, request: Request) -> AskResponse:
         max_sources=body.max_sources,
         min_confidence=body.min_confidence,
         intent=intent,
-        use_reasoning=body.use_reasoning,
-        reasoning_engine=reasoning_engine,
     )
 
     try:
