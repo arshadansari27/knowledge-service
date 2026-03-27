@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import date, datetime
 from pydantic import BaseModel, Field
 
-from knowledge_service.ontology.uri import KS, KS_DATA, RDF_TYPE, RDFS_LABEL, to_entity_uri, to_predicate_uri
+from knowledge_service.ontology.uri import KS, RDF_TYPE, RDFS_LABEL, to_entity_uri, to_predicate_uri
 
 
 # --- Knowledge types ---
