@@ -2,12 +2,8 @@ import json
 
 import pytest
 
-from knowledge_service.clients.llm import (
-    ExtractionClient,
-    to_entity_uri,
-    to_predicate_uri,
-    resolve_predicate_synonym,
-)
+from knowledge_service.clients.llm import ExtractionClient
+from knowledge_service.models import EntityInput, TripleInput
 
 _BASE = "http://llm-test"
 _KEY = "sk-test"
@@ -61,8 +57,8 @@ class TestExtract:
         client = ExtractionClient(base_url=_BASE, model="qwen3:14b", api_key=_KEY)
         result = await client.extract("Cold exposure increases dopamine.")
         assert len(result) == 2
-        assert result[0].knowledge_type.value == "Entity"
-        assert result[1].knowledge_type.value == "Claim"
+        assert isinstance(result[0], EntityInput)
+        assert isinstance(result[1], TripleInput)
         await client.close()
 
     async def test_returns_none_on_http_error(self, httpx_mock):
@@ -105,7 +101,7 @@ class TestExtract:
         client = ExtractionClient(base_url=_BASE, model="qwen3:14b", api_key=_KEY)
         result = await client.extract("text")
         assert len(result) == 1
-        assert result[0].knowledge_type.value == "Entity"
+        assert isinstance(result[0], EntityInput)
         await client.close()
 
     async def test_returns_empty_list_on_empty_items(self, httpx_mock):
@@ -148,7 +144,7 @@ class TestExtract:
         assert len(result) == 2
         # Entity item should have raw label
         entity = result[0]
-        assert entity.knowledge_type.value == "Entity"
+        assert isinstance(entity, EntityInput)
         assert entity.label == "cold_exposure"
         # Claim subject/predicate/object should be raw labels, NOT http:// URIs
         claim = result[1]
@@ -164,85 +160,48 @@ class TestExtract:
         await client.close()  # should not raise
 
 
-class TestUriNormalisation:
-    def testto_entity_uri_slugifies(self):
-        assert to_entity_uri("cold exposure") == "http://knowledge.local/data/cold_exposure"
+class TestFallbackPrompts:
+    """Tests for the fallback prompt functions used when no DomainRegistry is provided."""
 
-    def testto_entity_uri_preserves_existing_uri(self):
-        uri = "http://schema.org/Person"
-        assert to_entity_uri(uri) == uri
+    def test_relation_prompt_includes_relation_types(self):
+        from knowledge_service.clients.llm import _build_relation_extraction_prompt_fallback
 
-    def testto_predicate_uri_slugifies(self):
-        assert to_predicate_uri("increases") == "http://knowledge.local/schema/increases"
+        prompt = _build_relation_extraction_prompt_fallback("text", None, None, ["a", "b"])
+        for t in ("Claim", "Fact", "Relationship", "TemporalState", "Conclusion"):
+            assert t in prompt
 
-    def testto_predicate_uri_preserves_existing_uri(self):
-        uri = "http://knowledge.local/schema/depends_on"
-        assert to_predicate_uri(uri) == uri
+    def test_relation_prompt_includes_predicates(self):
+        from knowledge_service.clients.llm import _build_relation_extraction_prompt_fallback
 
+        prompt = _build_relation_extraction_prompt_fallback("text", None, None, ["a"])
+        for pred in ("causes", "increases", "decreases"):
+            assert pred in prompt
 
-class TestPredicateSynonymResolution:
-    def test_known_synonym_resolves(self):
-        assert resolve_predicate_synonym("boosts") == "increases"
+    def test_relation_prompt_includes_object_type(self):
+        from knowledge_service.clients.llm import _build_relation_extraction_prompt_fallback
 
-    def test_canonical_predicate_unchanged(self):
-        assert resolve_predicate_synonym("increases") == "increases"
+        prompt = _build_relation_extraction_prompt_fallback("text", None, None, ["a"])
+        assert "object_type" in prompt
 
-    def test_unknown_predicate_unchanged(self):
-        assert resolve_predicate_synonym("correlates_with") == "correlates_with"
+    def test_entity_prompt_includes_naming_rules(self):
+        from knowledge_service.clients.llm import _build_entity_extraction_prompt_fallback
 
-    def test_synonym_case_insensitive(self):
-        assert resolve_predicate_synonym("Boosts") == "increases"
+        prompt = _build_entity_extraction_prompt_fallback("text", None, None)
+        assert "snake_case" in prompt
+        assert "singular" in prompt.lower()
 
-    def test_synonym_with_spaces(self):
-        assert resolve_predicate_synonym("leads to") == "causes"
+    def test_entity_prompt_includes_example(self):
+        from knowledge_service.clients.llm import _build_entity_extraction_prompt_fallback
 
-    def test_synonym_with_hyphens(self):
-        assert resolve_predicate_synonym("results-in") == "causes"
-
-
-def test_relation_prompt_includes_relation_types():
-    from knowledge_service.clients.llm import _build_relation_extraction_prompt
-
-    prompt = _build_relation_extraction_prompt("text", None, None, ["a", "b"])
-    for t in ("Claim", "Fact", "Relationship", "TemporalState", "Conclusion"):
-        assert t in prompt
-
-
-def test_relation_prompt_includes_predicates():
-    from knowledge_service.clients.llm import _build_relation_extraction_prompt
-
-    prompt = _build_relation_extraction_prompt("text", None, None, ["a"])
-    for pred in ("causes", "increases", "decreases"):
-        assert pred in prompt
-
-
-def test_relation_prompt_includes_object_type():
-    from knowledge_service.clients.llm import _build_relation_extraction_prompt
-
-    prompt = _build_relation_extraction_prompt("text", None, None, ["a"])
-    assert "object_type" in prompt
-
-
-def test_entity_prompt_includes_naming_rules():
-    from knowledge_service.clients.llm import _build_entity_extraction_prompt
-
-    prompt = _build_entity_extraction_prompt("text", None, None)
-    assert "snake_case" in prompt
-    assert "singular" in prompt.lower()
-
-
-def test_entity_prompt_includes_example():
-    from knowledge_service.clients.llm import _build_entity_extraction_prompt
-
-    prompt = _build_entity_extraction_prompt("text", None, None)
-    assert "Example:" in prompt
+        prompt = _build_entity_extraction_prompt_fallback("text", None, None)
+        assert "Example:" in prompt
 
 
 class TestEntityExtractionPrompt:
     def test_entity_extraction_prompt_focuses_on_entities(self):
-        from knowledge_service.clients.llm import _build_entity_extraction_prompt
+        from knowledge_service.clients.llm import _build_entity_extraction_prompt_fallback
 
-        prompt = _build_entity_extraction_prompt("Some text", title=None, source_type=None)
+        prompt = _build_entity_extraction_prompt_fallback("Some text", title=None, source_type=None)
         assert "Entity" in prompt
         assert "Event" in prompt
         assert "Claim:" not in prompt
@@ -250,9 +209,9 @@ class TestEntityExtractionPrompt:
         assert "snake_case" in prompt
 
     def test_entity_extraction_prompt_includes_text(self):
-        from knowledge_service.clients.llm import _build_entity_extraction_prompt
+        from knowledge_service.clients.llm import _build_entity_extraction_prompt_fallback
 
-        prompt = _build_entity_extraction_prompt(
+        prompt = _build_entity_extraction_prompt_fallback(
             "Cold exposure boosts dopamine.", title="Test", source_type="article"
         )
         assert "Cold exposure boosts dopamine" in prompt
@@ -261,9 +220,9 @@ class TestEntityExtractionPrompt:
 
 class TestRelationExtractionPrompt:
     def test_relation_extraction_prompt_includes_entity_list(self):
-        from knowledge_service.clients.llm import _build_relation_extraction_prompt
+        from knowledge_service.clients.llm import _build_relation_extraction_prompt_fallback
 
-        prompt = _build_relation_extraction_prompt(
+        prompt = _build_relation_extraction_prompt_fallback(
             "text", None, None, entities=["cold_exposure", "dopamine"]
         )
         assert "cold_exposure" in prompt
@@ -272,9 +231,9 @@ class TestRelationExtractionPrompt:
         assert "causes" in prompt
 
     def test_relation_extraction_prompt_constrains_to_entities(self):
-        from knowledge_service.clients.llm import _build_relation_extraction_prompt
+        from knowledge_service.clients.llm import _build_relation_extraction_prompt_fallback
 
-        prompt = _build_relation_extraction_prompt(
+        prompt = _build_relation_extraction_prompt_fallback(
             "text", None, None, entities=["entity_a", "entity_b"]
         )
         assert "entity_a" in prompt
@@ -338,7 +297,7 @@ class TestTwoPhaseExtract:
         client = ExtractionClient(base_url=_BASE, model="qwen3:14b", api_key=_KEY)
         result = await client.extract("text")
         assert len(result) == 1
-        assert result[0].knowledge_type.value == "Entity"
+        assert isinstance(result[0], EntityInput)
         await client.close()
 
     async def test_returns_none_when_phase1_fails(self, httpx_mock):

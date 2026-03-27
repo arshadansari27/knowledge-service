@@ -1,6 +1,9 @@
-"""EmbeddingStore: asyncpg-backed store for pgvector semantic similarity search.
+"""ContentStore: asyncpg-backed store for content metadata and chunks.
 
-Manages three tables:
+Split from EmbeddingStore — manages only the content_metadata and content (chunks) tables.
+Entity and predicate embeddings are handled by EntityStore.
+
+Tables:
 
     content_metadata:
         id              UUID PRIMARY KEY DEFAULT gen_random_uuid()
@@ -23,16 +26,6 @@ Manages three tables:
         char_end        INTEGER
         created_at      TIMESTAMPTZ DEFAULT now()
         UNIQUE(content_id, chunk_index)
-
-    entity_embeddings:
-        uri             TEXT PRIMARY KEY
-        label           TEXT NOT NULL
-        rdf_type        TEXT DEFAULT ''
-        embedding       vector(768)
-        created_at      TIMESTAMPTZ NOT NULL DEFAULT now()
-
-content and entity_embeddings have HNSW indexes on (embedding::halfvec(768))
-using halfvec_cosine_ops. Queries must cast to halfvec to exploit those indexes.
 """
 
 from __future__ import annotations
@@ -69,8 +62,8 @@ def reciprocal_rank_fusion(
     return fused
 
 
-class EmbeddingStore:
-    """Wraps an asyncpg connection pool for pgvector embedding operations."""
+class ContentStore:
+    """Wraps an asyncpg connection pool for content metadata and chunk operations."""
 
     def __init__(self, pool: Any) -> None:
         self._pool = pool
@@ -88,22 +81,22 @@ class EmbeddingStore:
     # Content metadata table operations
     # ------------------------------------------------------------------
 
-    async def insert_content_metadata(
+    async def upsert_metadata(
         self,
         url: str,
-        title: str,
-        summary: str,
-        raw_text: str,
+        title: str | None,
+        summary: str | None,
+        raw_text: str | None,
         source_type: str,
-        tags: list[str],
-        metadata: dict,
+        tags: list[str] | None,
+        metadata: dict | None,
     ) -> str:
         """Upsert a content_metadata row and return its UUID.
 
         On conflict (url) the existing row is updated with fresh values,
         leaving id and ingested_at unchanged.
         """
-        metadata_json = json.dumps(metadata)
+        metadata_json = json.dumps(metadata or {})
 
         sql = """
             INSERT INTO content_metadata (
@@ -121,17 +114,17 @@ class EmbeddingStore:
         """
 
         async with self._pool.acquire() as conn:
-            row = await conn.fetchrow(
+            content_id = await conn.fetchval(
                 sql,
                 url,
                 title,
                 summary,
                 raw_text,
                 source_type,
-                tags,
+                tags or [],
                 metadata_json,
             )
-        return str(row["id"])
+        return str(content_id)
 
     # ------------------------------------------------------------------
     # Content (chunks) table operations
@@ -200,6 +193,10 @@ class EmbeddingStore:
             rows = await conn.fetch(sql, chunk_ids)
         return {str(r["id"]): r["chunk_text"] for r in rows}
 
+    # ------------------------------------------------------------------
+    # Search operations
+    # ------------------------------------------------------------------
+
     async def search(
         self,
         query_embedding: list[float],
@@ -216,10 +213,10 @@ class EmbeddingStore:
         overfetched (limit * 3) to give RRF a richer candidate pool.
 
         Optional filters:
-          source_type — restrict to a single source type
-          tags        — restrict to rows that contain ALL given tags
-          min_date    — restrict to rows ingested on or after this date
-          query_text  — enable hybrid mode (vector + BM25 via RRF)
+          source_type -- restrict to a single source type
+          tags        -- restrict to rows that contain ALL given tags
+          min_date    -- restrict to rows ingested on or after this date
+          query_text  -- enable hybrid mode (vector + BM25 via RRF)
         """
         overfetch = limit * 3 if query_text else limit
 
@@ -263,14 +260,14 @@ class EmbeddingStore:
         vector_results = [dict(row) for row in rows]
 
         if query_text:
-            bm25_results = await self.search_bm25(
+            bm25_results = await self._search_bm25(
                 query_text, overfetch, source_type, tags, min_date
             )
             return reciprocal_rank_fusion(vector_results, bm25_results, key="id", k=60, limit=limit)
 
         return vector_results
 
-    async def search_bm25(
+    async def _search_bm25(
         self,
         query_text: str,
         limit: int,
@@ -321,111 +318,4 @@ class EmbeddingStore:
 
         async with self._pool.acquire() as conn:
             rows = await conn.fetch(sql, *params)
-        return [dict(row) for row in rows]
-
-    # ------------------------------------------------------------------
-    # Entity embeddings table operations
-    # ------------------------------------------------------------------
-
-    async def insert_entity_embedding(
-        self,
-        uri: str,
-        label: str,
-        rdf_type: str,
-        embedding: list[float],
-    ) -> None:
-        """Upsert an entity embedding row.
-
-        On conflict (uri) the label, rdf_type, and embedding are updated.
-        """
-        embedding_str = self._vector_to_str(embedding)
-
-        sql = """
-            INSERT INTO entity_embeddings (uri, label, rdf_type, embedding)
-            VALUES ($1, $2, $3, $4::vector(768))
-            ON CONFLICT (uri) DO UPDATE SET
-                label     = EXCLUDED.label,
-                rdf_type  = EXCLUDED.rdf_type,
-                embedding = EXCLUDED.embedding
-        """
-
-        async with self._pool.acquire() as conn:
-            await conn.execute(sql, uri, label, rdf_type, embedding_str)
-
-    async def search_entities(
-        self,
-        query_embedding: list[float],
-        limit: int,
-    ) -> list[dict]:
-        """Return entity rows ranked by cosine similarity to query_embedding.
-
-        The halfvec cast ensures the HNSW index is used.
-        """
-        embedding_str = self._vector_to_str(query_embedding)
-
-        sql = """
-            SELECT
-                uri, label, rdf_type,
-                1 - (embedding::halfvec(768) <=> $1::halfvec(768)) AS similarity
-            FROM entity_embeddings
-            ORDER BY embedding::halfvec(768) <=> $1::halfvec(768)
-            LIMIT $2
-        """
-
-        async with self._pool.acquire() as conn:
-            rows = await conn.fetch(sql, embedding_str, limit)
-        return [dict(row) for row in rows]
-
-    async def get_entity_by_uri(self, uri: str) -> dict | None:
-        """Look up an entity by its URI. Returns {label, rdf_type} or None."""
-        sql = "SELECT label, rdf_type FROM entity_embeddings WHERE uri = $1"
-        async with self._pool.acquire() as conn:
-            row = await conn.fetchrow(sql, uri)
-        if row is None:
-            return None
-        return dict(row)
-
-    # ------------------------------------------------------------------
-    # Predicate embeddings table operations
-    # ------------------------------------------------------------------
-
-    async def insert_predicate_embedding(
-        self,
-        uri: str,
-        label: str,
-        embedding: list[float],
-    ) -> None:
-        """Upsert a predicate embedding row."""
-        embedding_str = self._vector_to_str(embedding)
-
-        sql = """
-            INSERT INTO predicate_embeddings (uri, label, embedding)
-            VALUES ($1, $2, $3::vector(768))
-            ON CONFLICT (uri) DO UPDATE SET
-                label     = EXCLUDED.label,
-                embedding = EXCLUDED.embedding
-        """
-
-        async with self._pool.acquire() as conn:
-            await conn.execute(sql, uri, label, embedding_str)
-
-    async def search_predicates(
-        self,
-        query_embedding: list[float],
-        limit: int,
-    ) -> list[dict]:
-        """Return predicate rows ranked by cosine similarity."""
-        embedding_str = self._vector_to_str(query_embedding)
-
-        sql = """
-            SELECT
-                uri, label,
-                1 - (embedding::halfvec(768) <=> $1::halfvec(768)) AS similarity
-            FROM predicate_embeddings
-            ORDER BY embedding::halfvec(768) <=> $1::halfvec(768)
-            LIMIT $2
-        """
-
-        async with self._pool.acquire() as conn:
-            rows = await conn.fetch(sql, embedding_str, limit)
         return [dict(row) for row in rows]

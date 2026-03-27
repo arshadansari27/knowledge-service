@@ -20,7 +20,6 @@ from knowledge_service.ontology.namespaces import (
     KS_VALID_FROM,
     KS_VALID_UNTIL,
 )
-from knowledge_service.stores.provenance import ProvenanceStore
 
 router = APIRouter()
 
@@ -69,10 +68,9 @@ async def get_knowledge_query(
             detail="At least one of subject, predicate, or object must be provided.",
         )
 
-    knowledge_store = request.app.state.knowledge_store
-    pg_pool = request.app.state.pg_pool
-
-    provenance_store = ProvenanceStore(pg_pool)
+    stores = request.app.state.stores
+    triple_store = stores.triples
+    provenance_store = stores.provenance
 
     # Build SPARQL filters
     filters = []
@@ -109,7 +107,7 @@ async def get_knowledge_query(
     """
 
     try:
-        rows: list[dict] = await asyncio.to_thread(knowledge_store.query, sparql)
+        rows: list[dict] = await asyncio.to_thread(triple_store.query, sparql)
     except Exception as exc:
         raise HTTPException(status_code=400, detail=f"SPARQL query failed: {exc}") from exc
 
@@ -166,7 +164,8 @@ async def post_knowledge_sparql(
     Accepts either JSON body ``{"query": "..."}`` or raw SPARQL with
     Content-Type ``application/sparql-query``.
     """
-    knowledge_store = request.app.state.knowledge_store
+    stores = request.app.state.stores
+    triple_store = stores.triples
 
     if body is not None:
         sparql = body.query
@@ -179,7 +178,7 @@ async def post_knowledge_sparql(
         raise HTTPException(status_code=422, detail="No SPARQL query provided.")
 
     try:
-        rows: list[dict] = await asyncio.to_thread(knowledge_store.query, sparql)
+        rows: list[dict] = await asyncio.to_thread(triple_store.query, sparql)
     except Exception as exc:
         raise HTTPException(status_code=400, detail=f"SPARQL query failed: {exc}") from exc
 

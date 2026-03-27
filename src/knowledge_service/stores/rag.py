@@ -6,17 +6,47 @@ import asyncio
 import logging
 from dataclasses import dataclass, field
 
-from knowledge_service._utils import _rdf_value_to_str
-from knowledge_service.clients.classifier import QueryIntent
-from knowledge_service.clients.llm import to_entity_uri
+import httpx
+
+from knowledge_service._utils import _extract_json
 from knowledge_service.ontology.namespaces import KS_GRAPH_ASSERTED, KS_GRAPH_FEDERATED
-from knowledge_service.stores.graph_traversal import GraphTraverser
+from knowledge_service.ontology.uri import to_entity_uri
 
 logger = logging.getLogger(__name__)
 
 _ENTITY_MATCH_THRESHOLD = 0.80
 _PREDICATE_MATCH_THRESHOLD = 0.80
 _PREDICATE_TRIPLE_LIMIT = 10
+
+_VALID_INTENTS = {"semantic", "entity", "graph", "global"}
+
+_CLASSIFICATION_PROMPT = """Classify this question into one category:
+- "semantic": searching for documents about a topic (e.g., "find articles about stress management")
+- "entity": asking about a specific thing (e.g., "what is dopamine?", "tell me about PostgreSQL")
+- "graph": asking about relationships between things (e.g., "how is cortisol connected to inflammation?", "what causes dopamine release?")
+- "global": asking about themes, summaries, or overviews across the entire knowledge base (e.g., "what are the main topics?", "summarize what I know about health", "what areas have I collected knowledge on?")
+
+Also extract any named entities mentioned in the question.
+
+Return JSON: {{"intent": "semantic|entity|graph|global", "entities": ["entity1", "entity2"]}}
+
+Question: {question}"""
+
+
+@dataclass
+class QueryIntent:
+    """Classified question intent with extracted entity names."""
+
+    intent: str  # "semantic", "entity", "graph", or "global"
+    entities: list[str] = field(default_factory=list)
+
+
+@dataclass
+class _TraversalResult:
+    """Result of a multi-hop graph expansion."""
+
+    edges: list[dict] = field(default_factory=list)
+    nodes: list[dict] = field(default_factory=list)
 
 
 @dataclass
@@ -29,15 +59,106 @@ class RetrievalContext:
     inferred_triples: int | None = None
 
 
+def _expand_graph(
+    knowledge_store,
+    entity_uris: str | list[str],
+    max_hops: int = 2,
+    min_confidence: float = 0.0,
+) -> _TraversalResult:
+    """BFS expansion through the knowledge graph for multi-hop retrieval."""
+    if isinstance(entity_uris, str):
+        entity_uris = [entity_uris]
+
+    visited: set[str] = set()
+    edges: list[dict] = []
+    nodes: list[dict] = []
+    frontier = [(uri, 0) for uri in entity_uris]
+
+    while frontier:
+        uri, hop = frontier.pop(0)
+        if uri in visited or hop > max_hops:
+            continue
+        visited.add(uri)
+        nodes.append({"uri": uri, "hop_distance": hop})
+
+        triples = knowledge_store.get_triples(subject=uri)
+        for t in triples:
+            conf = t.get("confidence", 0)
+            if conf is not None and conf >= min_confidence:
+                edges.append(t)
+                obj = t.get("object", "")
+                if isinstance(obj, str) and obj.startswith(("http://", "https://", "urn:")):
+                    if obj not in visited and hop + 1 <= max_hops:
+                        frontier.append((obj, hop + 1))
+
+    return _TraversalResult(edges=edges, nodes=nodes)
+
+
 class RAGRetriever:
     def __init__(
-        self, embedding_client, embedding_store, knowledge_store, community_store=None
+        self,
+        embedding_client,
+        embedding_store,
+        knowledge_store,
+        community_store=None,
+        entity_store=None,
+        classify_client=None,
     ) -> None:
         self._embedding_client = embedding_client
-        self._embedding_store = embedding_store
-        self._knowledge_store = knowledge_store
+        self._embedding_store = embedding_store  # ContentStore (search, get_chunks_by_ids)
+        self._knowledge_store = knowledge_store  # TripleStore
         self._community_store = community_store
-        self._graph_traverser = GraphTraverser(knowledge_store)
+        # entity_store has search_entities/search_predicates; fall back to embedding_store
+        # for backward compat (old EmbeddingStore had all methods)
+        self._entity_store = entity_store or embedding_store
+        self._classify_client = classify_client  # BaseLLMClient for query classification
+
+    async def classify(self, question: str) -> QueryIntent:
+        """Classify a question into a retrieval intent via LLM.
+
+        Falls back to ``QueryIntent(intent="semantic")`` on any failure.
+        """
+        if self._classify_client is None:
+            return QueryIntent(intent="semantic")
+
+        prompt = _CLASSIFICATION_PROMPT.format(question=question)
+        try:
+            response = await self._classify_client.client.post(
+                "/v1/chat/completions",
+                json={
+                    "model": self._classify_client.model,
+                    "messages": [{"role": "user", "content": prompt}],
+                },
+            )
+            response.raise_for_status()
+        except httpx.HTTPError as exc:
+            logger.warning("QueryClassifier: LLM call failed, defaulting to semantic: %s", exc)
+            return QueryIntent(intent="semantic")
+
+        raw = response.json()["choices"][0]["message"]["content"]
+        parsed = _extract_json(raw)
+        if parsed is None:
+            logger.warning("QueryClassifier: bad JSON response, defaulting to semantic")
+            return QueryIntent(intent="semantic")
+
+        intent_str = parsed.get("intent", "semantic")
+        if intent_str not in _VALID_INTENTS:
+            logger.warning(
+                "QueryClassifier: invalid intent '%s', defaulting to semantic", intent_str
+            )
+            intent_str = "semantic"
+
+        entities = parsed.get("entities", [])
+        if not isinstance(entities, list):
+            entities = []
+
+        logger.info(
+            "QueryClassifier: question='%s' → intent=%s, entities=%s",
+            question[:80],
+            intent_str,
+            entities,
+        )
+        return QueryIntent(intent=intent_str, entities=entities)
 
     async def retrieve(
         self,
@@ -45,8 +166,6 @@ class RAGRetriever:
         max_sources: int = 5,
         min_confidence: float = 0.0,
         intent: QueryIntent | None = None,
-        use_reasoning: bool = False,
-        reasoning_engine=None,
     ) -> RetrievalContext:
         embedding = await self._embedding_client.embed(question)
 
@@ -63,8 +182,6 @@ class RAGRetriever:
                 intent.entities,
                 max_sources,
                 min_confidence,
-                use_reasoning=use_reasoning,
-                reasoning_engine=reasoning_engine,
             )
         elif intent.intent == "global":
             return await self._retrieve_global(question, embedding, max_sources, min_confidence)
@@ -79,9 +196,7 @@ class RAGRetriever:
         content_results = await self._embedding_store.search(
             query_embedding=embedding, limit=max_sources, query_text=question
         )
-        entity_rows = await self._embedding_store.search_entities(
-            query_embedding=embedding, limit=3
-        )
+        entity_rows = await self._entity_store.search_entities(query_embedding=embedding, limit=3)
         entities_found = [row["uri"] for row in entity_rows]
         triples = await self._lookup_triples_by_subject(entities_found)
         predicate_triples = await self._lookup_triples_by_predicate(embedding)
@@ -129,8 +244,6 @@ class RAGRetriever:
         entity_names,
         max_sources,
         min_confidence,
-        use_reasoning=False,
-        reasoning_engine=None,
     ) -> RetrievalContext:
         resolved_uris = await self._resolve_entity_names(entity_names)
         if not resolved_uris:
@@ -138,7 +251,8 @@ class RAGRetriever:
 
         # Multi-hop BFS traversal with confidence propagation
         traversal = await asyncio.to_thread(
-            self._graph_traverser.expand,
+            _expand_graph,
+            self._knowledge_store,
             resolved_uris,
             max_hops=4,
             min_confidence=max(min_confidence, 0.1),
@@ -158,22 +272,12 @@ class RAGRetriever:
         # Traversal metadata
         traversal_depth = max((n["hop_distance"] for n in traversal.nodes), default=0)
 
-        # Optional ProbLog inference
-        inferred_count = 0
-        if use_reasoning and reasoning_engine and filtered:
-            inferred = await self._run_problog_inference(
-                filtered[:50], resolved_uris, reasoning_engine
-            )
-            filtered.extend(inferred)
-            inferred_count = len(inferred)
-
         return RetrievalContext(
             content_results=content_results,
             knowledge_triples=filtered,
             contradictions=contradictions,
             entities_found=entities_found,
             traversal_depth=traversal_depth,
-            inferred_triples=inferred_count,
         )
 
     # --- Strategy: global ---
@@ -245,58 +349,6 @@ class RAGRetriever:
             entities_found=[],
         )
 
-    # --- ProbLog inference ---
-
-    @staticmethod
-    def _uri_to_local(uri: str) -> str:
-        """Strip URI to local name for ProbLog atom compatibility.
-
-        ProbLog rules use short predicate names (causes, increases) but graph
-        data uses full URIs (http://knowledge.local/schema/causes). This
-        extracts the local name so ProbLog rules can match.
-        """
-        if "/" in uri:
-            return uri.rsplit("/", 1)[-1]
-        return uri
-
-    async def _run_problog_inference(self, edges, seed_uris, reasoning_engine):
-        """Run ProbLog causal/indirect inference on discovered subgraph."""
-        from knowledge_service.reasoning.engine import _to_atom
-
-        claims = []
-        for e in edges:
-            claims.append(
-                (
-                    self._uri_to_local(e["subject"]),
-                    self._uri_to_local(e["predicate"]),
-                    self._uri_to_local(e["object"]),
-                    e.get("confidence") or 0.5,
-                    {"knowledge_type": e.get("knowledge_type", "Claim")},
-                )
-            )
-
-        inferred = []
-        for seed in seed_uris:
-            seed_atom = _to_atom(self._uri_to_local(seed))
-            for query_template in [
-                f"causal_propagation({seed_atom}, C)",
-                f"indirect_link({seed_atom}, P, C)",
-            ]:
-                results = await asyncio.to_thread(reasoning_engine.infer, query_template, claims)
-                for r in results:
-                    if r.probability > 0.05:
-                        inferred.append(
-                            {
-                                "subject": seed,
-                                "predicate": r.query,
-                                "object": str(r.probability),
-                                "confidence": r.probability,
-                                "knowledge_type": "Conclusion",
-                                "trust_tier": "inferred",
-                            }
-                        )
-        return inferred
-
     # --- Shared helpers ---
 
     async def _resolve_entity_names(self, names: list[str]) -> list[str]:
@@ -306,14 +358,14 @@ class RAGRetriever:
         embeddings = await self._embedding_client.embed_batch(names)
         resolved = []
         for name, emb in zip(names, embeddings):
-            rows = await self._embedding_store.search_entities(query_embedding=emb, limit=1)
+            rows = await self._entity_store.search_entities(query_embedding=emb, limit=1)
             if rows and rows[0].get("similarity", 0) >= _ENTITY_MATCH_THRESHOLD:
                 resolved.append(rows[0]["uri"])
             else:
                 # Slug fallback: check if triples exist for this URI
                 slug_uri = to_entity_uri(name)
                 triples = await asyncio.to_thread(
-                    self._knowledge_store.get_triples_by_subject, slug_uri
+                    self._knowledge_store.get_triples, subject=slug_uri
                 )
                 if triples:
                     resolved.append(slug_uri)
@@ -324,11 +376,8 @@ class RAGRetriever:
     async def _lookup_triples_by_subject(self, uris: list[str]) -> list[dict]:
         all_triples = []
         for uri in uris:
-            triples = await asyncio.to_thread(self._knowledge_store.get_triples_by_subject, uri)
+            triples = await asyncio.to_thread(self._knowledge_store.get_triples, subject=uri)
             for t in triples:
-                t["subject"] = uri
-                t["predicate"] = _rdf_value_to_str(t.get("predicate"))
-                t["object"] = _rdf_value_to_str(t.get("object"))
                 graph = t.get("graph", "")
                 if graph == KS_GRAPH_ASSERTED:
                     t["trust_tier"] = "verified"
@@ -342,11 +391,8 @@ class RAGRetriever:
     async def _lookup_triples_by_object(self, uris: list[str]) -> list[dict]:
         all_triples = []
         for uri in uris:
-            triples = await asyncio.to_thread(self._knowledge_store.get_triples_by_object, uri)
+            triples = await asyncio.to_thread(self._knowledge_store.get_triples, object_=uri)
             for t in triples:
-                t["object"] = uri
-                t["subject"] = _rdf_value_to_str(t.get("subject"))
-                t["predicate"] = _rdf_value_to_str(t.get("predicate"))
                 graph = t.get("graph", "")
                 if graph == KS_GRAPH_ASSERTED:
                     t["trust_tier"] = "verified"
@@ -361,9 +407,7 @@ class RAGRetriever:
         self, embedding, limit=_PREDICATE_TRIPLE_LIMIT
     ) -> list[dict]:
         """Find triples by predicate similarity to the query embedding."""
-        pred_rows = await self._embedding_store.search_predicates(
-            query_embedding=embedding, limit=3
-        )
+        pred_rows = await self._entity_store.search_predicates(query_embedding=embedding, limit=3)
         matched_uris = [
             r["uri"] for r in pred_rows if r.get("similarity", 0) >= _PREDICATE_MATCH_THRESHOLD
         ]
@@ -372,11 +416,8 @@ class RAGRetriever:
 
         all_triples = []
         for uri in matched_uris:
-            triples = await asyncio.to_thread(self._knowledge_store.get_triples_by_predicate, uri)
+            triples = await asyncio.to_thread(self._knowledge_store.get_triples, predicate=uri)
             for t in triples:
-                t["subject"] = _rdf_value_to_str(t.get("subject"))
-                t["predicate"] = _rdf_value_to_str(t.get("predicate"))
-                t["object"] = _rdf_value_to_str(t.get("object"))
                 graph = t.get("graph", "")
                 if graph == KS_GRAPH_ASSERTED:
                     t["trust_tier"] = "verified"

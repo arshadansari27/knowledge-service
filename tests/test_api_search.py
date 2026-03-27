@@ -1,11 +1,10 @@
 """Integration tests for GET /api/search endpoint.
 
-All external dependencies (PostgreSQL, Ollama) are mocked — no real services required.
+All external dependencies (PostgreSQL, Ollama) are mocked -- no real services required.
 """
 
 from __future__ import annotations
 
-from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from unittest.mock import AsyncMock, MagicMock
 
@@ -37,32 +36,6 @@ _SAMPLE_ROW = {
 }
 
 
-def _make_pg_pool_mock(rows: list[dict] | None = None):
-    """Build a mock asyncpg pool whose .acquire() works as an async context manager."""
-    if rows is None:
-        rows = [_SAMPLE_ROW]
-
-    mock_conn = AsyncMock()
-    mock_conn.execute.return_value = "SELECT 1"
-    mock_conn.fetchrow.return_value = {"id": "content-uuid-1234"}
-    mock_conn.fetch.return_value = rows
-
-    @asynccontextmanager
-    async def _acquire():
-        yield mock_conn
-
-    mock_pool = MagicMock()
-    mock_pool.acquire = _acquire
-    return mock_pool
-
-
-def _make_knowledge_store_mock():
-    mock_ks = MagicMock()
-    mock_ks.insert_triple.return_value = ("abc123deadbeef", True)
-    mock_ks.find_contradictions.return_value = []
-    return mock_ks
-
-
 def _make_embedding_client_mock():
     """Build a mock EmbeddingClient."""
     mock = AsyncMock()
@@ -71,10 +44,33 @@ def _make_embedding_client_mock():
     return mock
 
 
-def _make_embedding_store_mock(search_rows=None):
+def _make_content_store_mock(search_rows=None):
     mock = AsyncMock()
     mock.search.return_value = search_rows or []
     return mock
+
+
+def _make_app(search_rows=None):
+    """Create test app with mocked stores."""
+    app = create_app(use_lifespan=False)
+
+    content_mock = _make_content_store_mock(search_rows=search_rows)
+
+    stores = MagicMock()
+    stores.triples = MagicMock()
+    stores.content = content_mock
+    stores.entities = AsyncMock()
+    stores.provenance = AsyncMock()
+    stores.theses = AsyncMock()
+    stores.pg_pool = MagicMock()
+    app.state.stores = stores
+
+    app.state.embedding_client = _make_embedding_client_mock()
+
+    # Backward compat
+    app.state.knowledge_store = stores.triples
+    app.state.pg_pool = stores.pg_pool
+    return app
 
 
 # ---------------------------------------------------------------------------
@@ -85,12 +81,7 @@ def _make_embedding_store_mock(search_rows=None):
 @pytest.fixture
 async def client():
     """Create test client with all external dependencies mocked."""
-    app = create_app(use_lifespan=False)
-    app.state.knowledge_store = _make_knowledge_store_mock()
-    app.state.pg_pool = _make_pg_pool_mock()
-    app.state.embedding_client = _make_embedding_client_mock()
-    app.state.embedding_store = _make_embedding_store_mock(search_rows=[_SAMPLE_ROW])
-
+    app = _make_app(search_rows=[_SAMPLE_ROW])
     transport = ASGITransport(app=app)
     async with AsyncClient(
         transport=transport,
@@ -103,12 +94,7 @@ async def client():
 @pytest.fixture
 async def empty_client():
     """Create test client that returns empty search results."""
-    app = create_app(use_lifespan=False)
-    app.state.knowledge_store = _make_knowledge_store_mock()
-    app.state.pg_pool = _make_pg_pool_mock(rows=[])
-    app.state.embedding_client = _make_embedding_client_mock()
-    app.state.embedding_store = _make_embedding_store_mock()
-
+    app = _make_app(search_rows=[])
     transport = ASGITransport(app=app)
     async with AsyncClient(
         transport=transport,
@@ -185,12 +171,7 @@ class TestGetSearchSimilarity:
             {**_SAMPLE_ROW, "id": "uuid-1", "url": "https://example.com/1", "similarity": 0.95},
             {**_SAMPLE_ROW, "id": "uuid-2", "url": "https://example.com/2", "similarity": 0.80},
         ]
-        app = create_app(use_lifespan=False)
-        app.state.knowledge_store = _make_knowledge_store_mock()
-        app.state.pg_pool = _make_pg_pool_mock(rows=rows)
-        app.state.embedding_client = _make_embedding_client_mock()
-        app.state.embedding_store = _make_embedding_store_mock(search_rows=rows)
-
+        app = _make_app(search_rows=rows)
         transport = ASGITransport(app=app)
         async with AsyncClient(
             transport=transport,
@@ -233,12 +214,8 @@ class TestGetSearchValidation:
 
     async def test_default_limit_is_ten(self):
         """Verify embedding client is called and limit defaults to 10."""
-        app = create_app(use_lifespan=False)
-        mock_ec = _make_embedding_client_mock()
-        app.state.knowledge_store = _make_knowledge_store_mock()
-        app.state.pg_pool = _make_pg_pool_mock(rows=[])
-        app.state.embedding_client = mock_ec
-        app.state.embedding_store = _make_embedding_store_mock()
+        app = _make_app(search_rows=[])
+        mock_ec = app.state.embedding_client
 
         transport = ASGITransport(app=app)
         async with AsyncClient(
@@ -272,12 +249,8 @@ class TestGetSearchValidation:
 class TestGetSearchEmbedding:
     async def test_embedding_client_called_with_query(self):
         """Verify EmbeddingClient.embed() is called with the query text."""
-        app = create_app(use_lifespan=False)
-        mock_ec = _make_embedding_client_mock()
-        app.state.knowledge_store = _make_knowledge_store_mock()
-        app.state.pg_pool = _make_pg_pool_mock(rows=[])
-        app.state.embedding_client = mock_ec
-        app.state.embedding_store = _make_embedding_store_mock()
+        app = _make_app(search_rows=[])
+        mock_ec = app.state.embedding_client
 
         transport = ASGITransport(app=app)
         async with AsyncClient(
@@ -290,12 +263,8 @@ class TestGetSearchEmbedding:
         mock_ec.embed.assert_called_once_with("semantic query")
 
     async def test_embedding_client_called_once_per_request(self):
-        app = create_app(use_lifespan=False)
-        mock_ec = _make_embedding_client_mock()
-        app.state.knowledge_store = _make_knowledge_store_mock()
-        app.state.pg_pool = _make_pg_pool_mock(rows=[])
-        app.state.embedding_client = mock_ec
-        app.state.embedding_store = _make_embedding_store_mock()
+        app = _make_app(search_rows=[])
+        mock_ec = app.state.embedding_client
 
         transport = ASGITransport(app=app)
         async with AsyncClient(
@@ -317,12 +286,7 @@ class TestGetSearchEmbedding:
 class TestGetSearchNullSummary:
     async def test_null_summary_allowed(self):
         rows = [{**_SAMPLE_ROW, "summary": None}]
-        app = create_app(use_lifespan=False)
-        app.state.knowledge_store = _make_knowledge_store_mock()
-        app.state.pg_pool = _make_pg_pool_mock(rows=rows)
-        app.state.embedding_client = _make_embedding_client_mock()
-        app.state.embedding_store = _make_embedding_store_mock(search_rows=rows)
-
+        app = _make_app(search_rows=rows)
         transport = ASGITransport(app=app)
         async with AsyncClient(
             transport=transport,
@@ -337,12 +301,7 @@ class TestGetSearchNullSummary:
 
     async def test_empty_tags_list(self):
         rows = [{**_SAMPLE_ROW, "tags": []}]
-        app = create_app(use_lifespan=False)
-        app.state.knowledge_store = _make_knowledge_store_mock()
-        app.state.pg_pool = _make_pg_pool_mock(rows=rows)
-        app.state.embedding_client = _make_embedding_client_mock()
-        app.state.embedding_store = _make_embedding_store_mock(search_rows=rows)
-
+        app = _make_app(search_rows=rows)
         transport = ASGITransport(app=app)
         async with AsyncClient(
             transport=transport,

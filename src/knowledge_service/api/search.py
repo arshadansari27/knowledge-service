@@ -5,7 +5,6 @@ from __future__ import annotations
 from fastapi import APIRouter, Query, Request
 
 from knowledge_service.models import SearchResult
-from knowledge_service.stores.embedding import EmbeddingStore
 
 router = APIRouter()
 
@@ -24,15 +23,12 @@ async def get_search(
     for filtering and metadata. Every result is a chunk.
     """
     embedding_client = request.app.state.embedding_client
-    embedding_store = getattr(request.app.state, "embedding_store", None)
-
-    if embedding_store is None:
-        pg_pool = request.app.state.pg_pool
-        embedding_store = EmbeddingStore(pg_pool)
+    stores = request.app.state.stores
+    content_store = stores.content
 
     embedding = await embedding_client.embed(q)
 
-    rows = await embedding_store.search(
+    rows = await content_store.search(
         query_embedding=embedding,
         limit=limit,
         source_type=source_type,

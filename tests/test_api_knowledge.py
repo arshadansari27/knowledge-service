@@ -1,12 +1,11 @@
 """Integration tests for GET /api/knowledge/query and POST /api/knowledge/sparql.
 
-All external dependencies (PostgreSQL, pyoxigraph KnowledgeStore) are mocked —
+All external dependencies (PostgreSQL, pyoxigraph KnowledgeStore) are mocked --
 no real services are required.
 """
 
 from __future__ import annotations
 
-from contextlib import asynccontextmanager
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -21,7 +20,7 @@ from tests.conftest import make_test_session_cookie
 # ---------------------------------------------------------------------------
 
 
-# Simulate what KnowledgeStore.query returns for a SELECT with ?s ?p ?o ?conf ?ktype
+# Simulate what TripleStore.query returns for a SELECT with ?s ?p ?o ?conf ?ktype
 class _FakeNamedNode:
     """Minimal stand-in for pyoxigraph.NamedNode."""
 
@@ -72,30 +71,34 @@ _SAMPLE_PROVENANCE_ROW = {
 }
 
 
-def _make_knowledge_store_mock(rows: list[dict] | None = None):
-    """Build a mock KnowledgeStore with configurable query return values."""
+def _make_app(rows=None, provenance_rows=None):
+    """Create test app with mocked stores."""
     if rows is None:
         rows = [_SAMPLE_KS_ROW]
-    mock_ks = MagicMock()
-    mock_ks.query.return_value = rows
-    return mock_ks
-
-
-def _make_pg_pool_mock(provenance_rows: list[dict] | None = None):
-    """Build a mock asyncpg pool whose .acquire() works as async context manager."""
     if provenance_rows is None:
         provenance_rows = [_SAMPLE_PROVENANCE_ROW]
 
-    mock_conn = AsyncMock()
-    mock_conn.fetch.return_value = provenance_rows
+    app = create_app(use_lifespan=False)
 
-    @asynccontextmanager
-    async def _acquire():
-        yield mock_conn
+    mock_ts = MagicMock()
+    mock_ts.query.return_value = rows
 
-    mock_pool = MagicMock()
-    mock_pool.acquire = _acquire
-    return mock_pool
+    mock_prov = AsyncMock()
+    mock_prov.get_by_triple.return_value = provenance_rows
+
+    stores = MagicMock()
+    stores.triples = mock_ts
+    stores.provenance = mock_prov
+    stores.content = AsyncMock()
+    stores.entities = AsyncMock()
+    stores.theses = AsyncMock()
+    stores.pg_pool = MagicMock()
+    app.state.stores = stores
+
+    # Backward compat
+    app.state.knowledge_store = mock_ts
+    app.state.pg_pool = stores.pg_pool
+    return app
 
 
 # ---------------------------------------------------------------------------
@@ -106,10 +109,7 @@ def _make_pg_pool_mock(provenance_rows: list[dict] | None = None):
 @pytest.fixture
 async def client():
     """Create test client with all external dependencies mocked."""
-    app = create_app(use_lifespan=False)
-    app.state.knowledge_store = _make_knowledge_store_mock()
-    app.state.pg_pool = _make_pg_pool_mock()
-
+    app = _make_app()
     transport = ASGITransport(app=app)
     async with AsyncClient(
         transport=transport,
@@ -122,10 +122,7 @@ async def client():
 @pytest.fixture
 async def empty_client():
     """Create test client that returns empty results."""
-    app = create_app(use_lifespan=False)
-    app.state.knowledge_store = _make_knowledge_store_mock(rows=[])
-    app.state.pg_pool = _make_pg_pool_mock(provenance_rows=[])
-
+    app = _make_app(rows=[], provenance_rows=[])
     transport = ASGITransport(app=app)
     async with AsyncClient(
         transport=transport,
@@ -136,7 +133,7 @@ async def empty_client():
 
 
 # ---------------------------------------------------------------------------
-# Tests: GET /api/knowledge/query — basic response structure
+# Tests: GET /api/knowledge/query -- basic response structure
 # ---------------------------------------------------------------------------
 
 
@@ -193,7 +190,7 @@ class TestGetKnowledgeQueryBasic:
 
 
 # ---------------------------------------------------------------------------
-# Tests: GET /api/knowledge/query — filter by predicate and object
+# Tests: GET /api/knowledge/query -- filter by predicate and object
 # ---------------------------------------------------------------------------
 
 
@@ -229,11 +226,9 @@ class TestGetKnowledgeQueryFilters:
         assert response.status_code == 422
 
     async def test_sparql_filters_built_for_subject(self):
-        """Verify that the SPARQL query passed to KnowledgeStore contains the subject filter."""
-        app = create_app(use_lifespan=False)
-        mock_ks = _make_knowledge_store_mock(rows=[])
-        app.state.knowledge_store = mock_ks
-        app.state.pg_pool = _make_pg_pool_mock(provenance_rows=[])
+        """Verify that the SPARQL query passed to TripleStore contains the subject filter."""
+        app = _make_app(rows=[], provenance_rows=[])
+        mock_ts = app.state.stores.triples
 
         transport = ASGITransport(app=app)
         async with AsyncClient(
@@ -246,15 +241,13 @@ class TestGetKnowledgeQueryFilters:
                 params={"subject": "http://example.com/thing"},
             )
 
-        mock_ks.query.assert_called_once()
-        sparql_arg = mock_ks.query.call_args[0][0]
+        mock_ts.query.assert_called_once()
+        sparql_arg = mock_ts.query.call_args[0][0]
         assert "http://example.com/thing" in sparql_arg
 
     async def test_sparql_filters_built_for_predicate(self):
-        app = create_app(use_lifespan=False)
-        mock_ks = _make_knowledge_store_mock(rows=[])
-        app.state.knowledge_store = mock_ks
-        app.state.pg_pool = _make_pg_pool_mock(provenance_rows=[])
+        app = _make_app(rows=[], provenance_rows=[])
+        mock_ts = app.state.stores.triples
 
         transport = ASGITransport(app=app)
         async with AsyncClient(
@@ -267,14 +260,12 @@ class TestGetKnowledgeQueryFilters:
                 params={"predicate": "http://example.com/pred"},
             )
 
-        sparql_arg = mock_ks.query.call_args[0][0]
+        sparql_arg = mock_ts.query.call_args[0][0]
         assert "http://example.com/pred" in sparql_arg
 
     async def test_object_uri_uses_angle_brackets_in_sparql(self):
-        app = create_app(use_lifespan=False)
-        mock_ks = _make_knowledge_store_mock(rows=[])
-        app.state.knowledge_store = mock_ks
-        app.state.pg_pool = _make_pg_pool_mock(provenance_rows=[])
+        app = _make_app(rows=[], provenance_rows=[])
+        mock_ts = app.state.stores.triples
 
         transport = ASGITransport(app=app)
         async with AsyncClient(
@@ -287,14 +278,12 @@ class TestGetKnowledgeQueryFilters:
                 params={"object": "http://example.com/obj"},
             )
 
-        sparql_arg = mock_ks.query.call_args[0][0]
+        sparql_arg = mock_ts.query.call_args[0][0]
         assert "<http://example.com/obj>" in sparql_arg
 
     async def test_object_literal_uses_quotes_in_sparql(self):
-        app = create_app(use_lifespan=False)
-        mock_ks = _make_knowledge_store_mock(rows=[])
-        app.state.knowledge_store = mock_ks
-        app.state.pg_pool = _make_pg_pool_mock(provenance_rows=[])
+        app = _make_app(rows=[], provenance_rows=[])
+        mock_ts = app.state.stores.triples
 
         transport = ASGITransport(app=app)
         async with AsyncClient(
@@ -307,12 +296,12 @@ class TestGetKnowledgeQueryFilters:
                 params={"object": "plain literal"},
             )
 
-        sparql_arg = mock_ks.query.call_args[0][0]
+        sparql_arg = mock_ts.query.call_args[0][0]
         assert '"plain literal"' in sparql_arg
 
 
 # ---------------------------------------------------------------------------
-# Tests: GET /api/knowledge/query — provenance enrichment
+# Tests: GET /api/knowledge/query -- provenance enrichment
 # ---------------------------------------------------------------------------
 
 
@@ -324,10 +313,7 @@ class TestGetKnowledgeQueryProvenance:
         assert len(data[0]["provenance"]) == 1
 
     async def test_no_provenance_when_none_exists(self):
-        app = create_app(use_lifespan=False)
-        app.state.knowledge_store = _make_knowledge_store_mock()
-        app.state.pg_pool = _make_pg_pool_mock(provenance_rows=[])
-
+        app = _make_app(provenance_rows=[])
         transport = ASGITransport(app=app)
         async with AsyncClient(
             transport=transport,
@@ -344,10 +330,7 @@ class TestGetKnowledgeQueryProvenance:
             {**_SAMPLE_PROVENANCE_ROW, "source_url": "https://example.com/a"},
             {**_SAMPLE_PROVENANCE_ROW, "source_url": "https://example.com/b"},
         ]
-        app = create_app(use_lifespan=False)
-        app.state.knowledge_store = _make_knowledge_store_mock()
-        app.state.pg_pool = _make_pg_pool_mock(provenance_rows=prov_rows)
-
+        app = _make_app(provenance_rows=prov_rows)
         transport = ASGITransport(app=app)
         async with AsyncClient(
             transport=transport,
@@ -361,7 +344,7 @@ class TestGetKnowledgeQueryProvenance:
 
 
 # ---------------------------------------------------------------------------
-# Tests: POST /api/knowledge/sparql — basic
+# Tests: POST /api/knowledge/sparql -- basic
 # ---------------------------------------------------------------------------
 
 
@@ -415,10 +398,8 @@ class TestPostKnowledgeSparql:
         assert response.status_code == 422
 
     async def test_knowledge_store_query_called_with_body(self):
-        app = create_app(use_lifespan=False)
-        mock_ks = _make_knowledge_store_mock(rows=[])
-        app.state.knowledge_store = mock_ks
-        app.state.pg_pool = _make_pg_pool_mock(provenance_rows=[])
+        app = _make_app(rows=[], provenance_rows=[])
+        mock_ts = app.state.stores.triples
 
         transport = ASGITransport(app=app)
         async with AsyncClient(
@@ -431,7 +412,7 @@ class TestPostKnowledgeSparql:
                 json={"query": "SELECT ?x WHERE { ?x ?y ?z }"},
             )
 
-        mock_ks.query.assert_called_once_with("SELECT ?x WHERE { ?x ?y ?z }")
+        mock_ts.query.assert_called_once_with("SELECT ?x WHERE { ?x ?y ?z }")
 
     async def test_multiple_results_returned(self):
         ks_rows = [
@@ -450,10 +431,7 @@ class TestPostKnowledgeSparql:
                 "ktype": _FakeLiteral("Claim"),
             },
         ]
-        app = create_app(use_lifespan=False)
-        app.state.knowledge_store = _make_knowledge_store_mock(rows=ks_rows)
-        app.state.pg_pool = _make_pg_pool_mock(provenance_rows=[])
-
+        app = _make_app(rows=ks_rows, provenance_rows=[])
         transport = ASGITransport(app=app)
         async with AsyncClient(
             transport=transport,
@@ -479,11 +457,8 @@ class TestPostKnowledgeSparql:
 class TestSparqlErrorHandling:
     async def test_get_knowledge_query_invalid_sparql_returns_400(self):
         """GET /api/knowledge/query returns 400 for SPARQL parse errors."""
-        app = create_app(use_lifespan=False)
-        mock_ks = _make_knowledge_store_mock()
-        mock_ks.query.side_effect = Exception("Parse error: invalid SPARQL syntax")
-        app.state.knowledge_store = mock_ks
-        app.state.pg_pool = _make_pg_pool_mock()
+        app = _make_app()
+        app.state.stores.triples.query.side_effect = Exception("Parse error: invalid SPARQL syntax")
 
         transport = ASGITransport(app=app)
         async with AsyncClient(
@@ -498,11 +473,8 @@ class TestSparqlErrorHandling:
 
     async def test_post_knowledge_sparql_invalid_query_returns_400(self):
         """POST /api/knowledge/sparql returns 400 for SPARQL parse errors."""
-        app = create_app(use_lifespan=False)
-        mock_ks = _make_knowledge_store_mock()
-        mock_ks.query.side_effect = Exception("Parse error: invalid SPARQL syntax")
-        app.state.knowledge_store = mock_ks
-        app.state.pg_pool = _make_pg_pool_mock()
+        app = _make_app()
+        app.state.stores.triples.query.side_effect = Exception("Parse error: invalid SPARQL syntax")
 
         transport = ASGITransport(app=app)
         async with AsyncClient(
@@ -520,11 +492,8 @@ class TestSparqlErrorHandling:
 
     async def test_sparql_error_detail_includes_exception_message(self):
         """Error detail includes the underlying exception message."""
-        app = create_app(use_lifespan=False)
-        mock_ks = _make_knowledge_store_mock()
-        mock_ks.query.side_effect = Exception("Parse error: unexpected token")
-        app.state.knowledge_store = mock_ks
-        app.state.pg_pool = _make_pg_pool_mock()
+        app = _make_app()
+        app.state.stores.triples.query.side_effect = Exception("Parse error: unexpected token")
 
         transport = ASGITransport(app=app)
         async with AsyncClient(
@@ -544,17 +513,14 @@ class TestSparqlErrorHandling:
 
 
 # ---------------------------------------------------------------------------
-# Tests: GET /api/knowledge/query — local-only results
+# Tests: GET /api/knowledge/query -- local-only results
 # ---------------------------------------------------------------------------
 
 
 class TestGetKnowledgeQueryLocal:
     async def test_query_returns_local_results(self):
         """Local results are returned correctly without any federation logic."""
-        app = create_app(use_lifespan=False)
-        app.state.knowledge_store = _make_knowledge_store_mock()
-        app.state.pg_pool = _make_pg_pool_mock()
-
+        app = _make_app()
         transport = ASGITransport(app=app)
         async with AsyncClient(
             transport=transport,

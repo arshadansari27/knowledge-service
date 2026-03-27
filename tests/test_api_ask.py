@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import math
-from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -11,7 +10,7 @@ from httpx import ASGITransport, AsyncClient
 
 from knowledge_service.clients.rag import RAGAnswer
 from knowledge_service.main import create_app
-from knowledge_service.stores.rag import RetrievalContext
+from knowledge_service.stores.rag import QueryIntent, RetrievalContext
 from tests.conftest import make_test_session_cookie
 
 
@@ -46,6 +45,7 @@ def _make_rag_retriever(context=None):
         )
     mock = AsyncMock()
     mock.retrieve.return_value = context
+    mock.classify.return_value = QueryIntent(intent="semantic")
     return mock
 
 
@@ -257,12 +257,6 @@ class TestAskConfidence:
         app = create_app(use_lifespan=False)
         app.state.rag_retriever = _make_rag_retriever(context)
         app.state.rag_client = _make_rag_client()
-
-        from knowledge_service.reasoning.engine import ReasoningEngine
-
-        app.state.reasoning_engine = ReasoningEngine(
-            Path(__file__).parent.parent / "src/knowledge_service/reasoning/rules"
-        )
 
         transport = ASGITransport(app=app)
         async with AsyncClient(

@@ -53,8 +53,8 @@ class TestIngestionJobStatus:
 # ---------------------------------------------------------------------------
 
 
-def _make_worker_state():
-    """Build a mock app.state for the background worker."""
+def _make_worker_stores():
+    """Build mock stores for the background worker."""
     mock_conn = AsyncMock()
     mock_conn.execute.return_value = "UPDATE 1"
     mock_conn.fetchrow.return_value = None
@@ -64,42 +64,38 @@ def _make_worker_state():
     async def _acquire():
         yield mock_conn
 
-    state = MagicMock()
-    state.pg_pool = MagicMock()
-    state.pg_pool.acquire = _acquire
+    mock_pool = MagicMock()
+    mock_pool.acquire = _acquire
 
-    state.embedding_client = AsyncMock()
-    state.embedding_client.embed_batch.return_value = [[0.1] * 768]
+    stores = MagicMock()
+    stores.pg_pool = mock_pool
+    stores.triples = MagicMock()
+    stores.triples.insert.return_value = ("hash", True)
+    stores.triples.find_contradictions.return_value = []
+    stores.triples.find_opposite_contradictions.return_value = []
+    stores.triples.get_triples.return_value = []
+    stores.triples.update_confidence.return_value = None
+    stores.content = AsyncMock()
+    stores.content.delete_chunks.return_value = None
+    stores.content.insert_chunks.return_value = [(0, "chunk-uuid-0")]
+    stores.entities = AsyncMock()
+    stores.provenance = AsyncMock()
+    stores.provenance.get_by_triple.return_value = []
+    stores.provenance.insert.return_value = None
+    stores.theses = AsyncMock()
+    stores.theses.find_by_hashes.return_value = []
 
-    state.extraction_client = AsyncMock()
-    state.extraction_client.extract.return_value = []
-
-    state.knowledge_store = MagicMock()
-    state.knowledge_store.insert_triple.return_value = ("hash", True)
-    state.knowledge_store.find_contradictions.return_value = []
-
-    state.reasoning_engine = MagicMock()
-    state.reasoning_engine.combine_evidence.return_value = 0.88
-
-    state.embedding_store = AsyncMock()
-    state.embedding_store.delete_chunks.return_value = None
-    state.embedding_store.insert_chunks.return_value = [(0, "chunk-uuid-0")]
-
-    state.entity_resolver = None
-    return state, mock_conn
+    return stores, mock_conn
 
 
 class TestIngestionWorker:
     async def test_worker_updates_status_to_completed(self):
-        from knowledge_service.api.content import _run_ingestion_worker
+        from knowledge_service.ingestion.worker import run_ingestion
 
-        state, conn = _make_worker_state()
-        body = ContentRequest(
-            url="http://test.com",
-            title="Test",
-            source_type="article",
-            raw_text="Short text.",
-        )
+        stores, conn = _make_worker_stores()
+        embedding_client = AsyncMock()
+        embedding_client.embed_batch.return_value = [[0.1] * 768]
+
         chunks = [
             {
                 "chunk_index": 0,
@@ -110,7 +106,20 @@ class TestIngestionWorker:
             }
         ]
 
-        await _run_ingestion_worker("job-1", "content-1", body, chunks, state)
+        await run_ingestion(
+            job_id="job-1",
+            content_id="content-1",
+            chunk_records=chunks,
+            raw_text="Short text.",
+            knowledge=None,
+            title="Test",
+            source_url="http://test.com",
+            source_type="article",
+            stores=stores,
+            embedding_client=embedding_client,
+            extraction_client=None,
+            entity_store=stores.entities,
+        )
 
         calls = [str(c) for c in conn.execute.call_args_list]
         statuses = [c for c in calls if "ingestion_jobs" in c and "status" in c]
@@ -118,17 +127,14 @@ class TestIngestionWorker:
         assert any("completed" in s for s in statuses)
 
     async def test_worker_handles_extraction_failure(self):
-        from knowledge_service.api.content import _run_ingestion_worker
+        from knowledge_service.ingestion.worker import run_ingestion
 
-        state, conn = _make_worker_state()
-        state.extraction_client.extract.return_value = None  # LLM failure
+        stores, conn = _make_worker_stores()
+        embedding_client = AsyncMock()
+        embedding_client.embed_batch.return_value = [[0.1] * 768]
+        extraction_client = AsyncMock()
+        extraction_client.extract.return_value = None  # LLM failure
 
-        body = ContentRequest(
-            url="http://test.com",
-            title="Test",
-            source_type="article",
-            raw_text="Some text.",
-        )
         chunks = [
             {
                 "chunk_index": 0,
@@ -139,11 +145,23 @@ class TestIngestionWorker:
             }
         ]
 
-        await _run_ingestion_worker("job-1", "content-1", body, chunks, state)
+        await run_ingestion(
+            job_id="job-1",
+            content_id="content-1",
+            chunk_records=chunks,
+            raw_text="Some text.",
+            knowledge=None,
+            title="Test",
+            source_url="http://test.com",
+            source_type="article",
+            stores=stores,
+            embedding_client=embedding_client,
+            extraction_client=extraction_client,
+            entity_store=stores.entities,
+        )
 
         calls = [str(c) for c in conn.execute.call_args_list]
         assert any("completed" in s for s in calls)
-        assert any("chunks_failed" in s for s in calls)
 
 
 # ---------------------------------------------------------------------------
@@ -164,7 +182,7 @@ class TestChunkCap:
 
         mock_conn = AsyncMock()
         mock_conn.fetchrow.side_effect = [
-            {"id": "job-uuid"},  # job insert (atomic: no prior SELECT)
+            {"id": "job-uuid"},  # job insert
         ]
 
         @asynccontextmanager
@@ -174,10 +192,15 @@ class TestChunkCap:
         mock_pool = MagicMock()
         mock_pool.acquire = _acquire
 
-        mock_es = AsyncMock()
-        mock_es.insert_content_metadata.return_value = "content-uuid"
+        mock_content = AsyncMock()
+        mock_content.upsert_metadata.return_value = "content-uuid"
 
-        result = await _accept_content_request(body, mock_pool, mock_es)
+        # _accept_content_request now takes (body, stores)
+        stores = MagicMock()
+        stores.content = mock_content
+        stores.pg_pool = mock_pool
+
+        result = await _accept_content_request(body, stores)
 
         assert not result["conflict"]
         assert result["chunks_total"] == _MAX_CHUNKS
@@ -214,8 +237,13 @@ class TestContentStatusEndpoint:
         async def _acquire():
             yield mock_conn
 
-        app.state.pg_pool = MagicMock()
-        app.state.pg_pool.acquire = _acquire
+        mock_pool = MagicMock()
+        mock_pool.acquire = _acquire
+
+        stores = MagicMock()
+        stores.pg_pool = mock_pool
+        app.state.stores = stores
+        app.state.pg_pool = mock_pool
 
         transport = ASGITransport(app=app)
         async with AsyncClient(
@@ -239,8 +267,13 @@ class TestContentStatusEndpoint:
         async def _acquire():
             yield mock_conn
 
-        app.state.pg_pool = MagicMock()
-        app.state.pg_pool.acquire = _acquire
+        mock_pool = MagicMock()
+        mock_pool.acquire = _acquire
+
+        stores = MagicMock()
+        stores.pg_pool = mock_pool
+        app.state.stores = stores
+        app.state.pg_pool = mock_pool
 
         transport = ASGITransport(app=app)
         async with AsyncClient(

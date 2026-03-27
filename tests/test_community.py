@@ -179,7 +179,7 @@ class TestCommunitySummarizer:
         )
 
         mock_ks = MagicMock()
-        mock_ks.get_triples_by_subject.return_value = []
+        mock_ks.get_triples.return_value = []
 
         summarizer = CommunitySummarizer(mock_llm_client, mock_ks)
         community = {
@@ -196,7 +196,7 @@ class TestCommunitySummarizer:
         mock_llm_client.post.side_effect = Exception("LLM down")
 
         mock_ks = MagicMock()
-        mock_ks.get_triples_by_subject.return_value = []
+        mock_ks.get_triples.return_value = []
 
         summarizer = CommunitySummarizer(mock_llm_client, mock_ks)
         community = {
@@ -221,7 +221,7 @@ class TestCommunitySummarizer:
         )
 
         mock_ks = MagicMock()
-        mock_ks.get_triples_by_subject.return_value = []
+        mock_ks.get_triples.return_value = []
 
         summarizer = CommunitySummarizer(mock_llm_client, mock_ks)
         original = {
@@ -248,7 +248,7 @@ class TestCommunitySummarizer:
         )
 
         mock_ks = MagicMock()
-        mock_ks.get_triples_by_subject.return_value = []
+        mock_ks.get_triples.return_value = []
 
         summarizer = CommunitySummarizer(mock_llm_client, mock_ks)
         community = {"level": 0, "member_entities": ["http://e/a"], "member_count": 1}
@@ -273,10 +273,10 @@ class TestCommunitySummarizer:
         )
 
         mock_ks = MagicMock()
-        mock_ks.get_triples_by_subject.return_value = [
+        mock_ks.get_triples.return_value = [
             {
-                "predicate": MagicMock(value="http://ks/causes"),
-                "object": MagicMock(value="http://e/b"),
+                "predicate": "http://ks/causes",
+                "object": "http://e/b",
             },
         ]
 

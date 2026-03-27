@@ -9,9 +9,8 @@ from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse
 from pydantic import ValidationError
 
-from knowledge_service.api._ingest import apply_uri_fallback, process_triple
-from knowledge_service.models import ClaimsRequest, ClaimsResponse, expand_to_triples
-from knowledge_service.stores.provenance import ProvenanceStore
+from knowledge_service.ingestion.pipeline import IngestContext, ingest_triple
+from knowledge_service.models import ClaimsRequest, ClaimsResponse
 
 logger = logging.getLogger(__name__)
 
@@ -20,38 +19,36 @@ router = APIRouter()
 
 async def _process_one_claims_request(body: ClaimsRequest, request: Request) -> ClaimsResponse:
     """Process a single ClaimsRequest and return its response."""
-    knowledge_store = request.app.state.knowledge_store
-    pg_pool = request.app.state.pg_pool
-    reasoning_engine = request.app.state.reasoning_engine
-    provenance_store = ProvenanceStore(pg_pool)
+    stores = request.app.state.stores
 
     triples_created = 0
     contradictions_all: list[dict] = []
 
+    ctx = IngestContext.from_content(
+        url=body.source_url,
+        source_type=body.source_type,
+        extractor=body.extractor,
+    )
+
     for item in body.knowledge:
-        item = apply_uri_fallback(item)
-        for t in expand_to_triples(item):
-            is_new, contras, prov_failed = await process_triple(
-                t,
-                knowledge_store,
-                provenance_store,
-                reasoning_engine,
-                body.source_url,
-                body.source_type,
-                body.extractor,
-            )
-            if is_new:
+        # Each knowledge item has a to_triples() method (new model)
+        if hasattr(item, "to_triples"):
+            triples = item.to_triples()
+        elif isinstance(item, dict) and "subject" in item and "predicate" in item:
+            triples = [item]
+        else:
+            logger.warning("Skipping unrecognized knowledge item: %s", type(item))
+            continue
+
+        for t in triples:
+            result = await ingest_triple(t, stores, ctx)
+            if result.is_new:
                 triples_created += 1
-            if prov_failed:
-                logger.warning(
-                    "Provenance lost for triple from %s",
-                    body.source_url,
-                )
-            contradictions_all.extend(contras)
+            contradictions_all.extend(result.contradictions)
 
     # Log ingestion event (parity with content pipeline)
     try:
-        async with pg_pool.acquire() as conn:
+        async with stores.pg_pool.acquire() as conn:
             await conn.execute(
                 """INSERT INTO ingestion_events (event_type, payload, source)
                    VALUES ($1, $2, $3)""",

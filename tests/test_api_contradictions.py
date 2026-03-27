@@ -1,12 +1,11 @@
 """Integration tests for GET /api/knowledge/contradictions.
 
-All external dependencies (PostgreSQL, pyoxigraph KnowledgeStore) are mocked —
+All external dependencies (PostgreSQL, pyoxigraph KnowledgeStore) are mocked --
 no real services are required.
 """
 
 from __future__ import annotations
 
-from contextlib import asynccontextmanager
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -49,7 +48,7 @@ _OBJECT_B = "http://example.com/objectB"
 _CONF_A = "0.8"
 _CONF_B = "0.6"
 
-# A single contradiction candidate row as returned by KnowledgeStore.query
+# A single contradiction candidate row as returned by TripleStore.query
 _CONTRADICTION_ROW = {
     "s": _FakeNamedNode(_SUBJECT),
     "p": _FakeNamedNode(_PREDICATE),
@@ -75,10 +74,10 @@ _SAMPLE_PROVENANCE_ROW = {
 }
 
 
-def _make_knowledge_store_mock(rows: list[dict] | None = None) -> MagicMock:
+def _make_triple_store_mock(rows: list[dict] | None = None) -> MagicMock:
     if rows is None:
         rows = [_CONTRADICTION_ROW]
-    mock_ks = MagicMock()
+    mock_ts = MagicMock()
     # The endpoint makes two query() calls: first for same-predicate contradictions,
     # second for opposite-predicate contradictions. Return rows for the first,
     # empty for subsequent (opposite predicates query).
@@ -90,24 +89,40 @@ def _make_knowledge_store_mock(rows: list[dict] | None = None) -> MagicMock:
             return rows
         return []  # even calls = opposite-predicate query
 
-    mock_ks.query.side_effect = _query_side_effect
-    return mock_ks
+    mock_ts.query.side_effect = _query_side_effect
+    return mock_ts
 
 
-def _make_pg_pool_mock(provenance_rows: list[dict] | None = None) -> MagicMock:
+def _make_provenance_mock(provenance_rows: list[dict] | None = None) -> AsyncMock:
     if provenance_rows is None:
         provenance_rows = [_SAMPLE_PROVENANCE_ROW]
+    mock_prov = AsyncMock()
+    mock_prov.get_by_triple.return_value = provenance_rows
+    return mock_prov
 
-    mock_conn = AsyncMock()
-    mock_conn.fetch.return_value = provenance_rows
 
-    @asynccontextmanager
-    async def _acquire():
-        yield mock_conn
+def _make_app(rows=None, provenance_rows=None):
+    """Create test app with mocked stores."""
+    app = create_app(use_lifespan=False)
 
-    mock_pool = MagicMock()
-    mock_pool.acquire = _acquire
-    return mock_pool
+    ts = _make_triple_store_mock(rows=rows if rows is not None else None)
+    prov = _make_provenance_mock(
+        provenance_rows=provenance_rows if provenance_rows is not None else None
+    )
+
+    stores = MagicMock()
+    stores.triples = ts
+    stores.provenance = prov
+    stores.content = AsyncMock()
+    stores.entities = AsyncMock()
+    stores.theses = AsyncMock()
+    stores.pg_pool = MagicMock()
+    app.state.stores = stores
+
+    # Backward compat
+    app.state.knowledge_store = ts
+    app.state.pg_pool = stores.pg_pool
+    return app
 
 
 # ---------------------------------------------------------------------------
@@ -118,10 +133,7 @@ def _make_pg_pool_mock(provenance_rows: list[dict] | None = None) -> MagicMock:
 @pytest.fixture
 async def client():
     """Test client with one contradiction candidate and one provenance row."""
-    app = create_app(use_lifespan=False)
-    app.state.knowledge_store = _make_knowledge_store_mock()
-    app.state.pg_pool = _make_pg_pool_mock()
-
+    app = _make_app()
     transport = ASGITransport(app=app)
     async with AsyncClient(
         transport=transport,
@@ -134,10 +146,7 @@ async def client():
 @pytest.fixture
 async def empty_client():
     """Test client with no contradiction candidates."""
-    app = create_app(use_lifespan=False)
-    app.state.knowledge_store = _make_knowledge_store_mock(rows=[])
-    app.state.pg_pool = _make_pg_pool_mock(provenance_rows=[])
-
+    app = _make_app(rows=[], provenance_rows=[])
     transport = ASGITransport(app=app)
     async with AsyncClient(
         transport=transport,
@@ -238,17 +247,14 @@ class TestGetContradictionsProbability:
 
     async def test_min_confidence_filters_low_probability(self):
         """Pairs below min_confidence threshold are excluded."""
-        app = create_app(use_lifespan=False)
-        app.state.knowledge_store = _make_knowledge_store_mock()  # prob = 0.48
-        app.state.pg_pool = _make_pg_pool_mock(provenance_rows=[])
-
+        app = _make_app(provenance_rows=[])
         transport = ASGITransport(app=app)
         async with AsyncClient(
             transport=transport,
             base_url="http://test",
             cookies={"ks_session": make_test_session_cookie()},
         ) as c:
-            # 0.8 * 0.6 = 0.48, request min_confidence=0.5 → nothing returned
+            # 0.8 * 0.6 = 0.48, request min_confidence=0.5 -> nothing returned
             response = await c.get("/api/knowledge/contradictions", params={"min_confidence": 0.5})
 
         assert response.status_code == 200
@@ -256,17 +262,14 @@ class TestGetContradictionsProbability:
 
     async def test_min_confidence_passes_matching_probability(self):
         """Pairs at or above min_confidence threshold are included."""
-        app = create_app(use_lifespan=False)
-        app.state.knowledge_store = _make_knowledge_store_mock()  # prob = 0.48
-        app.state.pg_pool = _make_pg_pool_mock(provenance_rows=[])
-
+        app = _make_app(provenance_rows=[])
         transport = ASGITransport(app=app)
         async with AsyncClient(
             transport=transport,
             base_url="http://test",
             cookies={"ks_session": make_test_session_cookie()},
         ) as c:
-            # 0.48 >= 0.4 → included
+            # 0.48 >= 0.4 -> included
             response = await c.get("/api/knowledge/contradictions", params={"min_confidence": 0.4})
 
         assert response.status_code == 200
@@ -274,10 +277,7 @@ class TestGetContradictionsProbability:
 
     async def test_default_min_confidence_includes_all(self):
         """Without min_confidence all pairs are returned."""
-        app = create_app(use_lifespan=False)
-        app.state.knowledge_store = _make_knowledge_store_mock()
-        app.state.pg_pool = _make_pg_pool_mock(provenance_rows=[])
-
+        app = _make_app(provenance_rows=[])
         transport = ASGITransport(app=app)
         async with AsyncClient(
             transport=transport,
@@ -309,10 +309,7 @@ class TestGetContradictionsProvenance:
 
     async def test_empty_provenance_when_none_exists(self):
         """When no provenance rows exist, both provenance lists are empty."""
-        app = create_app(use_lifespan=False)
-        app.state.knowledge_store = _make_knowledge_store_mock()
-        app.state.pg_pool = _make_pg_pool_mock(provenance_rows=[])
-
+        app = _make_app(provenance_rows=[])
         transport = ASGITransport(app=app)
         async with AsyncClient(
             transport=transport,
@@ -330,10 +327,7 @@ class TestGetContradictionsProvenance:
             {**_SAMPLE_PROVENANCE_ROW, "source_url": "https://example.com/a"},
             {**_SAMPLE_PROVENANCE_ROW, "source_url": "https://example.com/b"},
         ]
-        app = create_app(use_lifespan=False)
-        app.state.knowledge_store = _make_knowledge_store_mock()
-        app.state.pg_pool = _make_pg_pool_mock(provenance_rows=prov_rows)
-
+        app = _make_app(provenance_rows=prov_rows)
         transport = ASGITransport(app=app)
         async with AsyncClient(
             transport=transport,
@@ -354,10 +348,8 @@ class TestGetContradictionsProvenance:
 
 class TestGetContradictionsSparqlQuery:
     async def test_knowledge_store_query_is_called(self):
-        app = create_app(use_lifespan=False)
-        mock_ks = _make_knowledge_store_mock(rows=[])
-        app.state.knowledge_store = mock_ks
-        app.state.pg_pool = _make_pg_pool_mock(provenance_rows=[])
+        app = _make_app(rows=[], provenance_rows=[])
+        mock_ts = app.state.stores.triples
 
         transport = ASGITransport(app=app)
         async with AsyncClient(
@@ -368,15 +360,13 @@ class TestGetContradictionsSparqlQuery:
             await c.get("/api/knowledge/contradictions")
 
         # Two queries: same-predicate contradictions + opposite-predicate contradictions
-        assert mock_ks.query.call_count == 2
+        assert mock_ts.query.call_count == 2
 
     async def test_sparql_contains_confidence_predicate(self):
         from knowledge_service.ontology.namespaces import KS_CONFIDENCE
 
-        app = create_app(use_lifespan=False)
-        mock_ks = _make_knowledge_store_mock(rows=[])
-        app.state.knowledge_store = mock_ks
-        app.state.pg_pool = _make_pg_pool_mock(provenance_rows=[])
+        app = _make_app(rows=[], provenance_rows=[])
+        mock_ts = app.state.stores.triples
 
         transport = ASGITransport(app=app)
         async with AsyncClient(
@@ -386,14 +376,12 @@ class TestGetContradictionsSparqlQuery:
         ) as c:
             await c.get("/api/knowledge/contradictions")
 
-        sparql_arg = mock_ks.query.call_args_list[0][0][0]
+        sparql_arg = mock_ts.query.call_args_list[0][0][0]
         assert KS_CONFIDENCE.value in sparql_arg
 
     async def test_sparql_contains_filter_inequality(self):
-        app = create_app(use_lifespan=False)
-        mock_ks = _make_knowledge_store_mock(rows=[])
-        app.state.knowledge_store = mock_ks
-        app.state.pg_pool = _make_pg_pool_mock(provenance_rows=[])
+        app = _make_app(rows=[], provenance_rows=[])
+        mock_ts = app.state.stores.triples
 
         transport = ASGITransport(app=app)
         async with AsyncClient(
@@ -403,7 +391,7 @@ class TestGetContradictionsSparqlQuery:
         ) as c:
             await c.get("/api/knowledge/contradictions")
 
-        sparql_arg = mock_ks.query.call_args_list[0][0][0]
+        sparql_arg = mock_ts.query.call_args_list[0][0][0]
         # FILTER should exclude duplicates by requiring o1 != o2
         assert "?o1 != ?o2" in sparql_arg
 
@@ -433,10 +421,7 @@ class TestGetContradictionsMultiple:
                 "conf2": _FakeLiteral("0.5"),
             },
         ]
-        app = create_app(use_lifespan=False)
-        app.state.knowledge_store = _make_knowledge_store_mock(rows=rows)
-        app.state.pg_pool = _make_pg_pool_mock(provenance_rows=[])
-
+        app = _make_app(rows=rows, provenance_rows=[])
         transport = ASGITransport(app=app)
         async with AsyncClient(
             transport=transport,
@@ -472,10 +457,7 @@ class TestGetContradictionsMultiple:
                 "conf2": _FakeLiteral("0.5"),  # prob = 0.25
             },
         ]
-        app = create_app(use_lifespan=False)
-        app.state.knowledge_store = _make_knowledge_store_mock(rows=rows)
-        app.state.pg_pool = _make_pg_pool_mock(provenance_rows=[])
-
+        app = _make_app(rows=rows, provenance_rows=[])
         transport = ASGITransport(app=app)
         async with AsyncClient(
             transport=transport,
@@ -508,10 +490,7 @@ class TestGetContradictionsNonNumericConfidence:
                 "conf2": _FakeLiteral("0.6"),
             },
         ]
-        app = create_app(use_lifespan=False)
-        app.state.knowledge_store = _make_knowledge_store_mock(rows=rows)
-        app.state.pg_pool = _make_pg_pool_mock(provenance_rows=[])
-
+        app = _make_app(rows=rows, provenance_rows=[])
         transport = ASGITransport(app=app)
         async with AsyncClient(
             transport=transport,
@@ -536,10 +515,7 @@ class TestGetContradictionsNonNumericConfidence:
                 "conf2": _FakeLiteral("not_a_number"),
             },
         ]
-        app = create_app(use_lifespan=False)
-        app.state.knowledge_store = _make_knowledge_store_mock(rows=rows)
-        app.state.pg_pool = _make_pg_pool_mock(provenance_rows=[])
-
+        app = _make_app(rows=rows, provenance_rows=[])
         transport = ASGITransport(app=app)
         async with AsyncClient(
             transport=transport,
@@ -571,10 +547,7 @@ class TestGetContradictionsNonNumericConfidence:
                 "conf2": _FakeLiteral("0.7"),
             },
         ]
-        app = create_app(use_lifespan=False)
-        app.state.knowledge_store = _make_knowledge_store_mock(rows=rows)
-        app.state.pg_pool = _make_pg_pool_mock(provenance_rows=[])
-
+        app = _make_app(rows=rows, provenance_rows=[])
         transport = ASGITransport(app=app)
         async with AsyncClient(
             transport=transport,
