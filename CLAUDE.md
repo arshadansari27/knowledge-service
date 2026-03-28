@@ -35,7 +35,9 @@ Single-process FastAPI service combining an RDF knowledge graph with Noisy-OR pr
 
 ### Data Flow
 
-Content arrives via `/api/content` or `/api/claims` → text is chunked (short = 1 chunk, long ≥4000 chars = N overlapping chunks) → metadata upserted to `content_metadata`, chunks with embeddings stored in `content` → knowledge items are extracted via two-phase LLM extraction (entities then relations) → items expanded to RDF triples and ingested via the pipeline (`ingestion/pipeline.py`) → triples stored in pyoxigraph with RDF-star annotations (confidence, type, temporal bounds) → provenance rows go to PostgreSQL → Noisy-OR combines multi-source confidence → contradictions detected against existing triples → **inference engine derives new triples** (inverse, transitive, type inheritance) into `ks:graph/inferred` → thesis impact checked.
+Content arrives via `/api/content`, `/api/content/upload` (file upload), or `/api/claims` → **documents are parsed** (PDF via PyMuPDF, HTML via readability+BeautifulSoup, CSV/JSON via stdlib, or passthrough for plain text) → text is chunked (short = 1 chunk, long ≥4000 chars = N overlapping chunks) → metadata upserted to `content_metadata`, chunks with embeddings stored in `content` → **NLP pre-pass** (spaCy NER + Wikidata entity linking, when available) produces entity hints → knowledge items are extracted via two-phase LLM extraction (entities then relations, enriched by NLP hints) → **coreference resolution** merges duplicate entities (tier-1: Wikidata QID matching, tier-2: LLM grouping) → items expanded to RDF triples and ingested via the pipeline (`ingestion/pipeline.py`) → triples stored in pyoxigraph with RDF-star annotations (confidence, type, temporal bounds) → provenance rows go to PostgreSQL → Noisy-OR combines multi-source confidence → contradictions detected against existing triples → **inference engine derives new triples** (inverse, transitive, type inheritance) into `ks:graph/inferred` → thesis impact checked.
+
+**Full pipeline:** Parse → Chunk → Embed → NLP Pre-pass → Extract → Coreference → Process
 
 ### Key Components
 
@@ -43,7 +45,7 @@ Content arrives via `/api/content` or `/api/claims` → text is chunked (short =
 
 - **ContentStore** (`stores/content.py`): PostgreSQL + pgvector. Manages `content_metadata` (document metadata) and `content` (chunks with embeddings). Uses `halfvec(768)` for nomic-embed-text embeddings. Hybrid search via vector + BM25 with Reciprocal Rank Fusion.
 
-- **EntityStore** (`stores/entities.py`): PostgreSQL + pgvector. Manages `entity_embeddings` and `predicate_embeddings`. Embedding-based entity deduplication (threshold 0.85) and predicate resolution (threshold 0.90) with LRU caching.
+- **EntityStore** (`stores/entities.py`): PostgreSQL + pgvector. Manages `entity_embeddings`, `predicate_embeddings`, and `entity_aliases`. Embedding-based entity deduplication (threshold 0.85) and predicate resolution (threshold 0.90) with LRU caching. Alias table lookup (from coreference) is checked before falling back to embedding similarity.
 
 - **ProvenanceStore** (`stores/provenance.py`): PostgreSQL. One row per source per triple, keyed by triple SHA-256 hash. Tracks source_url, source_type, extractor, confidence, timestamps, temporal validity, and **chunk_id** (FK to content table) for chunk-level evidence tracing.
 
@@ -53,7 +55,13 @@ Content arrives via `/api/content` or `/api/claims` → text is chunked (short =
 
 - **Ingestion Pipeline** (`ingestion/pipeline.py`): Replaces the old `process_triple()` god function. Discrete steps: delta detection → retract stale inferences → insert → contradiction detection → penalty → provenance → evidence combination → **inference** → thesis impact check.
 
-- **Ingestion Worker** (`ingestion/worker.py`): Three-phase worker: Embed → Extract → Process. Job tracking via `JobTracker`.
+- **Ingestion Worker** (`ingestion/worker.py`): Five-phase worker: Embed → NLP Pre-pass → Extract → Coreference → Process. Job tracking via `JobTracker` with status labels: `embedding`, `analyzing`, `extracting`, `resolving`, `processing`.
+
+- **Parser Registry** (`parsing/__init__.py`): Pluggable document parsing layer. `ParserRegistry` with format detection (content-type > URL extension > magic bytes > fallback). Built-in parsers: `PdfParser` (PyMuPDF), `HtmlParser` (readability-lxml + BeautifulSoup), `StructuredParser` (JSON/CSV), `ImageParser` (stub), `TextParser` (passthrough). Each parser produces a `ParsedDocument` (text, title, metadata, source_format, images).
+
+- **NLP Phase** (`nlp/__init__.py`): spaCy-based NER + Wikidata entity linking pre-pass. Runs on each chunk, produces `NlpResult` with `NlpEntity` objects (text, label, start/end char, wikidata_id). Entity hints are forwarded to LLM extraction to improve recognition. Fallback entities (spaCy-only, not confirmed by LLM) are included at `nlp_entity_confidence` (default 0.5). Graceful degradation when spaCy is unavailable.
+
+- **Coreference Phase** (`ingestion/coreference.py`): Two-tier entity deduplication. Tier-1: entities sharing a Wikidata QID (from NLP pre-pass) are merged deterministically. Tier-2: remaining unlinked entities are sent to the LLM in a single call for semantic grouping. Results stored in `entity_aliases` table. `canonicalize()` method rewrites knowledge item labels before processing.
 
 - **Noisy-OR** (`reasoning/noisy_or.py`): 6-line evidence combination: `P = 1 - product(1 - ci)`. Replaces the 332-line ProbLog-based ReasoningEngine.
 
@@ -79,7 +87,7 @@ Content arrives via `/api/content` or `/api/claims` → text is chunked (short =
 
 ### App Lifecycle
 
-`main.py:create_app()` creates the FastAPI app. `lifespan()` handles startup (pyoxigraph init, asyncpg pool, migrations, DomainRegistry, LLM clients, Stores dataclass) and shutdown (flush, close). Tests use `create_app(use_lifespan=False)` and set `app.state` manually.
+`main.py:create_app()` creates the FastAPI app. `lifespan()` handles startup (pyoxigraph init, asyncpg pool, migrations, DomainRegistry, LLM clients, ParserRegistry, spaCy NLP pipeline, Stores dataclass) and shutdown (flush, close). Tests use `create_app(use_lifespan=False)` and set `app.state` manually.
 
 ### Migrations
 
@@ -87,11 +95,8 @@ SQL migrations live in `migrations/` and are applied automatically at startup vi
 
 ## Testing Patterns
 
-- All tests mock external dependencies — no PostgreSQL, Ollama, or network needed
-- `pytest-asyncio` with `asyncio_mode = "auto"` (no `@pytest.mark.asyncio` needed)
-- `pytest-httpx` for mocking HTTP calls to LLM APIs
-- Tests create `TripleStore(data_dir=None)` for in-memory pyoxigraph
-- API tests use `create_app(use_lifespan=False)` and inject mocks via `app.state.stores` (Stores dataclass)
+- **CI tests** (`tests/`): All tests mock external dependencies — no PostgreSQL, Ollama, or network needed. `pytest-asyncio` with `asyncio_mode = "auto"`. `pytest-httpx` for mocking HTTP calls. Tests create `TripleStore(data_dir=None)` for in-memory pyoxigraph. API tests use `create_app(use_lifespan=False)` and inject mocks via `app.state.stores`.
+- **E2E tests** (`tests/e2e/`): Run against real PostgreSQL + Ollama. Excluded from CI via `--ignore=tests/e2e` in pyproject.toml. Run locally with `uv run pytest tests/e2e/ -v`. Service starts as a subprocess, tests hit it via HTTP. Requires: running PostgreSQL, Ollama with embedding + chat models.
 
 ## Ruff Configuration
 
@@ -112,7 +117,8 @@ Deployed as part of the **AEGIS Docker Swarm stack** on a homelab cluster. Full 
 - **Database:** `knowledge` DB on shared `pgvector/pgvector:pg16` instance (`aegis_postgres`)
 - **LLM access:** Via LiteLLM proxy (`https://litellm.hikmahtech.in`) → Ollama instances (nomic-embed-text on meem, qwen3:14b on asif)
 - **RDF storage:** Docker volume `aegis_knowledge_oxigraph` → `/app/data/oxigraph`
-- **Resources:** 1G memory limit, 256M reservation
+- **spaCy KB:** Docker volume `aegis_knowledge_spacy` → `/app/data/spacy` (~1GB Wikidata KB, downloaded on first start)
+- **Resources:** 3G memory limit, 512M reservation
 - **Deploy:** `source .env && ansible-playbook -i inventory/hosts.yml playbooks/deploy-aegis.yml`
 - **Quick update:** `docker --context swarm-baa service update --image arshadansari27/knowledge-service:latest --force aegis_knowledge`
 

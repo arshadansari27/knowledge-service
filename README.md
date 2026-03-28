@@ -34,8 +34,11 @@ Single FastAPI process with embedded components. No microservices.
 
 ```
 FastAPI Process
+├── ParserRegistry     Pluggable document parsing (PDF, HTML, CSV, JSON, images)
+├── NlpPhase           spaCy NER + Wikidata entity linking pre-pass
+├── CoreferencePhase   Two-tier entity dedup (Wikidata QID + LLM grouping)
 ├── KnowledgeStore     pyoxigraph — RDF 1.2, RDF-star, named graphs (4 trust tiers)
-├── ReasoningEngine    ProbLog — 12 rules, Noisy-OR evidence combination
+├── InferenceEngine    Forward-chaining rules (inverse, transitive, type inheritance)
 ├── QueryClassifier    Intent routing (semantic/entity/graph/global)
 ├── RAGRetriever       4 retrieval strategies with multi-hop traversal
 ├── GraphTraverser     BFS up to 4 hops, Bayesian confidence propagation
@@ -44,13 +47,16 @@ FastAPI Process
 ├── ExtractionClient   Two-phase LLM extraction (entities first, then relations)
 └── ProvenanceStore    Chunk-level evidence trail (SHA-256 hash keyed)
 
+Pipeline: Parse → Chunk → Embed → NLP Pre-pass → Extract → Coreference → Process
+
 PostgreSQL
 ├── content_metadata   Document metadata (url, title, source_type, tags, raw_text)
 ├── content            Chunks with embeddings, section headers, full-text search
 ├── provenance         Per-source evidence rows with chunk_id FK
 ├── entity_embeddings  Entity URIs with embeddings for resolution
+├── entity_aliases     Coreference alias → canonical URI mappings
 ├── communities        Leiden communities with LLM-generated summaries
-└── ingestion_events   Append-only audit log
+└── ingestion_jobs     Async job tracking with per-phase progress
 ```
 
 For deployment details, see [docs/deployment.md](docs/deployment.md).
@@ -122,9 +128,9 @@ POST /api/content
 Content-Type: application/json
 ```
 
-Ingest a piece of content with its associated knowledge. Chunks the text (short content = 1 chunk, long content ≥4000 chars = multiple overlapping chunks), generates embeddings per chunk for semantic search, stores metadata and chunks in PostgreSQL, and writes all knowledge items to the RDF graph with provenance.
+Ingest content with knowledge items. Parses documents (auto-detects format), chunks text, runs NLP pre-pass + LLM extraction, resolves entities via coreference, and writes triples. If `url` is provided without `raw_text` and starts with `http`, the URL is fetched and parsed automatically.
 
-Accepts a **single object** or a **JSON array** for batch processing. When an array is sent, a matching array of responses is returned.
+Accepts a **single object** or a **JSON array** for batch processing.
 
 **Single request:**
 
@@ -174,6 +180,37 @@ Accepts a **single object** or a **JSON array** for batch processing. When an ar
   { "url": "https://b.com", "title": "Article B", "source_type": "article" }
 ]
 ```
+
+---
+
+### Upload File
+
+```http
+POST /api/content/upload
+Content-Type: multipart/form-data
+```
+
+Upload a file (PDF, HTML, CSV, JSON, plain text) for ingestion. Format is auto-detected from filename, content-type, or magic bytes. Returns 202 with a job ID — poll `/api/content/{id}/status` for progress.
+
+```bash
+curl -X POST http://localhost:8000/api/content/upload \
+  -H "X-API-Key: your-password" \
+  -F "file=@paper.pdf;type=application/pdf" \
+  -F "title=Research Paper" \
+  -F "source_type=paper"
+```
+
+**Response (202):** `{"content_id": "uuid", "job_id": "uuid", "chunks_total": 3}`
+
+---
+
+### Check Ingestion Status
+
+```http
+GET /api/content/{content_id}/status
+```
+
+Returns job status with progress counters. Status values: `embedding` → `analyzing` → `extracting` → `resolving` → `processing` → `completed` / `failed`.
 
 ---
 
@@ -580,13 +617,16 @@ All settings via environment variables or `.env` file:
 | `LLM_CHAT_MODEL` | `qwen3:14b` | Chat model for knowledge extraction |
 | `LLM_RAG_MODEL` | *(empty)* | RAG answer model (defaults to `LLM_CHAT_MODEL` if empty) |
 | `OXIGRAPH_DATA_DIR` | `./data/oxigraph` | RDF store data directory |
-| `PROBLOG_RULES_DIR` | `./src/knowledge_service/reasoning/rules` | ProbLog rules |
 | `FEDERATION_ENABLED` | `true` | Enable DBpedia/Wikidata federation |
 | `FEDERATION_TIMEOUT` | `3.0` | Federation query timeout (seconds) |
 | `API_HOST` | `0.0.0.0` | Bind address |
 | `API_PORT` | `8000` | Port |
-| `ADMIN_PASSWORD` | *(required)* | Password for admin panel login |
-| `SECRET_KEY` | *(auto-generated)* | Session signing key (set for persistent sessions across restarts) |
+| `ADMIN_PASSWORD` | *(required)* | Password for admin panel login and API key auth |
+| `SECRET_KEY` | *(required)* | Session signing key |
+| `SPACY_DATA_DIR` | `/app/data/spacy` | spaCy Wikidata KB storage directory |
+| `MAX_UPLOAD_SIZE` | `52428800` | Maximum file upload size in bytes (default 50MB) |
+| `URL_FETCH_TIMEOUT` | `30` | Timeout for URL auto-fetch (seconds) |
+| `NLP_ENTITY_CONFIDENCE` | `0.5` | Confidence for spaCy-only fallback entities |
 | `COMMUNITY_REBUILD_INTERVAL` | `0` | Periodic community rebuild (seconds, 0 = disabled) |
 
 ---
@@ -606,7 +646,7 @@ All tests mock external dependencies — no PostgreSQL or LLM provider required.
 GitHub Actions pipeline on every push/merge to `main`:
 
 1. **Lint** — `ruff check` + `ruff format --check`
-2. **Test** — `pytest tests/ -v` (509 tests)
+2. **Test** — `pytest tests/ -v` (617+ tests)
 3. **Version bump** — auto-increments patch version in `pyproject.toml`, commits back to `main`, creates `vX.Y.Z` git tag
 4. **Docker build** — builds and pushes to Docker Hub as `arshadansari27/knowledge-service:X.Y.Z` and `:latest`
 
@@ -623,46 +663,62 @@ src/knowledge_service/
 ├── main.py                  # FastAPI app factory + lifespan
 ├── config.py                # Settings (pydantic-settings, .env)
 ├── models.py                # Pydantic models for all 7 knowledge types + API contracts
-├── _utils.py                # Shared RDF helpers: _is_uri, _to_rdf_term, _triple_hash, _rdf_value_to_str
+├── _utils.py                # Shared RDF helpers + JSON extraction from LLM output
+├── chunking.py              # Markdown-aware text splitting with section headers
 ├── admin/
 │   ├── auth.py              # AuthMiddleware, login/logout, rate limiter, session cookies
 │   ├── routes.py            # Admin page routes (dashboard, knowledge, chat, contradictions)
 │   ├── stats.py             # /api/admin/stats/* and /api/admin/knowledge/triples endpoints
 │   └── templates/           # Jinja2 templates (base, dashboard, knowledge, chat, etc.)
 ├── api/
-│   ├── _ingest.py           # Shared per-triple ingestion pipeline (used by content + claims)
-│   ├── content.py           # POST /api/content
+│   ├── content.py           # POST /api/content (JSON + URL auto-fetch)
+│   ├── upload.py            # POST /api/content/upload (multipart file upload)
 │   ├── claims.py            # POST /api/claims
 │   ├── search.py            # GET /api/search
 │   ├── knowledge.py         # GET /api/knowledge/query, POST /api/knowledge/sparql
 │   ├── contradictions.py    # GET /api/knowledge/contradictions
 │   ├── ask.py               # POST /api/ask (RAG question answering)
 │   └── health.py            # GET /health
+├── parsing/
+│   ├── __init__.py          # ParserRegistry, ParsedDocument, Parser protocol
+│   ├── pdf.py               # PdfParser (PyMuPDF)
+│   ├── html.py              # HtmlParser (readability-lxml + BeautifulSoup)
+│   ├── structured.py        # StructuredParser (JSON/CSV)
+│   ├── image.py             # ImageParser (stub for future OCR)
+│   └── text.py              # TextParser (passthrough)
+├── nlp/
+│   ├── __init__.py          # NlpPhase, NlpResult, NlpEntity
+│   └── bootstrap.py         # spaCy model + Wikidata KB loading
+├── ingestion/
+│   ├── pipeline.py          # Per-triple processing (delta, insert, contradiction, provenance, inference)
+│   ├── worker.py            # 5-phase orchestrator (Embed → NLP → Extract → Coref → Process)
+│   ├── phases.py            # EmbedPhase, ExtractPhase, ProcessPhase
+│   └── coreference.py       # CoreferencePhase (Wikidata QID + LLM grouping)
 ├── stores/
-│   ├── knowledge.py         # pyoxigraph wrapper — RDF-star inserts, SPARQL queries
-│   ├── provenance.py        # PostgreSQL provenance table (asyncpg)
-│   ├── embedding.py         # pgvector content store + BM25 hybrid search
-│   ├── entity_resolver.py   # Embedding-based entity deduplication
+│   ├── __init__.py          # Stores dataclass
+│   ├── triples.py           # pyoxigraph wrapper — RDF-star, named graphs
+│   ├── content.py           # ContentStore — metadata + chunks + embeddings
+│   ├── entities.py          # EntityStore — entity/predicate resolution + aliases
+│   ├── provenance.py        # ProvenanceStore — per-source evidence rows
+│   ├── theses.py            # ThesisStore — thesis/claim collections
 │   ├── rag.py               # RAGRetriever — 4 intent-based retrieval strategies
-│   ├── graph_traversal.py   # Multi-hop BFS with confidence propagation
 │   └── community.py         # Leiden community detection, storage, summarization
 ├── reasoning/
-│   ├── engine.py            # ProbLog wrapper — Noisy-OR, contradiction detection
-│   └── rules/
-│       ├── base.pl          # Core: contradicts, supported, inverse_holds, corroborated
-│       ├── inference_chains.pl  # indirect_link, causal_propagation
-│       ├── confidence.pl    # high_confidence, contested, authoritative
-│       ├── temporal.pl      # expired, currently_valid, supersedes
-│       └── knowledge_types.pl  # Type-specific inference rules
+│   ├── engine.py            # InferenceEngine — forward-chaining rules
+│   └── noisy_or.py          # Noisy-OR evidence combination
 ├── ontology/
+│   ├── uri.py               # URI normalization (to_entity_uri, to_predicate_uri, slugify)
 │   ├── namespaces.py        # ks:, schema:, dc:, skos:, prov: namespace constants
-│   └── bootstrap.py         # Loads base ontology into pyoxigraph on startup
+│   ├── registry.py          # DomainRegistry — predicate metadata from ontology
+│   ├── bootstrap.py         # Loads schema.ttl + domains/*.ttl into ks:graph/ontology
+│   ├── schema.ttl            # Knowledge type classes, properties
+│   └── domains/base.ttl     # 18 canonical predicates with synonyms, weights, inverse pairs
 ├── clients/
 │   ├── llm.py               # EmbeddingClient + ExtractionClient (two-phase)
+│   ├── prompt_builder.py    # Domain-aware extraction prompts from templates
 │   ├── rag.py               # RAGClient — LLM-powered answer generation
-│   ├── classifier.py        # QueryClassifier — intent routing (4 intents)
 │   └── federation.py        # FederationClient — DBpedia/Wikidata SPARQL federation
-└── chunking.py              # Markdown-aware text splitting with section headers
+└── migrations/              # SQL migrations (auto-applied at startup)
 ```
 
 ---
@@ -684,18 +740,20 @@ The system reuses established vocabularies and keeps the custom `ks:` namespace 
 
 ## Status
 
-All 9 phases complete and deployed to production (v0.1.34, 509 tests).
+All phases complete and deployed to production (617+ tests).
 
-| Phase | Version | What |
-|-------|---------|------|
-| Foundation | v0.1.0 | Knowledge model, RDF store, probabilistic reasoning, admin panel, RAG endpoint, federation |
-| 1-3 | v0.1.19 | ProbLog rules (12 domain-agnostic), named graphs (4 trust tiers), chunk-level provenance |
-| 4 | v0.1.20 | BM25 hybrid search with Reciprocal Rank Fusion |
-| 5-6 | v0.1.22 | Two-phase LLM extraction + markdown-aware chunking |
-| 7 | v0.1.25 | Query intent classification (semantic/entity/graph) |
-| 8 | v0.1.28 | Multi-hop graph retrieval with Bayesian confidence propagation |
-| 9 | v0.1.30 | Community detection (Leiden), global search, LLM robustness |
-| Fixes | v0.1.34 | IRI normalization, stats endpoint, LLM URL double-pathing, qwen3 extraction |
+| Phase | What |
+|-------|------|
+| Foundation | Knowledge model, RDF store, probabilistic reasoning, admin panel, RAG endpoint, federation |
+| 1-3 | Named graphs (4 trust tiers), chunk-level provenance |
+| 4 | BM25 hybrid search with Reciprocal Rank Fusion |
+| 5-6 | Two-phase LLM extraction + markdown-aware chunking |
+| 7 | Query intent classification (semantic/entity/graph) |
+| 8 | Multi-hop graph retrieval with Bayesian confidence propagation |
+| 9 | Community detection (Leiden), global search |
+| Growable Intelligence | Store decomposition, ingestion pipeline, Noisy-OR, additive ontology, thesis model |
+| Inference Engine | Forward-chaining rules (inverse, transitive, type inheritance), retraction cascade |
+| Multi-Layer Ingestion | Document parsing (PDF/HTML/CSV/JSON), spaCy NLP pre-pass, Wikidata entity linking, two-tier coreference, file upload endpoint, URL auto-fetch |
 
 ---
 
@@ -713,10 +771,12 @@ All 9 phases complete and deployed to production (v0.1.34, 509 tests).
 |-----------|-----------|
 | API | Python 3.12, FastAPI, uvicorn |
 | Knowledge store | pyoxigraph (embedded, RDF 1.2, SPARQL 1.2, RocksDB) |
-| Reasoning | ProbLog 2.2 (probabilistic logic programming) |
+| Reasoning | Noisy-OR evidence combination + forward-chaining inference |
 | Operational store | PostgreSQL 16 |
 | Vector search | pgvector (HNSW index, halfvec) |
+| Document parsing | PyMuPDF (PDF), readability-lxml + BeautifulSoup (HTML), stdlib (CSV/JSON) |
+| NLP pre-pass | spaCy (en_core_web_sm) + spacy-entity-linker (Wikidata KB) |
 | LLM gateway | Ollama (local) or LiteLLM (proxy) — any OpenAI-compatible API |
 | Embeddings | nomic-embed-text (768-dim) |
 | Knowledge extraction | qwen3:14b (auto-extracts from raw_text) |
-| Infrastructure | Docker Compose, GitHub Actions CI/CD |
+| Infrastructure | Docker Compose, GitHub Actions CI/CD, Docker Swarm (production) |

@@ -13,7 +13,9 @@
 | Method | Path | Description |
 |--------|------|-------------|
 | GET | `/health` | Health check for all dependencies |
-| POST | `/api/content` | Ingest content with knowledge items |
+| POST | `/api/content` | Ingest content (JSON or URL auto-fetch) |
+| POST | `/api/content/upload` | Upload a file (PDF, HTML, CSV, etc.) |
+| GET | `/api/content/{id}/status` | Check ingestion job status |
 | POST | `/api/claims` | Ingest knowledge items directly |
 | GET | `/api/search` | Semantic similarity search |
 | GET | `/api/knowledge/query` | Structured knowledge graph query |
@@ -44,9 +46,9 @@ Check the health of all service dependencies.
 
 ## POST /api/content
 
-Ingest a piece of content (webpage, article, video) with associated knowledge items. Generates an embedding for semantic search, stores content in PostgreSQL, and writes knowledge items to the RDF graph with provenance.
+Ingest a piece of content with associated knowledge items. Accepts JSON with raw text or a URL to auto-fetch. Parses the content (detecting format from URL or content-type), chunks the text, generates embeddings, runs NLP pre-pass and LLM extraction, resolves entities via coreference, and writes triples to the RDF graph.
 
-If `knowledge` is empty but `raw_text` is provided, knowledge is auto-extracted via LLM.
+If `knowledge` is empty but `raw_text` is provided, knowledge is auto-extracted via LLM. If `url` is provided without `raw_text` and the URL starts with `http`, the service fetches and parses the URL automatically (30s timeout, returns 422 on failure).
 
 **Request Body:**
 
@@ -111,6 +113,96 @@ curl -X POST http://localhost:8000/api/content \
       }
     ]
   }'
+```
+
+---
+
+## POST /api/content/upload
+
+Upload a file for ingestion. Detects format from filename/content-type/magic bytes, parses the document, and feeds into the standard ingestion pipeline.
+
+**Supported formats:** PDF, HTML, CSV, JSON, plain text, images (stub — stores bytes for future OCR).
+
+**Content-Type:** `multipart/form-data`
+
+**Form Fields:**
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `file` | binary | yes | The file to upload |
+| `url` | string | no | Source identifier (defaults to `upload://<filename>`) |
+| `title` | string | no | Content title (falls back to parsed title or filename) |
+| `source_type` | string | no | Source type (defaults to detected format) |
+| `tags` | string | no | JSON array of tags, or comma-separated |
+| `domains` | string | no | JSON array of domain hints |
+| `metadata` | string | no | JSON object of additional metadata |
+
+**Size limit:** 50MB (configurable via `MAX_UPLOAD_SIZE`). Returns 413 if exceeded.
+
+**Response (202 Accepted):**
+
+```json
+{
+  "content_id": "UUID",
+  "job_id": "UUID",
+  "status": "accepted",
+  "chunks_total": 3,
+  "chunks_capped_from": null
+}
+```
+
+**Status Codes:** `202` Accepted, `413` File Too Large, `422` Parse Error / No Text Extracted, `500` Parser Not Initialized
+
+### Example
+
+```bash
+# Upload a PDF
+curl -X POST http://localhost:8000/api/content/upload \
+  -H "X-API-Key: your-password" \
+  -F "file=@paper.pdf;type=application/pdf" \
+  -F "title=Research Paper" \
+  -F "source_type=paper"
+
+# Upload an HTML file
+curl -X POST http://localhost:8000/api/content/upload \
+  -H "X-API-Key: your-password" \
+  -F "file=@article.html;type=text/html" \
+  -F "source_type=article"
+```
+
+---
+
+## GET /api/content/{content_id}/status
+
+Check the status of an ingestion job for a content item. Returns the latest job status including progress counters.
+
+**Response:**
+
+```json
+{
+  "content_id": "UUID",
+  "job_id": "UUID",
+  "status": "completed",
+  "chunks_total": 3,
+  "chunks_embedded": 3,
+  "chunks_extracted": 3,
+  "chunks_failed": 0,
+  "triples_created": 12,
+  "entities_resolved": 8,
+  "error": null,
+  "created_at": "2026-03-28T10:00:00Z",
+  "updated_at": "2026-03-28T10:01:30Z"
+}
+```
+
+**Status values:** `embedding` → `analyzing` (NLP) → `extracting` → `resolving` (coreference) → `processing` → `completed` or `failed`
+
+**Status Codes:** `200` OK, `404` No Job Found
+
+### Example
+
+```bash
+curl http://localhost:8000/api/content/3208610a-.../status -H "X-API-Key: your-password"
 ```
 
 ---
@@ -542,8 +634,13 @@ The service is configured via environment variables (or `.env` file):
 | `LLM_CHAT_MODEL` | `qwen3:14b` | Chat/extraction model name |
 | `LLM_RAG_MODEL` | `""` | RAG answer model (defaults to `LLM_CHAT_MODEL` if empty) |
 | `OXIGRAPH_DATA_DIR` | `./data/oxigraph` | RDF store data directory |
-| `PROBLOG_RULES_DIR` | `./src/knowledge_service/reasoning/rules` | ProbLog rules directory |
 | `API_HOST` | `0.0.0.0` | API bind address |
 | `API_PORT` | `8000` | API port |
 | `FEDERATION_ENABLED` | `true` | Enable DBpedia/Wikidata federation |
 | `FEDERATION_TIMEOUT` | `3.0` | Federation query timeout (seconds) |
+| `ADMIN_PASSWORD` | *(required)* | Password for admin panel and API key auth |
+| `SECRET_KEY` | *(required)* | Session signing key |
+| `SPACY_DATA_DIR` | `/app/data/spacy` | spaCy Wikidata KB storage (volume-mounted) |
+| `MAX_UPLOAD_SIZE` | `52428800` (50MB) | Maximum file upload size in bytes |
+| `URL_FETCH_TIMEOUT` | `30` | Timeout for URL auto-fetch (seconds) |
+| `NLP_ENTITY_CONFIDENCE` | `0.5` | Confidence for spaCy-only entities (not confirmed by LLM) |
