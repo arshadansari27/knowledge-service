@@ -60,7 +60,8 @@ Repository = "https://github.com/arshadansari27/knowledge-service"
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["tests"]
-markers = ["e2e: end-to-end tests requiring real services (deselect with '-m not e2e')"]
+addopts = "--ignore=tests/e2e"
+markers = ["e2e: end-to-end tests requiring real services (run with: uv run pytest tests/e2e/ -v)"]
 
 [tool.ruff]
 target-version = "py312"

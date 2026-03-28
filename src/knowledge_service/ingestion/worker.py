@@ -111,6 +111,8 @@ async def run_ingestion(
 
             nlp_phase = NlpPhase(nlp)
             nlp_results = await nlp_phase.run(chunk_records)
+            entities_linked = sum(1 for r in nlp_results for e in r.entities if e.wikidata_id)
+            await tracker.update_status("analyzing", entities_linked=entities_linked)
 
         # Phase 3: Extract
         current_phase = "extracting"
@@ -145,6 +147,7 @@ async def run_ingestion(
             coref = CoreferencePhase(extraction_client, stores.pg_pool)
             coref_result = await coref.run(knowledge_items, nlp_results)
             knowledge_items = coref_result.canonicalize(knowledge_items)
+            await tracker.update_status("resolving", entities_coref=len(coref_result.groups))
 
         # Phase 5: Process
         current_phase = "processing"

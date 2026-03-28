@@ -119,6 +119,34 @@ class ExtractPhase:
                 knowledge.append(item)
                 chunk_ids.append(cid)
 
+            # Add fallback EntityInput for NLP-detected entities the LLM missed
+            if nlp_result and nlp_result.entities and items is not None:
+                from knowledge_service.config import settings  # noqa: PLC0415
+                from knowledge_service.models import EntityInput  # noqa: PLC0415
+
+                llm_labels = set()
+                for item in items:
+                    if hasattr(item, "label"):
+                        llm_labels.add(item.label.lower())
+                    if hasattr(item, "subject"):
+                        llm_labels.add(item.subject.lower())
+                    elif isinstance(item, dict):
+                        for key in ("label", "subject", "uri"):
+                            val = item.get(key)
+                            if val:
+                                llm_labels.add(val.lower())
+
+                for ent in nlp_result.entities:
+                    if ent.text.lower() not in llm_labels:
+                        fallback = EntityInput(
+                            uri=ent.text,
+                            rdf_type=f"schema:{ent.label}" if ent.label else "schema:Thing",
+                            label=ent.text,
+                            confidence=settings.nlp_entity_confidence,
+                        )
+                        knowledge.append(fallback)
+                        chunk_ids.append(cid)
+
         return knowledge, chunk_ids, chunks_failed
 
 

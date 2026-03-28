@@ -167,7 +167,6 @@ class CoreferencePhase:
         if not groups or self._pg_pool is None:
             return
 
-        source = "spacy_linking"
         rows: list[tuple[str, str, str]] = []
         for group in groups:
             source_tag = "spacy_linking" if group.wikidata_id else "llm_coreference"
@@ -192,4 +191,3 @@ class CoreferencePhase:
                 )
         except Exception:
             logger.exception("CoreferencePhase: failed to store aliases")
-            _ = source  # suppress unused variable warning
