@@ -41,6 +41,7 @@ The knowledge-service runs as part of the **AEGIS stack** on a Docker Swarm clus
 | `FEDERATION_TIMEOUT` | `3.0` |
 | `ADMIN_PASSWORD` | Via `aegis_knowledge_admin_password` secret |
 | `SECRET_KEY` | Via `aegis_knowledge_secret_key` secret |
+| `SPACY_DATA_DIR` | `/app/data/spacy` |
 
 ### Resources
 
@@ -59,7 +60,7 @@ The knowledge-service runs as part of the **AEGIS stack** on a Docker Swarm clus
 
 ```
 CMD: python -c "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"
-Interval: 30s | Timeout: 10s | Retries: 5 | Start period: 30s
+Interval: 30s | Timeout: 10s | Retries: 5 | Start period: 90s
 ```
 
 ---
@@ -139,6 +140,7 @@ Management services are IP-whitelisted to internal networks (192.168.1.0/24, 10.
 /opt/aegis/
 ├── postgres/data/              # PostgreSQL pgdata
 ├── knowledge-oxigraph/         # RDF-star store (mounted as Docker volume)
+├── knowledge-spacy/            # spaCy Wikidata KB (~1GB, downloaded on first start)
 ├── config/                     # Shared config files
 ├── n8n-data/                   # n8n workflow data
 ├── personalities/              # AEGIS personality definitions
