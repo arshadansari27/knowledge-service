@@ -124,8 +124,10 @@ class PromptBuilder:
         source_type: str | None = None,
     ) -> str:
         """Build domain-aware relation extraction prompt."""
-        # Check for domain-specific override
+        # Check for domain-specific override (skip "base" — that's the default template)
         for domain in domains:
+            if domain == "base":
+                continue
             override = self._registry.get_prompt(f"{domain}_relations")
             if override:
                 return override.format(
