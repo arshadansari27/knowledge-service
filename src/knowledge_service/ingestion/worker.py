@@ -72,8 +72,9 @@ async def run_ingestion(
     extraction_client: Any | None,
     entity_store: Any | None = None,
     engine: Any | None = None,
+    nlp: Any | None = None,
 ) -> None:
-    """Orchestrate the 3-phase ingestion pipeline.
+    """Orchestrate the multi-phase ingestion pipeline.
 
     Args:
         job_id: UUID of the ingestion job.
@@ -88,6 +89,9 @@ async def run_ingestion(
         embedding_client: Client for generating embeddings.
         extraction_client: Client for LLM extraction (optional if knowledge pre-supplied).
         entity_store: Optional entity store for resolution.
+        engine: Optional reasoning engine.
+        nlp: Optional spaCy nlp pipeline. When provided, enables NLP pre-pass
+             and coreference resolution phases.
     """
     tracker = JobTracker(job_id, stores.pg_pool)
     current_phase = "embedding"
@@ -98,7 +102,17 @@ async def run_ingestion(
         embed = EmbedPhase(embedding_client, stores.content)
         chunk_id_map = await embed.run(content_id, chunk_records)
 
-        # Phase 2: Extract
+        # Phase 2: NLP Pre-pass (optional)
+        nlp_results = None
+        if nlp is not None:
+            current_phase = "analyzing"
+            await tracker.update_status("analyzing")
+            from knowledge_service.nlp import NlpPhase  # noqa: PLC0415
+
+            nlp_phase = NlpPhase(nlp)
+            nlp_results = await nlp_phase.run(chunk_records)
+
+        # Phase 3: Extract
         current_phase = "extracting"
         await tracker.update_status("extracting")
 
@@ -110,6 +124,7 @@ async def run_ingestion(
                 chunk_id_map,
                 title=title,
                 source_type=source_type,
+                nlp_hints=nlp_results,
             )
             extractor = "llm"
         else:
@@ -119,7 +134,19 @@ async def run_ingestion(
 
         graph = KS_GRAPH_ASSERTED if extractor == "api" else KS_GRAPH_EXTRACTED
 
-        # Phase 3: Process
+        # Phase 4: Coreference (optional — requires NLP results + extracted items)
+        if nlp_results and knowledge_items and extraction_client:
+            current_phase = "resolving"
+            await tracker.update_status("resolving")
+            from knowledge_service.ingestion.coreference import (  # noqa: PLC0415
+                CoreferencePhase,
+            )
+
+            coref = CoreferencePhase(extraction_client, stores.pg_pool)
+            coref_result = await coref.run(knowledge_items, nlp_results)
+            knowledge_items = coref_result.canonicalize(knowledge_items)
+
+        # Phase 5: Process
         current_phase = "processing"
         await tracker.update_status("processing")
         process = ProcessPhase(stores, entity_store, engine=engine)

@@ -97,6 +97,7 @@ class PromptBuilder:
         text: str,
         title: str | None = None,
         source_type: str | None = None,
+        entity_hints: list[dict] | None = None,
     ) -> str:
         """Build entity/event extraction prompt."""
         template = self._registry.get_prompt("base_entities")
@@ -107,6 +108,10 @@ class PromptBuilder:
             context += f"Title: {title}\n"
         if source_type:
             context += f"Source type: {source_type}\n"
+        if entity_hints:
+            context += "\nNLP-detected entities (confirm, correct, or add to these):\n"
+            for hint in entity_hints:
+                context += f"- {hint['text']} ({hint['label']})\n"
         return template.format(context=context, text=text[:_MAX_TEXT_CHARS])
 
     def build_relation_prompt(
