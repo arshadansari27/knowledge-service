@@ -43,9 +43,7 @@ class TestFederationPhase:
 
     async def test_skips_when_no_match(self):
         phase, client, ts = self._make_phase(lookup_results={})
-        entities = [
-            {"label": "obscure_thing", "uri": "http://knowledge.local/data/obscure_thing"}
-        ]
+        entities = [{"label": "obscure_thing", "uri": "http://knowledge.local/data/obscure_thing"}]
         result = await phase.run(entities)
         assert result.entities_enriched == 0
 

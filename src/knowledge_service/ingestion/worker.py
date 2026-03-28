@@ -216,9 +216,7 @@ async def run_ingestion(
                         fed_result.entities_skipped,
                     )
             except Exception:
-                logger.warning(
-                    "Federation enrichment failed for job %s", job_id, exc_info=True
-                )
+                logger.warning("Federation enrichment failed for job %s", job_id, exc_info=True)
 
         # Auto-trigger community detection if conditions met
         if triples_created > 0 and app_state is not None:
@@ -257,9 +255,7 @@ async def run_ingestion(
                         if community_store:
                             await community_store.replace_all(summarized)
                             app_state._last_community_rebuild = time.time()
-                            logger.info(
-                                "Auto community rebuild: %d communities", len(summarized)
-                            )
+                            logger.info("Auto community rebuild: %d communities", len(summarized))
             except Exception:
                 logger.warning("Auto community rebuild failed", exc_info=True)
 
