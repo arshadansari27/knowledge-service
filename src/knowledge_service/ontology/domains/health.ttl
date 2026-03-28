@@ -1,0 +1,97 @@
+@prefix ks:   <http://knowledge.local/schema/> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix xsd:  <http://www.w3.org/2001/XMLSchema#> .
+
+# --- Health & Biohacking domain predicates ---
+
+ks:treats a ks:Predicate ;
+    rdfs:label "treats" ;
+    ks:domain "health" ;
+    ks:materialityWeight "0.8"^^xsd:float ;
+    ks:synonym "remedies", "alleviates", "addresses", "helps_treat" .
+
+ks:has_side_effect a ks:Predicate ;
+    rdfs:label "has side effect" ;
+    ks:domain "health" ;
+    ks:materialityWeight "0.7"^^xsd:float ;
+    ks:synonym "adverse_effect", "causes_side_effect", "side_effect_of" .
+
+ks:recommended_dose a ks:Predicate ;
+    rdfs:label "recommended dose" ;
+    ks:domain "health" ;
+    ks:materialityWeight "0.6"^^xsd:float ;
+    ks:synonym "dosage", "suggested_intake", "optimal_dose", "daily_dose" .
+
+ks:contraindicated_with a ks:Predicate ;
+    rdfs:label "contraindicated with" ;
+    ks:domain "health" ;
+    ks:materialityWeight "0.8"^^xsd:float ;
+    ks:synonym "interacts_negatively_with", "unsafe_with", "should_not_combine" .
+
+ks:affects_biomarker a ks:Predicate ;
+    rdfs:label "affects biomarker" ;
+    ks:domain "health" ;
+    ks:materialityWeight "0.7"^^xsd:float ;
+    ks:synonym "modulates", "influences_level_of", "changes_biomarker" .
+
+ks:improves_condition a ks:Predicate ;
+    rdfs:label "improves condition" ;
+    ks:domain "health" ;
+    ks:materialityWeight "0.7"^^xsd:float ;
+    ks:oppositePredicate ks:worsens_condition ;
+    ks:synonym "helps_with", "beneficial_for", "alleviates_symptoms" .
+
+ks:worsens_condition a ks:Predicate ;
+    rdfs:label "worsens condition" ;
+    ks:domain "health" ;
+    ks:materialityWeight "0.7"^^xsd:float ;
+    ks:oppositePredicate ks:improves_condition ;
+    ks:synonym "aggravates", "exacerbates", "makes_worse" .
+
+ks:has_mechanism a ks:Predicate ;
+    rdfs:label "has mechanism" ;
+    ks:domain "health" ;
+    ks:materialityWeight "0.5"^^xsd:float ;
+    ks:synonym "works_by", "mechanism_of_action", "acts_via" .
+
+ks:metabolized_by a ks:Predicate ;
+    rdfs:label "metabolized by" ;
+    ks:domain "health" ;
+    ks:materialityWeight "0.5"^^xsd:float ;
+    ks:synonym "processed_by", "broken_down_by", "cleared_by" .
+
+ks:absorbs_with a ks:Predicate ;
+    rdfs:label "absorbs with" ;
+    ks:domain "health" ;
+    ks:materialityWeight "0.5"^^xsd:float ;
+    ks:synonym "enhanced_by", "bioavailable_with", "better_absorbed_with" .
+
+ks:depletes a ks:Predicate ;
+    rdfs:label "depletes" ;
+    ks:domain "health" ;
+    ks:materialityWeight "0.6"^^xsd:float ;
+    ks:synonym "reduces_levels_of", "lowers_stores_of", "drains" .
+
+ks:synergizes_with a ks:Predicate ;
+    rdfs:label "synergizes with" ;
+    ks:domain "health" ;
+    ks:materialityWeight "0.6"^^xsd:float ;
+    ks:synonym "works_well_with", "potentiates", "amplifies_effect_of" .
+
+ks:has_half_life a ks:Predicate ;
+    rdfs:label "has half life" ;
+    ks:domain "health" ;
+    ks:materialityWeight "0.4"^^xsd:float ;
+    ks:synonym "duration", "active_for", "elimination_half_life" .
+
+ks:evidence_level a ks:Predicate ;
+    rdfs:label "evidence level" ;
+    ks:domain "health" ;
+    ks:materialityWeight "0.5"^^xsd:float ;
+    ks:synonym "evidence_quality", "study_quality", "strength_of_evidence" .
+
+ks:bioavailable_as a ks:Predicate ;
+    rdfs:label "bioavailable as" ;
+    ks:domain "health" ;
+    ks:materialityWeight "0.5"^^xsd:float ;
+    ks:synonym "absorbed_as", "active_form", "converted_to" .
