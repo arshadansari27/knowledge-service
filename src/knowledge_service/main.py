@@ -184,6 +184,35 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     app.state.extraction_client = extraction_client
     app.state.embedding_client = embedding_client
 
+    # Parser registry
+    from knowledge_service.parsing import ParserRegistry  # noqa: PLC0415
+    from knowledge_service.parsing.text import TextParser  # noqa: PLC0415
+    from knowledge_service.parsing.pdf import PdfParser  # noqa: PLC0415
+    from knowledge_service.parsing.html import HtmlParser  # noqa: PLC0415
+    from knowledge_service.parsing.structured import StructuredParser  # noqa: PLC0415
+    from knowledge_service.parsing.image import ImageParser  # noqa: PLC0415
+
+    parser_registry = ParserRegistry()
+    parser_registry.register(TextParser())
+    parser_registry.register(PdfParser())
+    parser_registry.register(HtmlParser())
+    parser_registry.register(StructuredParser())
+    parser_registry.register(ImageParser())
+    app.state.parser_registry = parser_registry
+
+    # Make parser_registry available to content endpoint module
+    import knowledge_service.api.content as _content_mod  # noqa: PLC0415
+    _content_mod._parser_registry = parser_registry
+
+    # spaCy NLP pipeline (optional — graceful degradation if unavailable)
+    from knowledge_service.nlp.bootstrap import load_spacy_nlp  # noqa: PLC0415
+    nlp = load_spacy_nlp(settings.spacy_data_dir)
+    app.state.nlp = nlp
+    if nlp:
+        logger.info("spaCy NLP pipeline loaded — NLP pre-pass enabled")
+    else:
+        logger.info("spaCy unavailable — NLP pre-pass disabled, LLM-only extraction")
+
     # Seed predicate embeddings
     await _seed_predicate_embeddings(entity_store, embedding_client, domain_registry)
 
