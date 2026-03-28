@@ -247,6 +247,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     from knowledge_service.stores.community import CommunityStore  # noqa: PLC0415
 
     app.state.community_store = CommunityStore(pg_pool)
+    app.state._last_community_rebuild = 0.0
 
     app.state.rag_retriever = RAGRetriever(
         embedding_client=embedding_client,

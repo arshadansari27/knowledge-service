@@ -2,6 +2,7 @@
 
 import json
 import logging
+import time
 from typing import Any
 
 from knowledge_service.ingestion.phases import EmbedPhase, ExtractPhase, ProcessPhase
@@ -58,6 +59,23 @@ class JobTracker:
             )
 
 
+def _should_rebuild_communities(
+    triples_created: int,
+    total_triples: int,
+    min_triples: int,
+    last_rebuild: float,
+    cooldown: int,
+) -> bool:
+    """Check if community detection should be triggered."""
+    if triples_created <= 0:
+        return False
+    if total_triples < min_triples:
+        return False
+    if time.time() - last_rebuild < cooldown:
+        return False
+    return True
+
+
 async def run_ingestion(
     job_id: str,
     content_id: str,
@@ -74,6 +92,7 @@ async def run_ingestion(
     engine: Any | None = None,
     nlp: Any | None = None,
     federation_client: Any | None = None,
+    app_state: Any | None = None,
 ) -> None:
     """Orchestrate the multi-phase ingestion pipeline.
 
@@ -200,6 +219,49 @@ async def run_ingestion(
                 logger.warning(
                     "Federation enrichment failed for job %s", job_id, exc_info=True
                 )
+
+        # Auto-trigger community detection if conditions met
+        if triples_created > 0 and app_state is not None:
+            try:
+                from knowledge_service.config import settings as _settings  # noqa: PLC0415
+
+                total = stores.triples.count_triples()
+                last_rebuild = getattr(app_state, "_last_community_rebuild", 0.0)
+
+                if _should_rebuild_communities(
+                    triples_created=triples_created,
+                    total_triples=total,
+                    min_triples=_settings.community_min_triples,
+                    last_rebuild=last_rebuild,
+                    cooldown=_settings.community_cooldown,
+                ):
+                    import asyncio  # noqa: PLC0415
+
+                    from knowledge_service.stores.community import (  # noqa: PLC0415
+                        CommunityDetector,
+                        CommunitySummarizer,
+                    )
+
+                    detector = CommunityDetector(stores.triples)
+                    communities = await asyncio.to_thread(detector.detect)
+                    if communities and extraction_client:
+                        summarizer = CommunitySummarizer(
+                            extraction_client._client,
+                            stores.triples,
+                            model=extraction_client._model,
+                        )
+                        summarized = []
+                        for c in communities:
+                            summarized.append(await summarizer.summarize_one(c))
+                        community_store = getattr(app_state, "community_store", None)
+                        if community_store:
+                            await community_store.replace_all(summarized)
+                            app_state._last_community_rebuild = time.time()
+                            logger.info(
+                                "Auto community rebuild: %d communities", len(summarized)
+                            )
+            except Exception:
+                logger.warning("Auto community rebuild failed", exc_info=True)
 
     except Exception as exc:
         logger.exception("Ingestion failed for job %s in phase %s", job_id, current_phase)

@@ -178,6 +178,7 @@ async def _run_ingestion_worker(
         engine=engine,
         nlp=nlp,
         federation_client=federation_client,
+        app_state=app_state,
     )
 
 
