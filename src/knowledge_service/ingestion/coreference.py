@@ -11,6 +11,23 @@ from knowledge_service.ontology.uri import slugify, to_entity_uri
 
 logger = logging.getLogger(__name__)
 
+
+def _get_field(item, field: str, default=None):
+    """Get a field from a dict or Pydantic model."""
+    if isinstance(item, dict):
+        return item.get(field, default)
+    return getattr(item, field, default)
+
+
+def _to_dict(item) -> dict:
+    """Convert a Pydantic model or dict to a plain dict."""
+    if isinstance(item, dict):
+        return dict(item)
+    if hasattr(item, "model_dump"):
+        return item.model_dump()
+    return dict(item)
+
+
 _COREFERENCE_PROMPT_TEMPLATE = """\
 Given these entity mentions extracted from a document, group those
 that refer to the same real-world entity or concept. Return ONLY a JSON object:
@@ -53,14 +70,21 @@ class CoreferenceResult:
 
         rewritten = []
         for item in items:
-            item = dict(item)
-            subject = item.get("subject")
+            d = _to_dict(item)
+            subject = d.get("subject")
             if subject and isinstance(subject, str):
-                item["subject"] = alias_map.get(subject.lower(), subject)
-            obj = item.get("object")
+                d["subject"] = alias_map.get(subject.lower(), subject)
+            obj = d.get("object")
             if obj and isinstance(obj, str):
-                item["object"] = alias_map.get(obj.lower(), obj)
-            rewritten.append(item)
+                d["object"] = alias_map.get(obj.lower(), obj)
+            # Also rewrite label/uri for EntityInput items
+            label = d.get("label")
+            if label and isinstance(label, str):
+                d["label"] = alias_map.get(label.lower(), label)
+            uri = d.get("uri")
+            if uri and isinstance(uri, str):
+                d["uri"] = alias_map.get(uri.lower(), uri)
+            rewritten.append(d)
         return rewritten
 
 
@@ -118,11 +142,13 @@ class CoreferencePhase:
         # --- Collect all entity labels from knowledge items ---
         all_item_labels: set[str] = set()
         for item in knowledge_items:
-            subject = item.get("subject")
-            obj = item.get("object")
+            subject = (
+                _get_field(item, "subject") or _get_field(item, "label") or _get_field(item, "uri")
+            )
+            obj = _get_field(item, "object")
             if subject and isinstance(subject, str):
                 all_item_labels.add(slugify(subject))
-            if obj and isinstance(obj, str) and item.get("object_type") == "entity":
+            if obj and isinstance(obj, str) and _get_field(item, "object_type") == "entity":
                 all_item_labels.add(slugify(obj))
 
         # --- Tier 2: LLM coreference for unlinked entities ---
