@@ -73,6 +73,7 @@ async def run_ingestion(
     entity_store: Any | None = None,
     engine: Any | None = None,
     nlp: Any | None = None,
+    federation_client: Any | None = None,
 ) -> None:
     """Orchestrate the multi-phase ingestion pipeline.
 
@@ -163,6 +164,42 @@ async def run_ingestion(
         )
 
         await tracker.complete(triples_created, entities_resolved, chunks_failed)
+
+        # Background federation enrichment (best-effort, after job marked complete)
+        if federation_client is not None and triples_created > 0:
+            try:
+                from knowledge_service.ingestion.federation import (  # noqa: PLC0415
+                    FederationPhase,
+                )
+
+                fed_phase = FederationPhase(
+                    federation_client=federation_client,
+                    triple_store=stores.triples,
+                    max_lookups=10,
+                    delay=1.0,
+                )
+                # Collect entity labels from knowledge items
+                fed_entities = []
+                for item in knowledge_items:
+                    if hasattr(item, "label") and hasattr(item, "uri"):
+                        fed_entities.append({"label": item.label, "uri": item.uri})
+                    elif isinstance(item, dict):
+                        label = item.get("label") or item.get("subject", "")
+                        uri = item.get("uri") or item.get("subject", "")
+                        if label and uri:
+                            fed_entities.append({"label": label, "uri": uri})
+                if fed_entities:
+                    fed_result = await fed_phase.run(fed_entities)
+                    logger.info(
+                        "Federation enrichment for job %s: %d enriched, %d skipped",
+                        job_id,
+                        fed_result.entities_enriched,
+                        fed_result.entities_skipped,
+                    )
+            except Exception:
+                logger.warning(
+                    "Federation enrichment failed for job %s", job_id, exc_info=True
+                )
 
     except Exception as exc:
         logger.exception("Ingestion failed for job %s in phase %s", job_id, current_phase)
