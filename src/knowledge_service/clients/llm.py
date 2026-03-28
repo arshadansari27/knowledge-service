@@ -124,6 +124,7 @@ class ExtractionClient(BaseLLMClient):
         title: str | None = None,
         source_type: str | None = None,
         domains: list[str] | None = None,
+        entity_hints: list[dict] | None = None,
     ) -> list | None:
         """Extract KnowledgeInput items from raw text using two-phase extraction.
 
@@ -141,9 +142,13 @@ class ExtractionClient(BaseLLMClient):
 
         # --- Phase 1: Entity/Event extraction ---
         if self._prompt_builder:
-            phase1_prompt = self._prompt_builder.build_entity_prompt(text, title, source_type)
+            phase1_prompt = self._prompt_builder.build_entity_prompt(
+                text, title, source_type, entity_hints=entity_hints
+            )
         else:
-            phase1_prompt = _build_entity_extraction_prompt_fallback(text, title, source_type)
+            phase1_prompt = _build_entity_extraction_prompt_fallback(
+                text, title, source_type, entity_hints=entity_hints
+            )
 
         phase1_raw = await self._call_llm(phase1_prompt)
         if phase1_raw is None:
@@ -217,7 +222,10 @@ _MAX_TEXT_CHARS = 4000
 
 
 def _build_entity_extraction_prompt_fallback(
-    text: str, title: str | None, source_type: str | None
+    text: str,
+    title: str | None,
+    source_type: str | None,
+    entity_hints: list[dict] | None = None,
 ) -> str:
     """Build the phase-1 prompt that extracts Entity and Event items only."""
     context = ""
@@ -225,6 +233,10 @@ def _build_entity_extraction_prompt_fallback(
         context += f"Title: {title}\n"
     if source_type:
         context += f"Source type: {source_type}\n"
+    if entity_hints:
+        context += "\nNLP-detected entities (confirm, correct, or add to these):\n"
+        for hint in entity_hints:
+            context += f"- {hint['text']} ({hint['label']})\n"
     return f"""{context}Extract entities and events from the text below.
 Return ONLY a JSON object: {{"items": [...]}}
 

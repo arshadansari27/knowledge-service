@@ -68,8 +68,14 @@ class ExtractPhase:
         chunk_id_map: dict[int, str],
         title: str | None = None,
         source_type: str | None = None,
+        nlp_hints: list | None = None,
     ) -> tuple[list[dict], list[str | None], int]:
         """Extract knowledge from chunks.
+
+        Args:
+            nlp_hints: Optional list of NlpResult objects from the NLP pre-pass.
+                       When provided, entity hints are forwarded to the LLM extraction
+                       to improve entity recognition.
 
         Returns (knowledge_items, chunk_ids_for_items, chunks_failed).
         """
@@ -77,12 +83,34 @@ class ExtractPhase:
         chunk_ids: list[str | None] = []
         chunks_failed = 0
 
+        # Build a lookup from chunk_index → NlpResult for hint injection
+        hint_map: dict[int, Any] = {}
+        if nlp_hints:
+            for hint in nlp_hints:
+                hint_map[hint.chunk_index] = hint
+
         for chunk in chunk_records:
-            cid = chunk_id_map.get(chunk["chunk_index"])
+            chunk_index = chunk["chunk_index"]
+            cid = chunk_id_map.get(chunk_index)
+
+            # Build entity_hints from NLP results for this chunk
+            entity_hints: list[dict] | None = None
+            nlp_result = hint_map.get(chunk_index)
+            if nlp_result and nlp_result.entities:
+                entity_hints = [
+                    {
+                        "text": e.text,
+                        "label": e.label,
+                        "wikidata_id": e.wikidata_id,
+                    }
+                    for e in nlp_result.entities
+                ]
+
             items = await self._extraction_client.extract(
                 chunk["chunk_text"],
                 title=title,
                 source_type=source_type,
+                entity_hints=entity_hints,
             )
             if items is None:
                 chunks_failed += 1
@@ -90,6 +118,34 @@ class ExtractPhase:
             for item in items:
                 knowledge.append(item)
                 chunk_ids.append(cid)
+
+            # Add fallback EntityInput for NLP-detected entities the LLM missed
+            if nlp_result and nlp_result.entities and items is not None:
+                from knowledge_service.config import settings  # noqa: PLC0415
+                from knowledge_service.models import EntityInput  # noqa: PLC0415
+
+                llm_labels = set()
+                for item in items:
+                    if hasattr(item, "label"):
+                        llm_labels.add(item.label.lower())
+                    if hasattr(item, "subject"):
+                        llm_labels.add(item.subject.lower())
+                    elif isinstance(item, dict):
+                        for key in ("label", "subject", "uri"):
+                            val = item.get(key)
+                            if val:
+                                llm_labels.add(val.lower())
+
+                for ent in nlp_result.entities:
+                    if ent.text.lower() not in llm_labels:
+                        fallback = EntityInput(
+                            uri=ent.text,
+                            rdf_type=f"schema:{ent.label}" if ent.label else "schema:Thing",
+                            label=ent.text,
+                            confidence=settings.nlp_entity_confidence,
+                        )
+                        knowledge.append(fallback)
+                        chunk_ids.append(cid)
 
         return knowledge, chunk_ids, chunks_failed
 

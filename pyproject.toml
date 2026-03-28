@@ -27,6 +27,12 @@ dependencies = [
     "python-multipart>=0.0.9",
     "python-igraph>=0.11",
     "cachetools>=7.0.5",
+    "pymupdf>=1.25.0",
+    "readability-lxml>=0.8.0",
+    "beautifulsoup4>=4.12.0",
+    "lxml>=5.0.0",
+    "spacy>=3.8.0",
+    "spacy-entity-linker>=1.0.0",
 ]
 
 [project.optional-dependencies]
@@ -54,6 +60,8 @@ Repository = "https://github.com/arshadansari27/knowledge-service"
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["tests"]
+addopts = "--ignore=tests/e2e"
+markers = ["e2e: end-to-end tests requiring real services (run with: uv run pytest tests/e2e/ -v)"]
 
 [tool.ruff]
 target-version = "py312"
@@ -61,6 +69,7 @@ line-length = 100
 
 [dependency-groups]
 dev = [
+    "pip>=26.0.1",
     "pytest>=8.0",
     "pytest-asyncio>=0.24.0",
     "pytest-httpx>=0.35.0",

@@ -47,14 +47,26 @@ class EntityStore:
         """Resolve a concept label to a canonical entity URI.
 
         1. Check LRU cache
-        2. Embed the label
-        3. Search existing entity embeddings
-        4. If similarity >= threshold, return existing URI
-        5. Otherwise create new URI and store embedding
+        2. Check entity_aliases table
+        3. Embed the label
+        4. Search existing entity embeddings
+        5. If similarity >= threshold, return existing URI
+        6. Otherwise create new URI and store embedding
         """
         cache_key = label.lower()
         if cache_key in self._entity_cache:
             return self._entity_cache[cache_key]
+
+        # Check alias table before incurring embedding cost
+        async with self._pool.acquire() as conn:
+            alias_row = await conn.fetchrow(
+                "SELECT canonical FROM entity_aliases WHERE alias = $1",
+                cache_key,
+            )
+        if alias_row is not None:
+            uri = alias_row["canonical"]
+            self._entity_cache[cache_key] = uri
+            return uri
 
         embedding = await self._embedding_client.embed(label)
 
