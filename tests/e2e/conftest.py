@@ -1,8 +1,11 @@
 """E2E test configuration — requires real PostgreSQL, Ollama, and spaCy KB."""
+
 import os
 import pytest
 
-E2E_DB_URL = os.getenv("E2E_DB_URL", "postgresql://knowledge:knowledge@localhost:5433/knowledge_test")
+E2E_DB_URL = os.getenv(
+    "E2E_DB_URL", "postgresql://knowledge:knowledge@localhost:5433/knowledge_test"
+)
 E2E_LLM_URL = os.getenv("E2E_LLM_URL", "http://localhost:11434")
 E2E_SPACY_DATA = os.getenv("E2E_SPACY_DATA", "/tmp/spacy_test_data")
 

@@ -3,6 +3,7 @@
 Run: uv run pytest tests/e2e/ -v -m e2e
 Requires: PostgreSQL, Ollama (qwen3 + nomic-embed-text), spaCy KB
 """
+
 import pytest
 
 

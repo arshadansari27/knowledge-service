@@ -202,10 +202,12 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
     # Make parser_registry available to content endpoint module
     import knowledge_service.api.content as _content_mod  # noqa: PLC0415
+
     _content_mod._parser_registry = parser_registry
 
     # spaCy NLP pipeline (optional — graceful degradation if unavailable)
     from knowledge_service.nlp.bootstrap import load_spacy_nlp  # noqa: PLC0415
+
     nlp = load_spacy_nlp(settings.spacy_data_dir)
     app.state.nlp = nlp
     if nlp:

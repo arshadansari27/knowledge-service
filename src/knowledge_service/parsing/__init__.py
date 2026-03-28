@@ -23,8 +23,9 @@ class Parser(Protocol):
 
     supported_formats: set[str]
 
-    async def parse(self, source: bytes | str, content_type: str | None = None) -> ParsedDocument:
-        ...
+    async def parse(
+        self, source: bytes | str, content_type: str | None = None
+    ) -> ParsedDocument: ...
 
 
 # ---------------------------------------------------------------------------

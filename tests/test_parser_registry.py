@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import pytest
 
 from knowledge_service.parsing import ParsedDocument, ParserRegistry
 from knowledge_service.parsing.text import TextParser
@@ -15,7 +14,9 @@ from knowledge_service.parsing.text import TextParser
 
 class TestParsedDocument:
     def test_required_fields(self):
-        doc = ParsedDocument(text="hello", title="My Doc", metadata={"key": "val"}, source_format="text")
+        doc = ParsedDocument(
+            text="hello", title="My Doc", metadata={"key": "val"}, source_format="text"
+        )
         assert doc.text == "hello"
         assert doc.title == "My Doc"
         assert doc.metadata == {"key": "val"}
@@ -26,7 +27,9 @@ class TestParsedDocument:
         assert doc.images == []
 
     def test_images_field(self):
-        doc = ParsedDocument(text="hi", title=None, metadata={}, source_format="image", images=[b"\xff\xd8\xff"])
+        doc = ParsedDocument(
+            text="hi", title=None, metadata={}, source_format="image", images=[b"\xff\xd8\xff"]
+        )
         assert len(doc.images) == 1
         assert doc.images[0] == b"\xff\xd8\xff"
 

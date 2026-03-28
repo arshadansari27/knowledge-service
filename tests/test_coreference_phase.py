@@ -3,9 +3,8 @@
 from __future__ import annotations
 
 from contextlib import asynccontextmanager
-from unittest.mock import AsyncMock, MagicMock, call
+from unittest.mock import AsyncMock, MagicMock
 
-import pytest
 
 from knowledge_service.ingestion.coreference import (
     CoreferencePhase,
@@ -183,7 +182,12 @@ class TestCoreferencePhaseWikidataTier:
         ]
         # knowledge_items reference slugified labels that match linked entities
         knowledge_items = [
-            {"subject": "modi", "predicate": "is_leader_of", "object": "india", "object_type": "entity"},
+            {
+                "subject": "modi",
+                "predicate": "is_leader_of",
+                "object": "india",
+                "object_type": "entity",
+            },
         ]
 
         phase = CoreferencePhase(client, pool)
@@ -239,19 +243,27 @@ class TestCoreferencePhaseWikidataTier:
 class TestCoreferencePhaseUnlinkedLLMTier:
     async def test_tier2_llm_called_for_unlinked_entities(self):
         """Unlinked entities in knowledge items trigger the LLM call."""
-        llm_response = [
-            {"canonical": "cold_exposure", "aliases": ["cold", "cold_water_immersion"]}
-        ]
+        llm_response = [{"canonical": "cold_exposure", "aliases": ["cold", "cold_water_immersion"]}]
         client = _make_extraction_client(llm_response=llm_response)
         pool = _make_pool()
 
         knowledge_items = [
-            {"subject": "cold", "predicate": "increases", "object": "dopamine", "object_type": "entity"},
-            {"subject": "cold_water_immersion", "predicate": "causes", "object": "shivering", "object_type": "entity"},
+            {
+                "subject": "cold",
+                "predicate": "increases",
+                "object": "dopamine",
+                "object_type": "entity",
+            },
+            {
+                "subject": "cold_water_immersion",
+                "predicate": "causes",
+                "object": "shivering",
+                "object_type": "entity",
+            },
         ]
 
         phase = CoreferencePhase(client, pool)
-        result = await phase.run(knowledge_items, [])
+        await phase.run(knowledge_items, [])
 
         client._call_llm.assert_called_once()
         prompt_arg = client._call_llm.call_args[0][0]
@@ -260,14 +272,17 @@ class TestCoreferencePhaseUnlinkedLLMTier:
 
     async def test_tier2_llm_groups_create_entity_groups(self):
         """LLM-returned groups produce EntityGroup objects with correct canonical/aliases."""
-        llm_response = [
-            {"canonical": "cold_exposure", "aliases": ["cold", "cold_water_immersion"]}
-        ]
+        llm_response = [{"canonical": "cold_exposure", "aliases": ["cold", "cold_water_immersion"]}]
         client = _make_extraction_client(llm_response=llm_response)
         pool = _make_pool()
 
         knowledge_items = [
-            {"subject": "cold", "predicate": "increases", "object": "dopamine", "object_type": "entity"},
+            {
+                "subject": "cold",
+                "predicate": "increases",
+                "object": "dopamine",
+                "object_type": "entity",
+            },
         ]
 
         phase = CoreferencePhase(client, pool)
@@ -287,7 +302,12 @@ class TestCoreferencePhaseUnlinkedLLMTier:
         pool = _make_pool()
 
         knowledge_items = [
-            {"subject": "unknown_entity", "predicate": "does", "object": "thing", "object_type": "entity"},
+            {
+                "subject": "unknown_entity",
+                "predicate": "does",
+                "object": "thing",
+                "object_type": "entity",
+            },
         ]
 
         phase = CoreferencePhase(client, pool)
@@ -301,7 +321,12 @@ class TestCoreferencePhaseUnlinkedLLMTier:
         pool = _make_pool()
 
         knowledge_items = [
-            {"subject": "entity_a", "predicate": "rel", "object": "entity_b", "object_type": "entity"},
+            {
+                "subject": "entity_a",
+                "predicate": "rel",
+                "object": "entity_b",
+                "object_type": "entity",
+            },
         ]
 
         phase = CoreferencePhase(client, pool)
@@ -312,14 +337,17 @@ class TestCoreferencePhaseUnlinkedLLMTier:
 
     async def test_tier2_canonical_slugified(self):
         """LLM-returned canonical labels are slugified."""
-        llm_response = [
-            {"canonical": "Narendra Modi", "aliases": ["Modi PM"]}
-        ]
+        llm_response = [{"canonical": "Narendra Modi", "aliases": ["Modi PM"]}]
         client = _make_extraction_client(llm_response=llm_response)
         pool = _make_pool()
 
         knowledge_items = [
-            {"subject": "narendra_modi", "predicate": "is", "object": "pm", "object_type": "entity"},
+            {
+                "subject": "narendra_modi",
+                "predicate": "is",
+                "object": "pm",
+                "object_type": "entity",
+            },
         ]
 
         phase = CoreferencePhase(client, pool)
@@ -459,9 +487,7 @@ class TestCoreferencePhaseRunIntegration:
 
     async def test_run_combined_tier1_and_tier2(self):
         """Tier 1 merges Wikidata entities; Tier 2 groups unlinked leftovers."""
-        llm_response = [
-            {"canonical": "cold_exposure", "aliases": ["cold", "cold_water"]}
-        ]
+        llm_response = [{"canonical": "cold_exposure", "aliases": ["cold", "cold_water"]}]
         client = _make_extraction_client(llm_response=llm_response)
         pool = _make_pool()
 
@@ -469,8 +495,18 @@ class TestCoreferencePhaseRunIntegration:
             _make_nlp_result(0, [("Modi", "Q1058"), ("Narendra Modi", "Q1058")]),
         ]
         knowledge_items = [
-            {"subject": "cold", "predicate": "increases", "object": "dopamine", "object_type": "entity"},
-            {"subject": "cold_water", "predicate": "causes", "object": "shock", "object_type": "entity"},
+            {
+                "subject": "cold",
+                "predicate": "increases",
+                "object": "dopamine",
+                "object_type": "entity",
+            },
+            {
+                "subject": "cold_water",
+                "predicate": "causes",
+                "object": "shock",
+                "object_type": "entity",
+            },
         ]
 
         phase = CoreferencePhase(client, pool)
@@ -486,15 +522,23 @@ class TestCoreferencePhaseRunIntegration:
 
     async def test_run_canonicalize_after_run(self):
         """Full pipeline: run then canonicalize rewrites knowledge items correctly."""
-        llm_response = [
-            {"canonical": "cold_exposure", "aliases": ["cold", "cold_water_immersion"]}
-        ]
+        llm_response = [{"canonical": "cold_exposure", "aliases": ["cold", "cold_water_immersion"]}]
         client = _make_extraction_client(llm_response=llm_response)
         pool = _make_pool()
 
         knowledge_items = [
-            {"subject": "cold", "predicate": "increases", "object": "dopamine", "object_type": "entity"},
-            {"subject": "cold_water_immersion", "predicate": "causes", "object": "shivering", "object_type": "literal"},
+            {
+                "subject": "cold",
+                "predicate": "increases",
+                "object": "dopamine",
+                "object_type": "entity",
+            },
+            {
+                "subject": "cold_water_immersion",
+                "predicate": "causes",
+                "object": "shivering",
+                "object_type": "literal",
+            },
         ]
 
         phase = CoreferencePhase(client, pool)
