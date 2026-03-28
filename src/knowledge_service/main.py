@@ -31,6 +31,7 @@ from knowledge_service.api import (
     contradictions,
     ask,
     changes,
+    upload as upload_api,
 )
 from knowledge_service.api.theses import router as theses_router
 from knowledge_service.admin.theses import router as admin_theses_router
@@ -290,6 +291,7 @@ def create_app(use_lifespan: bool = True) -> FastAPI:
     )
     app.include_router(health.router)
     app.include_router(content.router, prefix="/api")
+    app.include_router(upload_api.router, prefix="/api")
     app.include_router(claims.router, prefix="/api")
     app.include_router(search.router, prefix="/api")
     app.include_router(knowledge.router, prefix="/api")
