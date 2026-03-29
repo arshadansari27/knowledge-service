@@ -223,12 +223,30 @@ def _remove_inferred_triple_with_annotations(raw_store, s, p, o, graph_node) -> 
     raw_store.remove(Quad(s, p, o, graph_node))
 
 
-def retract_stale_inferences(triple_hash: str, triple_store) -> int:
+_MAX_RETRACT_DEPTH = 10
+
+
+def retract_stale_inferences(
+    triple_hash: str,
+    triple_store,
+    _seen: set[str] | None = None,
+    _depth: int = 0,
+) -> int:
     """Remove inferred triples that depend on a changed source triple.
 
     Synchronous — operates directly on the TripleStore. Wrap in asyncio.to_thread()
-    at the call site.
+    at the call site. Includes cycle detection and depth limit.
     """
+    if _depth >= _MAX_RETRACT_DEPTH:
+        logger.warning("retract_stale_inferences: depth limit reached at hash %s", triple_hash)
+        return 0
+
+    if _seen is None:
+        _seen = set()
+    if triple_hash in _seen:
+        return 0
+    _seen.add(triple_hash)
+
     from knowledge_service.ontology.namespaces import KS_GRAPH_INFERRED
     from knowledge_service.ontology.uri import KS as KS_NS
     from pyoxigraph import Literal as Lit
@@ -261,7 +279,7 @@ def retract_stale_inferences(triple_hash: str, triple_store) -> int:
         # Cascade: retract inferences that depended on this inferred triple
         dep = {"subject": s_val, "predicate": p_val, "object": o_val}
         dep_hash = compute_hash(dep)
-        removed += retract_stale_inferences(dep_hash, triple_store)
+        removed += retract_stale_inferences(dep_hash, triple_store, _seen, _depth + 1)
 
     return removed
 
