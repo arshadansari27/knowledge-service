@@ -120,16 +120,17 @@ async def post_ask(body: AskRequest, request: Request) -> AskResponse:
         provenance_store = stores.provenance
         content_store = stores.content
 
-        chunk_ids_to_fetch: list[str] = []
-        triple_prov_map: dict[str, list[dict]] = {}
+        triple_hashes = [
+            _triple_hash(t["subject"], t["predicate"], t["object"])
+            for t in context.knowledge_triples
+        ]
+        triple_prov_map = await provenance_store.get_by_triples(triple_hashes)
 
-        for t in context.knowledge_triples:
-            th = _triple_hash(t["subject"], t["predicate"], t["object"])
-            prov_rows = await provenance_store.get_by_triple(th)
+        chunk_ids_to_fetch: list[str] = []
+        for prov_rows in triple_prov_map.values():
             for row in prov_rows:
                 if row.get("chunk_id"):
                     chunk_ids_to_fetch.append(str(row["chunk_id"]))
-            triple_prov_map[th] = prov_rows
 
         if chunk_ids_to_fetch:
             chunk_texts = await content_store.get_chunks_by_ids(chunk_ids_to_fetch)
