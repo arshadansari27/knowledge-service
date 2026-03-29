@@ -213,6 +213,20 @@ class TestTransitiveRule:
         assert len(backward) == 1
         assert backward[0].confidence == pytest.approx(0.72)
 
+    def test_literal_object_skipped(self, store_with_ontology):
+        """Transitive rule should skip when object is a literal (non-URI)."""
+        ts = store_with_ontology
+        rule = TransitiveRule()
+        rule.configure(ts)
+        trigger = {
+            "subject": f"{KS_DATA}dagster_pipeline",
+            "predicate": f"{KS}part_of",
+            "object": "some literal value",
+            "confidence": 0.9,
+        }
+        results = rule.discover(trigger, ts, depth=1)
+        assert len(results) == 0
+
     def test_non_transitive_predicate_skipped(self, store_with_ontology):
         ts = store_with_ontology
         rule = TransitiveRule()

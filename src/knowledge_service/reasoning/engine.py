@@ -137,6 +137,9 @@ class TransitiveRule(InferenceRule):
             return []
         subj = triple["subject"]
         obj = triple.get("object") or triple.get("object_", "")
+        # Object becomes subject in transitive chain — skip if it's a literal (non-URI)
+        if not is_uri(obj):
+            return []
         conf = triple["confidence"]
         source_hash = _compute_trigger_hash(triple)
         results = []
