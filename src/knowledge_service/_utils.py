@@ -15,7 +15,7 @@ def _is_uri(value: str) -> bool:
 
 def sanitize_sparql_string(value: str) -> str:
     """Sanitize a string for safe inclusion in SPARQL queries."""
-    return re.sub(r'["\\\n\r]', "", value)
+    return re.sub(r'["\\\n\r<>]', "", value)
 
 
 def is_object_entity(item) -> bool:

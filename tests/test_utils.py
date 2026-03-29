@@ -1,4 +1,10 @@
-from knowledge_service._utils import _is_uri, _triple_hash, _rdf_value_to_str, is_object_entity
+from knowledge_service._utils import (
+    _is_uri,
+    _triple_hash,
+    _rdf_value_to_str,
+    is_object_entity,
+    sanitize_sparql_string,
+)
 from pyoxigraph import NamedNode, Literal
 
 
@@ -40,6 +46,26 @@ def test_rdf_value_to_str_none():
 
 def test_rdf_value_to_str_plain_string():
     assert _rdf_value_to_str("plain") == "plain"
+
+
+class TestSanitizeSparqlString:
+    def test_strips_angle_brackets(self):
+        result = sanitize_sparql_string("http://evil.com> . ?s <http://x")
+        assert "<" not in result
+        assert ">" not in result
+
+    def test_strips_quotes_and_backslashes(self):
+        result = sanitize_sparql_string('value"with\\escapes')
+        assert '"' not in result
+        assert "\\" not in result
+
+    def test_strips_newlines(self):
+        result = sanitize_sparql_string("line1\nline2\rline3")
+        assert "\n" not in result
+        assert "\r" not in result
+
+    def test_preserves_normal_uri(self):
+        assert sanitize_sparql_string("http://example.com/path") == "http://example.com/path"
 
 
 class TestIsObjectEntity:

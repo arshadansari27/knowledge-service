@@ -531,3 +531,29 @@ class TestGetKnowledgeQueryLocal:
 
         assert response.status_code == 200
         assert len(response.json()) == 1  # Just the local result
+
+
+# ---------------------------------------------------------------------------
+# Tests: URI validation on query filters
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_knowledge_query_rejects_non_uri_subject(client):
+    """Subject filter must be a valid URI."""
+    resp = await client.get("/api/knowledge/query", params={"subject": "not-a-uri"})
+    assert resp.status_code == 422
+
+
+@pytest.mark.asyncio
+async def test_knowledge_query_rejects_non_uri_predicate(client):
+    """Predicate filter must be a valid URI."""
+    resp = await client.get("/api/knowledge/query", params={"predicate": "not-a-uri"})
+    assert resp.status_code == 422
+
+
+@pytest.mark.asyncio
+async def test_knowledge_query_allows_literal_object(client):
+    """Object filter can be a literal (not a URI)."""
+    resp = await client.get("/api/knowledge/query", params={"object": "some literal value"})
+    assert resp.status_code == 200

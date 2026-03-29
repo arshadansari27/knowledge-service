@@ -75,8 +75,12 @@ async def get_knowledge_query(
     # Build SPARQL filters
     filters = []
     if subject:
+        if not _is_uri(subject):
+            raise HTTPException(status_code=422, detail="subject must be a valid URI")
         filters.append(f"FILTER(?s = <{sanitize_sparql_string(subject)}>)")
     if predicate:
+        if not _is_uri(predicate):
+            raise HTTPException(status_code=422, detail="predicate must be a valid URI")
         filters.append(f"FILTER(?p = <{sanitize_sparql_string(predicate)}>)")
     if object:
         if _is_uri(object):
