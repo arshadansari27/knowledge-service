@@ -484,7 +484,7 @@ class TestSparqlErrorHandling:
         ) as c:
             response = await c.post(
                 "/api/knowledge/sparql",
-                json={"query": "INVALID SPARQL"},
+                json={"query": "SELECT ?s WHERE { BROKEN SYNTAX }"},
             )
 
         assert response.status_code == 400
@@ -567,18 +567,14 @@ async def test_knowledge_query_allows_literal_object(client):
 @pytest.mark.asyncio
 async def test_sparql_rejects_delete(client):
     """DELETE queries must be rejected."""
-    resp = await client.post(
-        "/api/knowledge/sparql", json={"query": "DELETE WHERE { ?s ?p ?o }"}
-    )
+    resp = await client.post("/api/knowledge/sparql", json={"query": "DELETE WHERE { ?s ?p ?o }"})
     assert resp.status_code == 400
 
 
 @pytest.mark.asyncio
 async def test_sparql_rejects_insert(client):
     """INSERT queries must be rejected."""
-    resp = await client.post(
-        "/api/knowledge/sparql", json={"query": "INSERT DATA { <a> <b> <c> }"}
-    )
+    resp = await client.post("/api/knowledge/sparql", json={"query": "INSERT DATA { <a> <b> <c> }"})
     assert resp.status_code == 400
 
 

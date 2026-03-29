@@ -84,7 +84,7 @@ def auth_app():
 @pytest.fixture
 async def auth_client(auth_app):
     transport = ASGITransport(app=auth_app)
-    async with AsyncClient(transport=transport, base_url="http://test") as client:
+    async with AsyncClient(transport=transport, base_url="https://test") as client:
         yield client
 
 

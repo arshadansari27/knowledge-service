@@ -11,11 +11,18 @@ from knowledge_service.ontology.namespaces import KS_GRAPH_ASSERTED, KS_GRAPH_EX
 logger = logging.getLogger(__name__)
 
 
-_ALLOWED_JOB_COLUMNS = frozenset({
-    "chunks_embedded", "chunks_extracted", "chunks_failed",
-    "triples_created", "entities_resolved", "entities_linked",
-    "entities_coref", "error",
-})
+_ALLOWED_JOB_COLUMNS = frozenset(
+    {
+        "chunks_embedded",
+        "chunks_extracted",
+        "chunks_failed",
+        "triples_created",
+        "entities_resolved",
+        "entities_linked",
+        "entities_coref",
+        "error",
+    }
+)
 
 
 class JobTracker:
