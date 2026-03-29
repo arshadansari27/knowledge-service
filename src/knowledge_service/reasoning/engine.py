@@ -207,7 +207,9 @@ class TypeInheritanceRule(InferenceRule):
         results = []
 
         if pred == self._is_a_uri:
-            # A is_a B → inherit B's properties
+            # A is_a B → inherit B's properties — skip if B is a literal (non-URI)
+            if not is_uri(obj):
+                return []
             properties = triple_store.get_triples(subject=obj, predicate=self._has_property_uri)
             for prop in properties:
                 prop_obj = prop["object"]

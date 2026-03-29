@@ -314,6 +314,20 @@ class TestTypeInheritanceRule:
         assert results[0].object_ == f"{KS_DATA}warm_blooded"
         assert results[0].confidence == pytest.approx(0.95 * 0.9)
 
+    def test_literal_object_skipped_is_a(self, store_with_ontology):
+        """TypeInheritanceRule should skip when is_a object is a literal."""
+        ts = store_with_ontology
+        rule = TypeInheritanceRule()
+        rule.configure(ts)
+        trigger = {
+            "subject": f"{KS_DATA}pipeline",
+            "predicate": f"{KS}is_a",
+            "object": "some literal type",
+            "confidence": 0.9,
+        }
+        results = rule.discover(trigger, ts, depth=1)
+        assert len(results) == 0
+
     def test_unrelated_predicate_skipped(self, store_with_ontology):
         ts = store_with_ontology
         rule = TypeInheritanceRule()
