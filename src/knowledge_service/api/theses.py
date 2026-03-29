@@ -53,7 +53,18 @@ async def create_thesis(body: ThesisCreate, request: Request):
                     }
                 )
 
-    return {"id": thesis_id, "status": "draft", "claims": claims}
+    # Auto-search existing triples for supporting evidence
+    evidence_found = 0
+    for claim in claims:
+        s_uri = to_entity_uri(claim["subject"])
+        p_uri = to_predicate_uri(claim["predicate"])
+        existing = stores.triples.get_triples(subject=s_uri, predicate=p_uri)
+        for triple in existing:
+            if triple["object"] == claim["object"]:
+                evidence_found += 1
+                break
+
+    return {"id": thesis_id, "status": "draft", "claims": claims, "evidence_found": evidence_found}
 
 
 @router.get("")
