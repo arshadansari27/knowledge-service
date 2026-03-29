@@ -41,7 +41,7 @@ Content arrives via `/api/content`, `/api/content/upload` (file upload), or `/ap
 
 ### Key Components
 
-- **TripleStore** (`stores/triples.py`): pyoxigraph wrapper with **named graph support**. Triples are stored in 4 trust-tiered named graphs: `ks:graph/ontology` (schema), `ks:graph/asserted` (human-provided), `ks:graph/extracted` (LLM-derived), `ks:graph/inferred` (computed). All triples are content-addressed via SHA-256 hash. RDF-star annotations attach confidence, knowledge type, and temporal validity. Single `get_triples(subject, predicate, object_, graphs)` method replaces 3 separate query methods. Confidence updates use the Python API to find reification blank nodes.
+- **TripleStore** (`stores/triples.py`): pyoxigraph wrapper with **named graph support**. Triples are stored in 5 trust-tiered named graphs: `ks:graph/ontology` (schema), `ks:graph/asserted` (human-provided), `ks:graph/extracted` (LLM-derived), `ks:graph/inferred` (computed), `ks:graph/federated` (external sources). All triples are content-addressed via SHA-256 hash. RDF-star annotations attach confidence, knowledge type, and temporal validity. Single `get_triples(subject, predicate, object_, graphs)` method replaces 3 separate query methods. Confidence updates use the Python API to find reification blank nodes.
 
 - **ContentStore** (`stores/content.py`): PostgreSQL + pgvector. Manages `content_metadata` (document metadata) and `content` (chunks with embeddings). Uses `halfvec(768)` for nomic-embed-text embeddings. Hybrid search via vector + BM25 with Reciprocal Rank Fusion.
 
@@ -63,7 +63,7 @@ Content arrives via `/api/content`, `/api/content/upload` (file upload), or `/ap
 
 - **Coreference Phase** (`ingestion/coreference.py`): Two-tier entity deduplication. Tier-1: entities sharing a Wikidata QID (from NLP pre-pass) are merged deterministically. Tier-2: remaining unlinked entities are sent to the LLM in a single call for semantic grouping. Results stored in `entity_aliases` table. `canonicalize()` method rewrites knowledge item labels before processing.
 
-- **Noisy-OR** (`reasoning/noisy_or.py`): 6-line evidence combination: `P = 1 - product(1 - ci)`. Replaces the 332-line ProbLog-based ReasoningEngine.
+- **Noisy-OR** (`reasoning/noisy_or.py`): 4-line evidence combination: `P = 1 - product(1 - ci)`. Replaces the 332-line ProbLog-based ReasoningEngine.
 
 - **Inference Engine** (`reasoning/engine.py`): Forward-chaining inference at ingestion time. Three ontology-declared rule types: `InverseRule` (materializes `ks:inversePredicate` pairs), `TransitiveRule` (closes `ks:transitivePredicate` chains), `TypeInheritanceRule` (propagates `has_property` through `is_a`). BFS execution with depth cap of 3 and cycle detection via hash dedup. Confidence = product of source confidences. Derived triples go to `ks:graph/inferred` with `ks:derivedFrom` and `ks:inferenceMethod` RDF-star annotations. Retraction cascades when source triples change. Initialized once in app lifespan, stored on `app.state.inference_engine`.
 
@@ -78,12 +78,12 @@ Content arrives via `/api/content`, `/api/content/upload` (file upload), or `/ap
 - **URI normalization**: Single source of truth in `ontology/uri.py` — `to_entity_uri()`, `to_predicate_uri()`, `slugify()`, `is_uri()`.
 - **Namespaces**: `ontology/namespaces.py` — NamedNode factories, graph constants, `ks:` prefix helpers.
 - **Schema**: `ontology/schema.ttl` — knowledge type classes, properties, domain predicates, opposite/inverse pairs.
-- **Domains**: `ontology/domains/base.ttl` — 18 canonical predicates with synonyms, materiality weights, opposite predicates, transitive annotations (`part_of`, `is_a`, `located_in`, `depends_on`), and inverse pairs (`contains ↔ part_of`).
+- **Domains**: `ontology/domains/` — domain-specific `.ttl` files (`base.ttl`, `health.ttl`, `technology.ttl`, `research.ttl`). `base.ttl` defines 18 canonical predicates with synonyms, materiality weights, opposite predicates, transitive annotations (`part_of`, `is_a`, `located_in`, `depends_on`), and inverse pairs (`contains ↔ part_of`).
 - **Bootstrap**: `ontology/bootstrap.py` — loads `schema.ttl` + all `domains/*.ttl` into `ks:graph/ontology`. Accepts `TripleStore` wrapper.
 
 ### Models
 
-3 knowledge input types in `models.py` using discriminated union: `TripleInput`, `EventInput`, `EntityInput`. Each has a `to_triples()` method that expands to `(subject, predicate, object)` tuples for ingestion.
+3 knowledge input types in `models.py` using union type (no Pydantic discriminator): `TripleInput`, `EventInput`, `EntityInput`. Each has a `to_triples()` method that expands to `(subject, predicate, object)` tuples for ingestion.
 
 ### App Lifecycle
 
