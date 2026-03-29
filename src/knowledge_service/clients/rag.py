@@ -20,6 +20,9 @@ class RAGAnswer:
     source_urls_cited: list[str] = field(default_factory=list)
 
 
+_MAX_PROMPT_CHARS = 48_000
+
+
 def build_rag_prompt(question: str, context: RetrievalContext) -> str:
     """Build the LLM prompt from a question and retrieval context."""
     sections: list[str] = [
@@ -28,10 +31,12 @@ def build_rag_prompt(question: str, context: RetrievalContext) -> str:
         'Return a JSON object: {"answer": "...", "source_urls_cited": ["..."]}',
         "",
     ]
+    running_len = sum(len(s) for s in sections)
 
     # Content section
     if context.content_results:
         sections.append("## Relevant Content")
+        running_len += len(sections[-1])
         for row in context.content_results:
             title = row.get("title", "Untitled")
             source_type = row.get("source_type", "unknown")
@@ -40,14 +45,18 @@ def build_rag_prompt(question: str, context: RetrievalContext) -> str:
             section = (
                 f" [Section: {row.get('section_header')}]" if row.get("section_header") else ""
             )
-            sections.append(
-                f'- "{title}" ({source_type}, similarity: {similarity:.2f}){section}: {text}'
-            )
+            line = f'- "{title}" ({source_type}, similarity: {similarity:.2f}){section}: {text}'
+            if running_len + len(line) > _MAX_PROMPT_CHARS:
+                sections.append("(... additional sources truncated for length ...)")
+                break
+            sections.append(line)
+            running_len += len(line)
         sections.append("")
 
     # Knowledge triples section
     if context.knowledge_triples:
         sections.append("## Knowledge Graph Facts")
+        running_len += len(sections[-1])
         for t in context.knowledge_triples:
             s = t.get("subject", "?")
             p = t.get("predicate", "?")
@@ -55,7 +64,12 @@ def build_rag_prompt(question: str, context: RetrievalContext) -> str:
             ktype = t.get("knowledge_type", "?")
             conf = t.get("confidence", "?")
             trust = t.get("trust_tier", "unknown")
-            sections.append(f"- [{trust}] {s} -> {p} -> {o} ({ktype}, confidence: {conf})")
+            line = f"- [{trust}] {s} -> {p} -> {o} ({ktype}, confidence: {conf})"
+            if running_len + len(line) > _MAX_PROMPT_CHARS:
+                sections.append("(... additional triples truncated for length ...)")
+                break
+            sections.append(line)
+            running_len += len(line)
         sections.append("")
 
     # Contradictions section

@@ -61,6 +61,43 @@ def _sample_context() -> RetrievalContext:
     )
 
 
+class TestBuildPromptLengthCap:
+    def test_prompt_capped_with_many_large_sources(self):
+        """RAG prompt should not exceed ~50K chars even with 100 large chunks."""
+        content_results = [
+            {
+                "title": f"Doc {i}",
+                "source_type": "article",
+                "similarity": 0.9,
+                "chunk_text": "x" * 4000,
+            }
+            for i in range(100)
+        ]
+        context = RetrievalContext(content_results=content_results)
+        prompt = build_rag_prompt("test question", context)
+        assert len(prompt) <= 55_000  # Allow some overhead for headers
+
+    def test_prompt_includes_truncation_notice(self):
+        """When truncated, prompt should indicate more sources exist."""
+        content_results = [
+            {
+                "title": f"Doc {i}",
+                "source_type": "article",
+                "similarity": 0.9,
+                "chunk_text": "x" * 4000,
+            }
+            for i in range(100)
+        ]
+        context = RetrievalContext(content_results=content_results)
+        prompt = build_rag_prompt("test question", context)
+        assert "truncated" in prompt.lower()
+
+    def test_small_prompt_not_truncated(self):
+        """Small prompts should not be truncated."""
+        prompt = build_rag_prompt("q", _sample_context())
+        assert "truncated" not in prompt.lower()
+
+
 class TestBuildPrompt:
     def test_includes_question(self):
         prompt = build_rag_prompt("Does cold exposure increase dopamine?", _sample_context())
