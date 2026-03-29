@@ -162,15 +162,18 @@ Accepts a **single object** or a **JSON array** for batch processing.
 }
 ```
 
-**Response:**
+**Response (202 Accepted):**
 ```json
 {
   "content_id": "uuid",
-  "triples_created": 3,
-  "contradictions_detected": [],
-  "entities_resolved": 0
+  "job_id": "uuid",
+  "status": "accepted",
+  "chunks_total": 5,
+  "chunks_capped_from": null
 }
 ```
+
+Processing happens asynchronously. Poll `/api/content/{content_id}/status` for progress.
 
 **Batch request** — send an array, get an array:
 
@@ -380,7 +383,7 @@ Structured query with optional `subject`, `predicate`, `object` filters. Returns
 POST /api/knowledge/sparql
 ```
 
-Execute any SPARQL 1.2 SELECT query directly against the knowledge graph. Supports RDF-star syntax for querying annotations.
+Execute a SPARQL 1.2 SELECT or ASK query against the knowledge graph. Supports RDF-star syntax for querying annotations. Only SELECT and ASK queries are allowed (no INSERT, DELETE, or UPDATE).
 
 Accepts two content types:
 
@@ -464,7 +467,7 @@ Ask a natural language question against the knowledge base. Retrieves relevant c
 
 **Parameters:**
 - `question` (required) — natural language question (max 4000 chars)
-- `max_sources` — max content items to retrieve (1–100, default 5)
+- `max_sources` — max content items to retrieve (1–20, default 5)
 - `min_confidence` — filter out knowledge triples below this confidence (0.0–1.0, default 0.0)
 
 **Response:**
@@ -646,7 +649,7 @@ All tests mock external dependencies — no PostgreSQL or LLM provider required.
 GitHub Actions pipeline on every push/merge to `main`:
 
 1. **Lint** — `ruff check` + `ruff format --check`
-2. **Test** — `pytest tests/ -v` (617+ tests)
+2. **Test** — `pytest tests/ -v` (660+ tests)
 3. **Version bump** — auto-increments patch version in `pyproject.toml`, commits back to `main`, creates `vX.Y.Z` git tag
 4. **Docker build** — builds and pushes to Docker Hub as `arshadansari27/knowledge-service:X.Y.Z` and `:latest`
 
@@ -748,7 +751,7 @@ The system reuses established vocabularies and keeps the custom `ks:` namespace 
 
 ## Status
 
-All phases complete and deployed to production (617+ tests).
+All phases complete and deployed to production (660+ tests).
 
 | Phase | What |
 |-------|------|
