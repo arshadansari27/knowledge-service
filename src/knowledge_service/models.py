@@ -168,6 +168,7 @@ class IngestionJobStatus(BaseModel):
 class ClaimsResponse(BaseModel):
     triples_created: int
     contradictions_detected: list[dict] = []
+    thesis_breaks: list[dict] = []
 
 
 class SearchResult(BaseModel):

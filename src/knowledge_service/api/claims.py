@@ -24,6 +24,7 @@ async def _process_one_claims_request(body: ClaimsRequest, request: Request) -> 
 
     triples_created = 0
     contradictions_all: list[dict] = []
+    thesis_breaks_all: list[dict] = []
 
     ctx = IngestContext.from_content(
         url=body.source_url,
@@ -46,6 +47,7 @@ async def _process_one_claims_request(body: ClaimsRequest, request: Request) -> 
             if result.is_new:
                 triples_created += 1
             contradictions_all.extend(result.contradictions)
+            thesis_breaks_all.extend(result.thesis_breaks)
 
     # Log ingestion event (parity with content pipeline)
     try:
@@ -69,6 +71,7 @@ async def _process_one_claims_request(body: ClaimsRequest, request: Request) -> 
     return ClaimsResponse(
         triples_created=triples_created,
         contradictions_detected=contradictions_all,
+        thesis_breaks=thesis_breaks_all,
     )
 
 

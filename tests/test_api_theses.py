@@ -23,6 +23,8 @@ def _make_mock_stores():
     }
     stores.theses.list.return_value = [{"id": "thesis-uuid-1", "name": "Test", "status": "draft"}]
     stores.theses.find_by_hashes.return_value = []
+    stores.triples = MagicMock()
+    stores.triples.get_triples.return_value = []
     return stores
 
 
@@ -67,6 +69,50 @@ class TestCreateThesis:
         data = resp.json()
         assert len(data["claims"]) == 1
         stores.theses.add_claim.assert_called_once()
+
+    async def test_evidence_search_finds_matching_triples(self):
+        stores = _make_mock_stores()
+        stores.triples.get_triples.return_value = [
+            {
+                "subject": "http://knowledge.local/data/acme",
+                "predicate": "http://knowledge.local/predicate/grows",
+                "object": "30%",
+                "confidence": 0.85,
+            }
+        ]
+        extraction_client = AsyncMock()
+        extraction_client.decompose_thesis.return_value = [
+            {"subject": "acme", "predicate": "grows", "object": "30%"}
+        ]
+        app = _make_app(stores)
+        app.state.extraction_client = extraction_client
+        transport = ASGITransport(app=app)
+        async with AsyncClient(transport=transport, base_url="http://test") as c:
+            resp = await c.post("/api/theses", json={"name": "Bull", "description": "ACME grows"})
+        data = resp.json()
+        assert data["evidence_found"] == 1
+
+    async def test_evidence_search_zero_when_no_matches(self):
+        stores = _make_mock_stores()
+        stores.triples.get_triples.return_value = []
+        extraction_client = AsyncMock()
+        extraction_client.decompose_thesis.return_value = [
+            {"subject": "acme", "predicate": "grows", "object": "30%"}
+        ]
+        app = _make_app(stores)
+        app.state.extraction_client = extraction_client
+        transport = ASGITransport(app=app)
+        async with AsyncClient(transport=transport, base_url="http://test") as c:
+            resp = await c.post("/api/theses", json={"name": "Bull", "description": "ACME grows"})
+        data = resp.json()
+        assert data["evidence_found"] == 0
+
+    async def test_evidence_found_zero_without_extraction(self, client):
+        resp = await client.post(
+            "/api/theses", json={"name": "No LLM", "description": "No extraction"}
+        )
+        data = resp.json()
+        assert data["evidence_found"] == 0
 
 
 class TestListTheses:
