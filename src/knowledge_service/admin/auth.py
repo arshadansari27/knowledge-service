@@ -23,9 +23,6 @@ _RATE_WINDOW = 60  # seconds
 _MAX_TRACKED_IPS = 1000
 
 
-_MAX_TRACKED_IPS = 1000
-
-
 def _is_rate_limited(ip: str) -> bool:
     """Check if an IP has exceeded the login attempt rate limit."""
     now = time.monotonic()
@@ -150,6 +147,7 @@ async def login_submit(request: Request):
         key="ks_session",
         value=session_value,
         httponly=True,
+        secure=True,
         samesite="lax",
         max_age=86400,
     )
