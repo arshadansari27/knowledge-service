@@ -557,3 +557,45 @@ async def test_knowledge_query_allows_literal_object(client):
     """Object filter can be a literal (not a URI)."""
     resp = await client.get("/api/knowledge/query", params={"object": "some literal value"})
     assert resp.status_code == 200
+
+
+# ---------------------------------------------------------------------------
+# Tests: SPARQL endpoint query type restrictions
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_sparql_rejects_delete(client):
+    """DELETE queries must be rejected."""
+    resp = await client.post(
+        "/api/knowledge/sparql", json={"query": "DELETE WHERE { ?s ?p ?o }"}
+    )
+    assert resp.status_code == 400
+
+
+@pytest.mark.asyncio
+async def test_sparql_rejects_insert(client):
+    """INSERT queries must be rejected."""
+    resp = await client.post(
+        "/api/knowledge/sparql", json={"query": "INSERT DATA { <a> <b> <c> }"}
+    )
+    assert resp.status_code == 400
+
+
+@pytest.mark.asyncio
+async def test_sparql_allows_select(client):
+    """SELECT queries must be allowed."""
+    resp = await client.post(
+        "/api/knowledge/sparql", json={"query": "SELECT ?s WHERE { ?s ?p ?o }"}
+    )
+    assert resp.status_code == 200
+
+
+@pytest.mark.asyncio
+async def test_sparql_allows_prefixed_select(client):
+    """SELECT queries with PREFIX declarations must be allowed."""
+    resp = await client.post(
+        "/api/knowledge/sparql",
+        json={"query": "PREFIX ks: <http://knowledge.local/> SELECT ?s WHERE { ?s ?p ?o }"},
+    )
+    assert resp.status_code == 200

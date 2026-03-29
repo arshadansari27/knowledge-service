@@ -181,6 +181,19 @@ async def post_knowledge_sparql(
     if not sparql or not sparql.strip():
         raise HTTPException(status_code=422, detail="No SPARQL query provided.")
 
+    # Only allow read-only queries (SELECT, ASK, PREFIX-prefixed SELECT/ASK)
+    import re as _re  # noqa: PLC0415
+
+    # Strip comments and PREFIX declarations to find the actual query keyword
+    normalized = _re.sub(
+        r"(?i)PREFIX\s+\S+\s+<[^>]*>", "", sparql.strip()
+    ).strip()
+    normalized = _re.sub(r"^#[^\n]*\n?", "", normalized, flags=_re.MULTILINE).strip()
+    if not normalized.upper().startswith(("SELECT", "ASK")):
+        raise HTTPException(
+            status_code=400, detail="Only SELECT and ASK queries are allowed."
+        )
+
     try:
         rows: list[dict] = await asyncio.to_thread(triple_store.query, sparql)
     except Exception as exc:
