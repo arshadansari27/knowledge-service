@@ -163,3 +163,27 @@ class TestContradictions:
         contras = store.find_contradictions(f"{KS_DATA}a", f"{KS}revenue", "60M")
         assert len(contras) >= 1
         assert any(c["object"] == "50M" for c in contras)
+
+
+class TestCountTriples:
+    def test_empty_store(self, store):
+        assert store.count_triples() == 0
+
+    def test_counts_annotated_triples(self, store):
+        store.insert(
+            f"{KS_DATA}a", f"{KS}p", f"{KS_DATA}b", 0.9, "claim", None, None, KS_GRAPH_EXTRACTED
+        )
+        assert store.count_triples() == 1
+        store.insert(
+            f"{KS_DATA}a", f"{KS}p2", "literal", 0.8, "claim", None, None, KS_GRAPH_EXTRACTED
+        )
+        assert store.count_triples() == 2
+
+    def test_duplicate_not_counted(self, store):
+        store.insert(
+            f"{KS_DATA}a", f"{KS}p", f"{KS_DATA}b", 0.9, "claim", None, None, KS_GRAPH_EXTRACTED
+        )
+        store.insert(
+            f"{KS_DATA}a", f"{KS}p", f"{KS_DATA}b", 0.9, "claim", None, None, KS_GRAPH_EXTRACTED
+        )
+        assert store.count_triples() == 1
