@@ -3,7 +3,7 @@
 {% block content %}
 <div class="mb-4"><a href="/admin/knowledge" class="text-blue-400 hover:underline text-sm">&larr; Back to Knowledge</a></div>
 <h2 class="text-2xl font-bold mb-6">Content Items</h2>
-<div class="bg-gray-800 rounded-lg overflow-hidden" x-data="{ items: null }" x-init="fetch('/api/admin/stats/content-items').then(r => r.json()).then(d => items = d)">
+<div class="bg-gray-800 rounded-lg overflow-hidden" x-data="{ items: null }" x-init="authFetch('/api/admin/stats/content-items').then(r => r.json()).then(d => items = d)">
     <table class="w-full text-sm">
         <thead><tr class="text-gray-400 border-b border-gray-700"><th class="text-left p-3">Title</th><th class="text-left p-3">URL</th><th class="text-left p-3">Source Type</th><th class="text-left p-3">Tags</th><th class="text-left p-3">Ingested</th></tr></thead>
         <tbody>

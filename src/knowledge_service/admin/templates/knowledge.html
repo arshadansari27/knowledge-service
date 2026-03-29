@@ -14,7 +14,7 @@
             params.set('min_confidence', this.min_confidence);
             params.set('max_confidence', this.max_confidence);
             params.set('sort', this.sort);
-            const resp = await fetch('/api/admin/knowledge/triples?' + params);
+            const resp = await authFetch('/api/admin/knowledge/triples?' + params);
             const d = await resp.json();
             this.triples = d.items;
             this.total = d.total;

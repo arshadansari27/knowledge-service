@@ -6,7 +6,7 @@
 <!-- Stats Cards -->
 <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mb-8"
      x-data="{ counts: null }"
-     x-init="fetch('/api/admin/stats/counts').then(r => r.json()).then(d => counts = d)">
+     x-init="authFetch('/api/admin/stats/counts').then(r => r.json()).then(d => counts = d)">
     <template x-if="counts">
         <div class="contents">
             <div class="bg-gray-800 rounded-lg p-6">
@@ -41,7 +41,7 @@
 <div class="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-8">
     <div class="bg-gray-800 rounded-lg p-6"
          x-data="{ dist: null }"
-         x-init="fetch('/api/admin/stats/confidence').then(r => r.json()).then(d => dist = d)">
+         x-init="authFetch('/api/admin/stats/confidence').then(r => r.json()).then(d => dist = d)">
         <h3 class="text-lg font-semibold mb-4">Confidence Distribution</h3>
         <template x-if="dist">
             <div class="space-y-3">
@@ -62,7 +62,7 @@
     </div>
     <div class="bg-gray-800 rounded-lg p-6"
          x-data="{ types: null }"
-         x-init="fetch('/api/admin/stats/types').then(r => r.json()).then(d => types = d)">
+         x-init="authFetch('/api/admin/stats/types').then(r => r.json()).then(d => types = d)">
         <h3 class="text-lg font-semibold mb-4">Knowledge Types</h3>
         <template x-if="types">
             <div class="space-y-2">
@@ -80,7 +80,7 @@
 <!-- Recent Activity -->
 <div class="bg-gray-800 rounded-lg p-6"
      x-data="{ events: null }"
-     x-init="fetch('/api/admin/stats/activity').then(r => r.json()).then(d => events = d)">
+     x-init="authFetch('/api/admin/stats/activity').then(r => r.json()).then(d => events = d)">
     <h3 class="text-lg font-semibold mb-4">Recent Activity</h3>
     <template x-if="events && events.length > 0">
         <table class="w-full text-sm">

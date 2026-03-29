@@ -7,6 +7,11 @@
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://unpkg.com/htmx.org@2.0.4"></script>
     <script defer src="https://unpkg.com/alpinejs@3.14.8/dist/cdn.min.js"></script>
+    <script>
+        function authFetch(url, opts) {
+            return fetch(url, opts).then(r => { if (r.status === 401) { window.location = '/login'; return new Response('[]'); } return r; });
+        }
+    </script>
     {% block head %}{% endblock %}
 </head>
 <body class="bg-gray-900 text-gray-100 min-h-screen flex">
