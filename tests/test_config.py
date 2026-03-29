@@ -36,7 +36,7 @@ def test_secret_key_is_required_no_default(monkeypatch):
     from knowledge_service.config import Settings
 
     with pytest.raises(ValidationError) as exc_info:
-        Settings()
+        Settings(_env_file=None)
 
     errors = exc_info.value.errors()
     missing_fields = [e["loc"][0] for e in errors if e["type"] == "missing"]
