@@ -35,9 +35,9 @@ def _make_pool(conn: AsyncMock | None = None) -> MagicMock:
 
 
 def _make_extraction_client(llm_response: list[dict] | None = None) -> MagicMock:
-    """Return an extraction_client mock with _call_llm as AsyncMock."""
+    """Return an extraction_client mock with call_raw as AsyncMock."""
     client = MagicMock()
-    client._call_llm = AsyncMock(return_value=llm_response)
+    client.call_raw = AsyncMock(return_value=llm_response)
     return client
 
 
@@ -193,7 +193,7 @@ class TestCoreferencePhaseWikidataTier:
         phase = CoreferencePhase(client, pool)
         await phase.run(knowledge_items, nlp_results)
 
-        client._call_llm.assert_not_called()
+        client.call_raw.assert_not_called()
 
     async def test_tier1_different_qids_produce_separate_groups(self):
         client = _make_extraction_client(llm_response=[])
@@ -265,8 +265,8 @@ class TestCoreferencePhaseUnlinkedLLMTier:
         phase = CoreferencePhase(client, pool)
         await phase.run(knowledge_items, [])
 
-        client._call_llm.assert_called_once()
-        prompt_arg = client._call_llm.call_args[0][0]
+        client.call_raw.assert_called_once()
+        prompt_arg = client.call_raw.call_args[0][0]
         assert "cold" in prompt_arg
         assert "cold_water_immersion" in prompt_arg
 

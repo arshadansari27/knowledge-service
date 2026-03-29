@@ -158,7 +158,7 @@ class CoreferencePhase:
             entity_list = ", ".join(unlinked)
             prompt = _COREFERENCE_PROMPT_TEMPLATE.format(entity_list=entity_list)
 
-            llm_items = await self._extraction_client._call_llm(prompt)
+            llm_items = await self._extraction_client.call_raw(prompt)
 
             if llm_items:
                 llm_canonical_labels: set[str] = set()
