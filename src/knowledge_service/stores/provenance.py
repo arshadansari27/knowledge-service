@@ -114,4 +114,3 @@ class ProvenanceStore:
                 since,
             )
         return [dict(r) for r in rows]
-

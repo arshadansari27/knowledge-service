@@ -133,5 +133,3 @@ class TestGetByTriple:
         conn.fetch.return_value = []
         rows = await store.get_by_triple("nonexistent")
         assert rows == []
-
-
