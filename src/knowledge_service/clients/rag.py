@@ -5,6 +5,8 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass, field
 
+import httpx
+
 from knowledge_service._utils import _extract_json
 from knowledge_service.clients.base import BaseLLMClient
 from knowledge_service.stores.rag import RetrievalContext
@@ -99,14 +101,21 @@ class RAGClient(BaseLLMClient):
         """Generate an answer from the question and retrieval context."""
         prompt = build_rag_prompt(question, context)
 
-        response = await self._client.post(
-            "/v1/chat/completions",
-            json={
-                "model": self._model,
-                "messages": [{"role": "user", "content": prompt}],
-            },
-        )
-        response.raise_for_status()
+        try:
+            response = await self._client.post(
+                "/v1/chat/completions",
+                json={
+                    "model": self._model,
+                    "messages": [{"role": "user", "content": prompt}],
+                },
+            )
+            response.raise_for_status()
+        except httpx.HTTPStatusError as exc:
+            logger.warning("RAGClient: LLM API returned %s", exc.response.status_code)
+            raise
+        except httpx.TimeoutException:
+            logger.warning("RAGClient: LLM request timed out")
+            raise
 
         raw = response.json()["choices"][0]["message"]["content"]
         parsed = _extract_json(raw)
