@@ -2,7 +2,7 @@
 
 **Base URL:** `http://localhost:8000`
 **Interactive Docs:** `http://localhost:8000/docs` (auto-generated OpenAPI/Swagger)
-**Authentication:** None (all endpoints are public)
+**Authentication:** Password-based. Set `ADMIN_PASSWORD` env var. Use session cookie (via `/login`) or `X-API-Key` header for API calls. `/health` and `/docs` are public.
 **Response Format:** JSON (`application/json`)
 **Versioning:** Patch version auto-incremented on every push to `main` (see `pyproject.toml`)
 
@@ -22,6 +22,11 @@
 | POST | `/api/knowledge/sparql` | Raw SPARQL query |
 | GET | `/api/knowledge/contradictions` | Detect contradictions |
 | POST | `/api/ask` | RAG-powered question answering |
+| POST | `/api/theses` | Create an investment thesis |
+| GET | `/api/theses` | List theses |
+| GET | `/api/theses/{id}` | Get thesis details |
+| PATCH | `/api/theses/{id}` | Update a thesis |
+| GET | `/api/entity/{id}/changes` | Track entity changes since a date |
 
 ---
 

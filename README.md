@@ -37,7 +37,7 @@ FastAPI Process
 ├── ParserRegistry     Pluggable document parsing (PDF, HTML, CSV, JSON, images)
 ├── NlpPhase           spaCy NER + Wikidata entity linking pre-pass
 ├── CoreferencePhase   Two-tier entity dedup (Wikidata QID + LLM grouping)
-├── KnowledgeStore     pyoxigraph — RDF 1.2, RDF-star, named graphs (4 trust tiers)
+├── KnowledgeStore     pyoxigraph — RDF 1.2, RDF-star, named graphs (5 trust tiers)
 ├── InferenceEngine    Forward-chaining rules (inverse, transitive, type inheritance)
 ├── QueryClassifier    Intent routing (semantic/entity/graph/global)
 ├── RAGRetriever       4 retrieval strategies with multi-hop traversal
@@ -102,7 +102,7 @@ combined = 1 - product(1 - ci)
 combined = 1 - (0.3 × 0.4) = 0.88
 ```
 
-The combined value is written back to the RDF-star annotation. ProbLog propagates these probabilities through inference chains for derived conclusions.
+The combined value is written back to the RDF-star annotation. The inference engine propagates confidence through forward-chaining rules (inverse, transitive, type inheritance) for derived conclusions.
 
 ---
 
@@ -669,6 +669,9 @@ src/knowledge_service/
 │   ├── auth.py              # AuthMiddleware, login/logout, rate limiter, session cookies
 │   ├── routes.py            # Admin page routes (dashboard, knowledge, chat, contradictions)
 │   ├── stats.py             # /api/admin/stats/* and /api/admin/knowledge/triples endpoints
+│   ├── communities.py       # /api/admin/rebuild-communities
+│   ├── jobs.py              # /api/admin/jobs
+│   ├── theses.py            # /api/admin/theses/* (activate, archive)
 │   └── templates/           # Jinja2 templates (base, dashboard, knowledge, chat, etc.)
 ├── api/
 │   ├── content.py           # POST /api/content (JSON + URL auto-fetch)
@@ -678,6 +681,8 @@ src/knowledge_service/
 │   ├── knowledge.py         # GET /api/knowledge/query, POST /api/knowledge/sparql
 │   ├── contradictions.py    # GET /api/knowledge/contradictions
 │   ├── ask.py               # POST /api/ask (RAG question answering)
+│   ├── theses.py            # /api/theses CRUD
+│   ├── changes.py           # GET /api/entity/{id}/changes
 │   └── health.py            # GET /health
 ├── parsing/
 │   ├── __init__.py          # ParserRegistry, ParsedDocument, Parser protocol
@@ -693,7 +698,8 @@ src/knowledge_service/
 │   ├── pipeline.py          # Per-triple processing (delta, insert, contradiction, provenance, inference)
 │   ├── worker.py            # 5-phase orchestrator (Embed → NLP → Extract → Coref → Process)
 │   ├── phases.py            # EmbedPhase, ExtractPhase, ProcessPhase
-│   └── coreference.py       # CoreferencePhase (Wikidata QID + LLM grouping)
+│   ├── coreference.py       # CoreferencePhase (Wikidata QID + LLM grouping)
+│   └── federation.py        # FederationPhase (DBpedia/Wikidata entity enrichment)
 ├── stores/
 │   ├── __init__.py          # Stores dataclass
 │   ├── triples.py           # pyoxigraph wrapper — RDF-star, named graphs
@@ -702,7 +708,8 @@ src/knowledge_service/
 │   ├── provenance.py        # ProvenanceStore — per-source evidence rows
 │   ├── theses.py            # ThesisStore — thesis/claim collections
 │   ├── rag.py               # RAGRetriever — 4 intent-based retrieval strategies
-│   └── community.py         # Leiden community detection, storage, summarization
+│   ├── community.py         # Leiden community detection, storage, summarization
+│   └── graph_migration.py   # One-time migration to named graphs
 ├── reasoning/
 │   ├── engine.py            # InferenceEngine — forward-chaining rules
 │   └── noisy_or.py          # Noisy-OR evidence combination
@@ -712,7 +719,8 @@ src/knowledge_service/
 │   ├── registry.py          # DomainRegistry — predicate metadata from ontology
 │   ├── bootstrap.py         # Loads schema.ttl + domains/*.ttl into ks:graph/ontology
 │   ├── schema.ttl            # Knowledge type classes, properties
-│   └── domains/base.ttl     # 18 canonical predicates with synonyms, weights, inverse pairs
+│   ├── domains/             # Domain TTL files (base, health, technology, research)
+│   └── prompts/             # LLM extraction prompt templates (entities, relations)
 ├── clients/
 │   ├── llm.py               # EmbeddingClient + ExtractionClient (two-phase)
 │   ├── prompt_builder.py    # Domain-aware extraction prompts from templates
@@ -745,7 +753,7 @@ All phases complete and deployed to production (617+ tests).
 | Phase | What |
 |-------|------|
 | Foundation | Knowledge model, RDF store, probabilistic reasoning, admin panel, RAG endpoint, federation |
-| 1-3 | Named graphs (4 trust tiers), chunk-level provenance |
+| 1-3 | Named graphs (5 trust tiers), chunk-level provenance |
 | 4 | BM25 hybrid search with Reciprocal Rank Fusion |
 | 5-6 | Two-phase LLM extraction + markdown-aware chunking |
 | 7 | Query intent classification (semantic/entity/graph) |
