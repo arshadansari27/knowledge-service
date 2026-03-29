@@ -60,6 +60,26 @@ class TestInsert:
         assert h1 == h2
 
 
+    def test_insert_literal_with_special_chars(self, store):
+        """Literals containing quotes, backslashes, or newlines must not break SPARQL."""
+        for obj in ['has "quotes"', "line1\nline2", "back\\slash", 'all "three"\nin\\one']:
+            h, is_new = store.insert(
+                f"{KS_DATA}entity",
+                f"{KS}description",
+                obj,
+                confidence=0.7,
+                knowledge_type="claim",
+                valid_from=None,
+                valid_until=None,
+                graph=KS_GRAPH_EXTRACTED,
+            )
+            assert isinstance(h, str)
+            assert is_new is True
+            # Verify retrievable
+            triples = store.get_triples(subject=f"{KS_DATA}entity", predicate=f"{KS}description")
+            assert any(t["object"] == obj for t in triples)
+
+
 class TestGetTriples:
     def test_by_subject(self, store):
         store.insert(

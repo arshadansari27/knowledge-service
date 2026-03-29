@@ -47,14 +47,19 @@ def _strip_ks_prefix(value: str) -> str:
     return value
 
 
+def _sparql_escape(value: str) -> str:
+    """Escape a string for use as a SPARQL literal."""
+    return value.replace("\\", "\\\\").replace('"', '\\"').replace("\n", "\\n").replace("\r", "\\r")
+
+
 def _sparql_object(object_: str) -> str:
     """Format an object for use in SPARQL queries.
 
-    URIs go in <brackets>, literals go in "quotes".
+    URIs go in <brackets>, literals go in "quotes" with special chars escaped.
     """
     if is_uri(object_):
         return f"<{object_}>"
-    return f'"{object_}"'
+    return f'"{_sparql_escape(object_)}"'
 
 
 class TripleStore:
