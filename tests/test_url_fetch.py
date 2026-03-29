@@ -182,3 +182,42 @@ class TestURLAutoFetch:
 
         # Without parser_registry, no fetch attempted; uses title as text fallback
         assert resp.status_code == 202
+
+
+# ---------------------------------------------------------------------------
+# Tests: SSRF protection
+# ---------------------------------------------------------------------------
+
+
+class TestIsUrlSafe:
+    """Unit tests for the _is_url_safe helper."""
+
+    def test_blocks_localhost(self):
+        from knowledge_service.api.content import _is_url_safe
+
+        assert _is_url_safe("http://localhost/secret") is False
+        assert _is_url_safe("http://127.0.0.1/secret") is False
+
+    def test_blocks_private_ips(self):
+        from knowledge_service.api.content import _is_url_safe
+
+        assert _is_url_safe("http://10.0.0.1/metadata") is False
+        assert _is_url_safe("http://192.168.1.1/admin") is False
+        assert _is_url_safe("http://169.254.169.254/latest/meta-data/") is False
+        assert _is_url_safe("http://172.16.0.1/internal") is False
+
+    def test_blocks_zero_address(self):
+        from knowledge_service.api.content import _is_url_safe
+
+        assert _is_url_safe("http://0.0.0.0/") is False
+
+    def test_allows_public_urls(self):
+        from knowledge_service.api.content import _is_url_safe
+
+        assert _is_url_safe("https://example.com/article") is True
+        assert _is_url_safe("https://en.wikipedia.org/wiki/Test") is True
+
+    def test_rejects_empty_url(self):
+        from knowledge_service.api.content import _is_url_safe
+
+        assert _is_url_safe("") is False

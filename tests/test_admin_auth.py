@@ -84,7 +84,7 @@ def auth_app():
 @pytest.fixture
 async def auth_client(auth_app):
     transport = ASGITransport(app=auth_app)
-    async with AsyncClient(transport=transport, base_url="http://test") as client:
+    async with AsyncClient(transport=transport, base_url="https://test") as client:
         yield client
 
 
@@ -164,3 +164,14 @@ async def test_logout_clears_session(auth_client):
     # Verify session is cleared — admin should redirect to login
     resp = await auth_client.get("/admin", follow_redirects=False)
     assert resp.status_code == 307
+
+
+async def test_session_cookie_has_secure_flag(auth_client):
+    """Session cookie must have secure=True for HTTPS-only transmission."""
+    resp = await auth_client.post(
+        "/login",
+        data={"password": "testpass123"},
+        follow_redirects=False,
+    )
+    cookie_header = resp.headers.get("set-cookie", "")
+    assert "secure" in cookie_header.lower()

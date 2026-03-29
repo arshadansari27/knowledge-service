@@ -59,6 +59,9 @@ class RetrievalContext:
     inferred_triples: int | None = None
 
 
+_MAX_TRAVERSAL_EDGES = 200
+
+
 def _expand_graph(
     knowledge_store,
     entity_uris: str | list[str],
@@ -75,6 +78,8 @@ def _expand_graph(
     frontier = [(uri, 0) for uri in entity_uris]
 
     while frontier:
+        if len(edges) >= _MAX_TRAVERSAL_EDGES:
+            break
         uri, hop = frontier.pop(0)
         if uri in visited or hop > max_hops:
             continue
@@ -83,6 +88,8 @@ def _expand_graph(
 
         triples = knowledge_store.get_triples(subject=uri)
         for t in triples:
+            if len(edges) >= _MAX_TRAVERSAL_EDGES:
+                break
             conf = t.get("confidence", 0)
             if conf is not None and conf >= min_confidence:
                 edges.append(t)

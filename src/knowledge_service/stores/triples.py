@@ -419,6 +419,18 @@ class TripleStore:
             )
         return results
 
+    def count_triples(self) -> int:
+        """Return the number of annotated triples in the store."""
+        result = self._store.query(
+            f"""SELECT (COUNT(*) AS ?cnt) WHERE {{
+                GRAPH ?g {{ ?s ?p ?o . }}
+                GRAPH ?g {{ << ?s ?p ?o >> <{KS_CONFIDENCE.value}> ?conf . }}
+            }}"""
+        )
+        for row in result:
+            return int(row["cnt"].value)
+        return 0
+
     def query(self, sparql: str) -> list[dict]:
         """Execute a SPARQL SELECT query.
 

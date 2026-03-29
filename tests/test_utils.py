@@ -1,4 +1,10 @@
-from knowledge_service._utils import _is_uri, _triple_hash, _rdf_value_to_str, is_object_entity
+from knowledge_service._utils import (
+    _is_uri,
+    _triple_hash,
+    _rdf_value_to_str,
+    is_object_entity,
+    sanitize_sparql_string,
+)
 from pyoxigraph import NamedNode, Literal
 
 
@@ -42,6 +48,26 @@ def test_rdf_value_to_str_plain_string():
     assert _rdf_value_to_str("plain") == "plain"
 
 
+class TestSanitizeSparqlString:
+    def test_strips_angle_brackets(self):
+        result = sanitize_sparql_string("http://evil.com> . ?s <http://x")
+        assert "<" not in result
+        assert ">" not in result
+
+    def test_strips_quotes_and_backslashes(self):
+        result = sanitize_sparql_string('value"with\\escapes')
+        assert '"' not in result
+        assert "\\" not in result
+
+    def test_strips_newlines(self):
+        result = sanitize_sparql_string("line1\nline2\rline3")
+        assert "\n" not in result
+        assert "\r" not in result
+
+    def test_preserves_normal_uri(self):
+        assert sanitize_sparql_string("http://example.com/path") == "http://example.com/path"
+
+
 class TestIsObjectEntity:
     def test_explicit_entity(self):
         assert is_object_entity({"object": "dopamine", "object_type": "entity"}) is True
@@ -61,8 +87,8 @@ class TestIsObjectEntity:
     def test_empty_object_is_not_entity(self):
         assert is_object_entity({"object": ""}) is False
 
-    def test_pydantic_model_with_object_type(self):
-        """Works with Pydantic models that have an object field (TripleInput)."""
+    def test_pydantic_model_with_literal_value(self):
+        """Pydantic model with a literal-looking value is treated as literal."""
         from knowledge_service.models import TripleInput
 
         item = TripleInput(
@@ -71,9 +97,8 @@ class TestIsObjectEntity:
             object="250%",
             confidence=0.7,
         )
-        # TripleInput has no object_type field, so it falls back to heuristic.
-        # "250%" has no spaces and <= 60 chars, so it's treated as entity.
-        assert is_object_entity(item) is True
+        # "250%" starts with a digit and has non-alphanumeric chars — literal
+        assert is_object_entity(item) is False
 
     def test_pydantic_model_entity_heuristic(self):
         from knowledge_service.models import TripleInput
@@ -89,6 +114,26 @@ class TestIsObjectEntity:
     def test_dict_with_spaces_is_literal(self):
         """Dict with spaces in object is treated as literal by heuristic."""
         assert is_object_entity({"object": "a long phrase with spaces"}) is False
+
+    def test_hyphenated_compounds_are_literal(self):
+        """Hyphenated values like COVID-19 should be treated as literals."""
+        assert is_object_entity({"object": "COVID-19"}) is False
+        assert is_object_entity({"object": "Type2Diabetes"}) is False
+
+    def test_numeric_values_are_literal(self):
+        """Numeric strings should be treated as literals."""
+        assert is_object_entity({"object": "3.14159"}) is False
+        assert is_object_entity({"object": "2024-01-15"}) is False
+
+    def test_snake_case_is_entity(self):
+        """Proper snake_case labels should be treated as entities."""
+        assert is_object_entity({"object": "cold_exposure"}) is True
+        assert is_object_entity({"object": "vitamin_d3"}) is True
+
+    def test_explicit_type_overrides_heuristic(self):
+        """Explicit object_type should always win."""
+        assert is_object_entity({"object": "COVID-19", "object_type": "entity"}) is True
+        assert is_object_entity({"object": "cold_exposure", "object_type": "literal"}) is False
 
 
 def test_object_type_survives_triple_input():

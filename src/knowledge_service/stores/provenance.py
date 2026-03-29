@@ -101,6 +101,19 @@ class ProvenanceStore:
             rows = await conn.fetch(sql, triple_hash)
         return [dict(row) for row in rows]
 
+    async def get_by_triples(self, triple_hashes: list[str]) -> dict[str, list[dict]]:
+        """Return provenance rows for multiple triple hashes in a single query."""
+        if not triple_hashes:
+            return {}
+        sql = "SELECT * FROM provenance WHERE triple_hash = ANY($1::text[])"
+        async with self._pool.acquire() as conn:
+            rows = await conn.fetch(sql, triple_hashes)
+        result: dict[str, list[dict]] = {}
+        for row in rows:
+            h = row["triple_hash"]
+            result.setdefault(h, []).append(dict(row))
+        return result
+
     async def query_by_entity_and_time(self, entity_uri: str, since: datetime) -> list[dict]:
         """Return provenance rows where subject = entity_uri AND ingested_at >= since."""
         async with self._pool.acquire() as conn:

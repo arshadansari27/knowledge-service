@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import ipaddress
 import logging
 from enum import StrEnum
+from urllib.parse import urlparse
 
 import asyncpg.exceptions
 import httpx
@@ -41,6 +43,35 @@ _MAX_CHUNKS = settings.max_chunks
 
 
 # ---------------------------------------------------------------------------
+# SSRF protection
+# ---------------------------------------------------------------------------
+
+
+def _is_url_safe(url: str) -> bool:
+    """Check that a URL does not point to private/internal networks."""
+    try:
+        parsed = urlparse(url)
+        hostname = parsed.hostname or ""
+    except Exception:
+        return False
+
+    if not hostname:
+        return False
+
+    if hostname in ("localhost", "0.0.0.0"):
+        return False
+
+    try:
+        addr = ipaddress.ip_address(hostname)
+        if addr.is_private or addr.is_loopback or addr.is_link_local or addr.is_reserved:
+            return False
+    except ValueError:
+        pass  # Not an IP literal — hostname is fine
+
+    return True
+
+
+# ---------------------------------------------------------------------------
 # Synchronous acceptance phase
 # ---------------------------------------------------------------------------
 
@@ -67,6 +98,8 @@ async def _accept_content_request(body: ContentRequest, stores) -> dict:
 
     # Step 1b: URL auto-fetch when no text provided
     if not body.raw_text and not body.summary and _parser_registry and body.url.startswith("http"):
+        if not _is_url_safe(body.url):
+            return {"error": "URL points to a private or internal network", "status_code": 422}
         try:
             async with httpx.AsyncClient(
                 timeout=settings.url_fetch_timeout,

@@ -118,6 +118,13 @@ class ExtractionClient(BaseLLMClient):
 
         return parsed.get("items", [])
 
+    async def call_raw(self, prompt: str) -> list[dict] | None:
+        """Public interface for sending a raw prompt to the LLM.
+
+        Returns parsed item dicts, None on failure. Used by CoreferencePhase.
+        """
+        return await self._call_llm(prompt)
+
     async def extract(
         self,
         text: str,
