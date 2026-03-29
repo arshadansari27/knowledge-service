@@ -161,6 +161,57 @@ class TestURLAutoFetch:
         data = resp.json()
         assert "detail" in data
 
+    async def test_autofetch_body_propagated_to_worker(self):
+        """When URL is auto-fetched, the updated body (with raw_text) reaches the worker."""
+        registry = ParserRegistry()
+        registry.register(TextParser())
+        app = _make_app_with_mocks(parser_registry=registry)
+
+        # Mock httpx to return fetched content
+        mock_response = MagicMock()
+        mock_response.raise_for_status.return_value = None
+        mock_response.content = b"Fetched article content about AI safety."
+        mock_response.headers = {"content-type": "text/plain"}
+
+        mock_http_client = AsyncMock()
+        mock_http_client.get.return_value = mock_response
+        mock_http_client.__aenter__ = AsyncMock(return_value=mock_http_client)
+        mock_http_client.__aexit__ = AsyncMock(return_value=False)
+
+        async def _capture_worker(job_id, content_id, body, chunk_records, app_state):
+            pass
+
+        transport = ASGITransport(app=app)
+        async with AsyncClient(
+            transport=transport,
+            base_url="http://test",
+            cookies={"ks_session": make_test_session_cookie()},
+        ) as client:
+            with (
+                patch(
+                    "knowledge_service.api.content.httpx.AsyncClient",
+                    return_value=mock_http_client,
+                ),
+                patch(
+                    "knowledge_service.api.content._run_ingestion_worker",
+                    side_effect=_capture_worker,
+                ) as mock_worker,
+            ):
+                resp = await client.post(
+                    "/api/content",
+                    json={
+                        "url": "https://example.com/article.txt",
+                        "title": "Test",
+                        "source_type": "article",
+                    },
+                )
+
+        assert resp.status_code == 202
+        # Verify the worker received the fetched text, not empty
+        assert mock_worker.called
+        worker_body = mock_worker.call_args[0][2]  # 3rd positional arg is body
+        assert worker_body.raw_text == "Fetched article content about AI safety."
+
     async def test_url_without_raw_text_no_registry_falls_through(self):
         """When no parser_registry is set, URL fetch is skipped gracefully."""
         app = _make_app_with_mocks(parser_registry=None)

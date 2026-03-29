@@ -80,7 +80,8 @@ async def _accept_content_request(body: ContentRequest, stores) -> dict:
     """Synchronous phase: validate, upsert metadata, chunk, create job.
 
     Returns dict with content_id, job_id, chunks_total, chunks_capped_from,
-    and chunk_records for the background worker.
+    chunk_records, and body (potentially updated by auto-fetch) for the
+    background worker.
     """
     content_store = stores.content
     pg_pool = stores.pg_pool
@@ -120,6 +121,16 @@ async def _accept_content_request(body: ContentRequest, stores) -> dict:
                 if parsed.title and not body.title:
                     updates["title"] = parsed.title
                 body = body.model_copy(update=updates)
+                # Update metadata with fetched content
+                await content_store.upsert_metadata(
+                    url=body.url,
+                    title=body.title,
+                    summary=body.summary or "",
+                    raw_text=body.raw_text or "",
+                    source_type=body.source_type,
+                    tags=body.tags,
+                    metadata=body.metadata,
+                )
         except Exception as exc:
             logger.warning("URL auto-fetch failed for %s: %s", body.url, exc)
             return {"error": f"Failed to fetch URL: {exc}", "status_code": 422}
@@ -171,6 +182,7 @@ async def _accept_content_request(body: ContentRequest, stores) -> dict:
         "chunks_total": len(chunk_records),
         "chunks_capped_from": chunks_capped_from,
         "chunk_records": chunk_records,
+        "body": body,
     }
 
 
@@ -256,7 +268,7 @@ async def post_content(request: Request, background_tasks: BackgroundTasks):
                     _run_ingestion_worker,
                     result["job_id"],
                     result["content_id"],
-                    body,
+                    result["body"],
                     result["chunk_records"],
                     request.app.state,
                 )
@@ -283,7 +295,7 @@ async def post_content(request: Request, background_tasks: BackgroundTasks):
             _run_ingestion_worker,
             result["job_id"],
             result["content_id"],
-            body,
+            result["body"],
             result["chunk_records"],
             request.app.state,
         )
