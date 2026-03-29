@@ -138,6 +138,7 @@ async def run_ingestion(
         await tracker.update_status("embedding")
         embed = EmbedPhase(embedding_client, stores.content)
         chunk_id_map = await embed.run(content_id, chunk_records)
+        await tracker.update_status("embedding", chunks_embedded=len(chunk_id_map))
 
         # Phase 2: NLP Pre-pass (optional)
         nlp_results = None
@@ -166,11 +167,16 @@ async def run_ingestion(
                 nlp_hints=nlp_results,
             )
             extractor = "llm"
+            chunks_extracted = len(chunk_records) - chunks_failed
         else:
             knowledge_items = list(knowledge or [])
             chunk_ids_for_items = [None] * len(knowledge_items)
             extractor = "api"
+            chunks_extracted = 0
 
+        await tracker.update_status(
+            "extracting", chunks_extracted=chunks_extracted, chunks_failed=chunks_failed
+        )
         graph = KS_GRAPH_ASSERTED if extractor == "api" else KS_GRAPH_EXTRACTED
 
         # Phase 4: Coreference (optional — requires NLP results + extracted items)
