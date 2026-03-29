@@ -14,7 +14,7 @@ _MAX_QUESTION_LEN = 4000
 
 class AskRequest(BaseModel):
     question: str = Field(..., min_length=1, max_length=_MAX_QUESTION_LEN)
-    max_sources: int = Field(5, ge=1, le=100)
+    max_sources: int = Field(5, ge=1, le=20)
     min_confidence: float = Field(0.0, ge=0.0, le=1.0)
     use_reasoning: bool = Field(False)  # Reserved for future use
 
