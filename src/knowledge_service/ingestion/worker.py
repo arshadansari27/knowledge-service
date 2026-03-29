@@ -11,6 +11,13 @@ from knowledge_service.ontology.namespaces import KS_GRAPH_ASSERTED, KS_GRAPH_EX
 logger = logging.getLogger(__name__)
 
 
+_ALLOWED_JOB_COLUMNS = frozenset({
+    "chunks_embedded", "chunks_extracted", "chunks_failed",
+    "triples_created", "entities_resolved", "entities_linked",
+    "entities_coref", "error",
+})
+
+
 class JobTracker:
     """Tracks ingestion job progress in the database."""
 
@@ -19,6 +26,9 @@ class JobTracker:
         self._pool = pool
 
     async def update_status(self, status: str, **kwargs) -> None:
+        invalid = set(kwargs) - _ALLOWED_JOB_COLUMNS
+        if invalid:
+            raise ValueError(f"Invalid job columns: {invalid}")
         sets = ["status = $2"]
         params: list = [self._job_id, status]
         for key, value in kwargs.items():
