@@ -14,6 +14,8 @@ class Settings(BaseSettings):
     federation_enabled: bool = True
     federation_timeout: float = 3.0
     community_rebuild_interval: int = 0  # seconds, 0 = disabled
+    community_min_triples: int = 50
+    community_cooldown: int = 3600  # seconds between auto-rebuilds
     admin_password: str  # Required — no default; also accepted as X-API-Key for m2m calls
     secret_key: str  # Required — no default; must be set via SECRET_KEY env var
 

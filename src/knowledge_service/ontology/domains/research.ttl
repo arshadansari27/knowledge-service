@@ -1,0 +1,65 @@
+@prefix ks:   <http://knowledge.local/schema/> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix xsd:  <http://www.w3.org/2001/XMLSchema#> .
+
+# --- Research & Science domain predicates ---
+
+ks:cites a ks:Predicate ;
+    rdfs:label "cites" ;
+    ks:domain "research" ;
+    ks:materialityWeight "0.5"^^xsd:float ;
+    ks:synonym "references", "builds_on", "refers_to" .
+
+ks:contradicts_finding a ks:Predicate ;
+    rdfs:label "contradicts finding" ;
+    ks:domain "research" ;
+    ks:materialityWeight "0.8"^^xsd:float ;
+    ks:synonym "disagrees_with", "refutes", "challenges" .
+
+ks:replicates a ks:Predicate ;
+    rdfs:label "replicates" ;
+    ks:domain "research" ;
+    ks:materialityWeight "0.7"^^xsd:float ;
+    ks:synonym "confirms", "validates", "reproduces" .
+
+ks:extends a ks:Predicate ;
+    rdfs:label "extends" ;
+    ks:domain "research" ;
+    ks:materialityWeight "0.6"^^xsd:float ;
+    ks:synonym "builds_upon", "expands", "generalizes" .
+
+ks:funded_by a ks:Predicate ;
+    rdfs:label "funded by" ;
+    ks:domain "research" ;
+    ks:materialityWeight "0.4"^^xsd:float ;
+    ks:synonym "supported_by", "sponsored_by", "grant_from" .
+
+ks:authored_by a ks:Predicate ;
+    rdfs:label "authored by" ;
+    ks:domain "research" ;
+    ks:materialityWeight "0.5"^^xsd:float ;
+    ks:synonym "written_by", "lead_author", "first_author" .
+
+ks:published_in a ks:Predicate ;
+    rdfs:label "published in" ;
+    ks:domain "research" ;
+    ks:materialityWeight "0.4"^^xsd:float ;
+    ks:synonym "appears_in", "journal", "venue" .
+
+ks:has_sample_size a ks:Predicate ;
+    rdfs:label "has sample size" ;
+    ks:domain "research" ;
+    ks:materialityWeight "0.5"^^xsd:float ;
+    ks:synonym "participants", "n_equals", "study_size" .
+
+ks:uses_methodology a ks:Predicate ;
+    rdfs:label "uses methodology" ;
+    ks:domain "research" ;
+    ks:materialityWeight "0.5"^^xsd:float ;
+    ks:synonym "method", "study_design", "approach" .
+
+ks:finds a ks:Predicate ;
+    rdfs:label "finds" ;
+    ks:domain "research" ;
+    ks:materialityWeight "0.7"^^xsd:float ;
+    ks:synonym "concludes", "shows", "demonstrates", "reports" .

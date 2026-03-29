@@ -1,0 +1,80 @@
+@prefix ks:   <http://knowledge.local/schema/> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix xsd:  <http://www.w3.org/2001/XMLSchema#> .
+
+# --- Technology & Software domain predicates ---
+
+ks:implements a ks:Predicate ;
+    rdfs:label "implements" ;
+    ks:domain "technology" ;
+    ks:materialityWeight "0.6"^^xsd:float ;
+    ks:synonym "provides", "supports_feature", "offers" .
+
+ks:integrates_with a ks:Predicate ;
+    rdfs:label "integrates with" ;
+    ks:domain "technology" ;
+    ks:materialityWeight "0.6"^^xsd:float ;
+    ks:synonym "connects_to", "works_with", "interfaces_with" .
+
+ks:replaces a ks:Predicate ;
+    rdfs:label "replaces" ;
+    ks:domain "technology" ;
+    ks:materialityWeight "0.7"^^xsd:float ;
+    ks:synonym "supersedes", "deprecates", "succeeds" .
+
+ks:requires a ks:Predicate ;
+    rdfs:label "requires" ;
+    ks:domain "technology" ;
+    ks:materialityWeight "0.6"^^xsd:float ;
+    ks:transitivePredicate "true"^^xsd:boolean ;
+    ks:synonym "needs", "prerequisite" .
+
+ks:compatible_with a ks:Predicate ;
+    rdfs:label "compatible with" ;
+    ks:domain "technology" ;
+    ks:materialityWeight "0.5"^^xsd:float ;
+    ks:oppositePredicate ks:incompatible_with ;
+    ks:synonym "supports", "works_on", "runs_with" .
+
+ks:incompatible_with a ks:Predicate ;
+    rdfs:label "incompatible with" ;
+    ks:domain "technology" ;
+    ks:materialityWeight "0.7"^^xsd:float ;
+    ks:oppositePredicate ks:compatible_with ;
+    ks:synonym "breaks_with", "conflicts_with", "not_supported_on" .
+
+ks:performs_better_than a ks:Predicate ;
+    rdfs:label "performs better than" ;
+    ks:domain "technology" ;
+    ks:materialityWeight "0.5"^^xsd:float ;
+    ks:synonym "faster_than", "outperforms", "more_efficient_than" .
+
+ks:maintained_by a ks:Predicate ;
+    rdfs:label "maintained by" ;
+    ks:domain "technology" ;
+    ks:materialityWeight "0.4"^^xsd:float ;
+    ks:synonym "developed_by", "owned_by", "created_by_org" .
+
+ks:licensed_as a ks:Predicate ;
+    rdfs:label "licensed as" ;
+    ks:domain "technology" ;
+    ks:materialityWeight "0.4"^^xsd:float ;
+    ks:synonym "license", "open_source", "license_type" .
+
+ks:written_in a ks:Predicate ;
+    rdfs:label "written in" ;
+    ks:domain "technology" ;
+    ks:materialityWeight "0.5"^^xsd:float ;
+    ks:synonym "built_with", "language", "programming_language" .
+
+ks:deployed_on a ks:Predicate ;
+    rdfs:label "deployed on" ;
+    ks:domain "technology" ;
+    ks:materialityWeight "0.5"^^xsd:float ;
+    ks:synonym "runs_on", "hosted_on", "infrastructure" .
+
+ks:alternative_to a ks:Predicate ;
+    rdfs:label "alternative to" ;
+    ks:domain "technology" ;
+    ks:materialityWeight "0.5"^^xsd:float ;
+    ks:synonym "similar_to", "competitor_of", "comparable_to" .

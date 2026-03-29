@@ -2,6 +2,7 @@
 
 import json
 import logging
+import time
 from typing import Any
 
 from knowledge_service.ingestion.phases import EmbedPhase, ExtractPhase, ProcessPhase
@@ -58,6 +59,23 @@ class JobTracker:
             )
 
 
+def _should_rebuild_communities(
+    triples_created: int,
+    total_triples: int,
+    min_triples: int,
+    last_rebuild: float,
+    cooldown: int,
+) -> bool:
+    """Check if community detection should be triggered."""
+    if triples_created <= 0:
+        return False
+    if total_triples < min_triples:
+        return False
+    if time.time() - last_rebuild < cooldown:
+        return False
+    return True
+
+
 async def run_ingestion(
     job_id: str,
     content_id: str,
@@ -73,6 +91,8 @@ async def run_ingestion(
     entity_store: Any | None = None,
     engine: Any | None = None,
     nlp: Any | None = None,
+    federation_client: Any | None = None,
+    app_state: Any | None = None,
 ) -> None:
     """Orchestrate the multi-phase ingestion pipeline.
 
@@ -163,6 +183,81 @@ async def run_ingestion(
         )
 
         await tracker.complete(triples_created, entities_resolved, chunks_failed)
+
+        # Background federation enrichment (best-effort, after job marked complete)
+        if federation_client is not None and triples_created > 0:
+            try:
+                from knowledge_service.ingestion.federation import (  # noqa: PLC0415
+                    FederationPhase,
+                )
+
+                fed_phase = FederationPhase(
+                    federation_client=federation_client,
+                    triple_store=stores.triples,
+                    max_lookups=10,
+                    delay=1.0,
+                )
+                # Collect entity labels from knowledge items
+                fed_entities = []
+                for item in knowledge_items:
+                    if hasattr(item, "label") and hasattr(item, "uri"):
+                        fed_entities.append({"label": item.label, "uri": item.uri})
+                    elif isinstance(item, dict):
+                        label = item.get("label") or item.get("subject", "")
+                        uri = item.get("uri") or item.get("subject", "")
+                        if label and uri:
+                            fed_entities.append({"label": label, "uri": uri})
+                if fed_entities:
+                    fed_result = await fed_phase.run(fed_entities)
+                    logger.info(
+                        "Federation enrichment for job %s: %d enriched, %d skipped",
+                        job_id,
+                        fed_result.entities_enriched,
+                        fed_result.entities_skipped,
+                    )
+            except Exception:
+                logger.warning("Federation enrichment failed for job %s", job_id, exc_info=True)
+
+        # Auto-trigger community detection if conditions met
+        if triples_created > 0 and app_state is not None:
+            try:
+                from knowledge_service.config import settings as _settings  # noqa: PLC0415
+
+                total = stores.triples.count_triples()
+                last_rebuild = getattr(app_state, "_last_community_rebuild", 0.0)
+
+                if _should_rebuild_communities(
+                    triples_created=triples_created,
+                    total_triples=total,
+                    min_triples=_settings.community_min_triples,
+                    last_rebuild=last_rebuild,
+                    cooldown=_settings.community_cooldown,
+                ):
+                    import asyncio  # noqa: PLC0415
+
+                    from knowledge_service.stores.community import (  # noqa: PLC0415
+                        CommunityDetector,
+                        CommunitySummarizer,
+                    )
+
+                    detector = CommunityDetector(stores.triples)
+                    communities = await asyncio.to_thread(detector.detect)
+                    if communities and extraction_client:
+                        summarizer = CommunitySummarizer(
+                            extraction_client._client,
+                            stores.triples,
+                            model=extraction_client._model,
+                        )
+                        summarized = []
+                        for c in communities:
+                            summarized.append(await summarizer.summarize_one(c))
+                        community_store = getattr(app_state, "community_store", None)
+                        if community_store:
+                            await community_store.replace_all(summarized)
+                            app_state._last_community_rebuild = time.time()
+                            logger.info("Auto community rebuild: %d communities", len(summarized))
+            except Exception:
+                logger.warning("Auto community rebuild failed", exc_info=True)
 
     except Exception as exc:
         logger.exception("Ingestion failed for job %s in phase %s", job_id, current_phase)

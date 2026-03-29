@@ -184,6 +184,14 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     app.state.extraction_client = extraction_client
     app.state.embedding_client = embedding_client
 
+    # Federation client (optional enrichment)
+    federation_client = None
+    if settings.federation_enabled:
+        from knowledge_service.clients.federation import FederationClient  # noqa: PLC0415
+
+        federation_client = FederationClient(timeout=settings.federation_timeout)
+        app.state.federation_client = federation_client
+
     # Parser registry
     from knowledge_service.parsing import ParserRegistry  # noqa: PLC0415
     from knowledge_service.parsing.text import TextParser  # noqa: PLC0415
@@ -239,6 +247,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     from knowledge_service.stores.community import CommunityStore  # noqa: PLC0415
 
     app.state.community_store = CommunityStore(pg_pool)
+    app.state._last_community_rebuild = 0.0
 
     app.state.rag_retriever = RAGRetriever(
         embedding_client=embedding_client,
@@ -300,6 +309,8 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     await app.state.rag_client.close()
     await embedding_client.close()
     await extraction_client.close()
+    if federation_client is not None:
+        await federation_client.close()
 
 
 def create_app(use_lifespan: bool = True) -> FastAPI:
