@@ -54,11 +54,12 @@ def _make_stores_mock(**overrides):
     stores.provenance = overrides.get("provenance", AsyncMock())
     stores.theses = overrides.get("theses", AsyncMock())
     stores.pg_pool = overrides.get("pg_pool", _make_pg_pool_mock())
-    # provenance.get_by_triple returns empty by default
-    stores.provenance.get_by_triple.return_value = []
-    stores.provenance.insert.return_value = None
-    # theses.find_by_hashes returns empty by default
-    stores.theses.find_by_hashes.return_value = []
+    # Set defaults only for stores not provided via overrides
+    if "provenance" not in overrides:
+        stores.provenance.get_by_triple.return_value = []
+        stores.provenance.insert.return_value = None
+    if "theses" not in overrides:
+        stores.theses.find_by_hashes.return_value = []
     return stores
 
 
@@ -483,3 +484,44 @@ class TestPostClaimsBatch:
         ]
         response = await client.post("/api/claims", json=batch)
         assert response.status_code == 422
+
+
+# ---------------------------------------------------------------------------
+# Tests: Thesis breaks surfacing
+# ---------------------------------------------------------------------------
+
+
+class TestPostClaimsThesisBreaks:
+    async def test_response_has_thesis_breaks_field(self, client):
+        response = await client.post("/api/claims", json=CLAIM_PAYLOAD)
+        data = response.json()
+        assert "thesis_breaks" in data
+        assert isinstance(data["thesis_breaks"], list)
+
+    async def test_thesis_breaks_empty_when_no_contradictions(self, client):
+        response = await client.post("/api/claims", json=CLAIM_PAYLOAD)
+        data = response.json()
+        assert data["thesis_breaks"] == []
+
+    async def test_thesis_breaks_returned_when_contradiction_hits_active_thesis(self):
+        mock_ts = _make_triple_store_mock()
+        mock_ts.find_contradictions.return_value = [
+            {"existing_hash": "old_hash", "existing_confidence": 0.6}
+        ]
+        mock_theses = AsyncMock()
+        mock_theses.find_by_hashes.return_value = [
+            {"thesis_id": "t1", "thesis_name": "Test Thesis", "triple_hash": "old_hash"}
+        ]
+        app = _make_app_with_mocks(triples=mock_ts, theses=mock_theses)
+
+        transport = ASGITransport(app=app)
+        async with AsyncClient(
+            transport=transport,
+            base_url="http://test",
+            cookies={"ks_session": make_test_session_cookie()},
+        ) as c:
+            response = await c.post("/api/claims", json=CLAIM_PAYLOAD)
+
+        data = response.json()
+        assert len(data["thesis_breaks"]) == 1
+        assert data["thesis_breaks"][0]["thesis_id"] == "t1"
