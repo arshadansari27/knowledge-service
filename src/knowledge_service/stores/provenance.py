@@ -101,28 +101,6 @@ class ProvenanceStore:
             rows = await conn.fetch(sql, triple_hash)
         return [dict(row) for row in rows]
 
-    async def get_by_source(self, source_url: str) -> list[dict]:
-        """Return all provenance rows attributed to a given source URL."""
-        sql = "SELECT * FROM provenance WHERE source_url = $1"
-        async with self._pool.acquire() as conn:
-            rows = await conn.fetch(sql, source_url)
-        return [dict(row) for row in rows]
-
-    async def query_by_confidence(
-        self,
-        min_confidence: float = 0.0,
-        max_confidence: float = 1.0,
-    ) -> list[dict]:
-        """Return rows whose confidence falls within [min_confidence, max_confidence]."""
-        sql = """
-            SELECT * FROM provenance
-            WHERE confidence >= $1 AND confidence <= $2
-            ORDER BY confidence DESC
-        """
-        async with self._pool.acquire() as conn:
-            rows = await conn.fetch(sql, min_confidence, max_confidence)
-        return [dict(row) for row in rows]
-
     async def query_by_entity_and_time(self, entity_uri: str, since: datetime) -> list[dict]:
         """Return provenance rows where subject = entity_uri AND ingested_at >= since."""
         async with self._pool.acquire() as conn:
@@ -137,29 +115,3 @@ class ProvenanceStore:
             )
         return [dict(r) for r in rows]
 
-    async def query_by_time(
-        self,
-        since: datetime | None = None,
-        until: datetime | None = None,
-    ) -> list[dict]:
-        """Return rows whose ingested_at falls within the given time window.
-
-        Both bounds are optional; omitting one drops the corresponding filter.
-        """
-        conditions: list[str] = []
-        params: list[Any] = []
-
-        if since is not None:
-            params.append(since)
-            conditions.append(f"ingested_at >= ${len(params)}")
-
-        if until is not None:
-            params.append(until)
-            conditions.append(f"ingested_at <= ${len(params)}")
-
-        where_clause = f"WHERE {' AND '.join(conditions)}" if conditions else ""
-        sql = f"SELECT * FROM provenance {where_clause} ORDER BY ingested_at DESC"
-
-        async with self._pool.acquire() as conn:
-            rows = await conn.fetch(sql, *params)
-        return [dict(row) for row in rows]
