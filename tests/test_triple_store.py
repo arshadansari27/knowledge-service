@@ -59,7 +59,6 @@ class TestInsert:
         h2, _ = store2.insert(*args)
         assert h1 == h2
 
-
     def test_insert_literal_with_special_chars(self, store):
         """Literals containing quotes, backslashes, or newlines must not break SPARQL."""
         for obj in ['has "quotes"', "line1\nline2", "back\\slash", 'all "three"\nin\\one']:
