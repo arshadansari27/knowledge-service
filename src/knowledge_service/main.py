@@ -211,8 +211,14 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     nlp = load_spacy_nlp(settings.spacy_data_dir)
     app.state.nlp = nlp
     if nlp:
+        pipe_names = [name for name, _ in nlp.pipeline]
+        if "entityLinker" in pipe_names:
+            app.state.nlp_status = "ok"
+        else:
+            app.state.nlp_status = "degraded: entity linker not loaded"
         logger.info("spaCy NLP pipeline loaded — NLP pre-pass enabled")
     else:
+        app.state.nlp_status = "unavailable: spaCy not loaded"
         logger.info("spaCy unavailable — NLP pre-pass disabled, LLM-only extraction")
 
     # Seed predicate embeddings

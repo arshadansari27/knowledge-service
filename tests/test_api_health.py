@@ -72,6 +72,58 @@ class TestHealth:
         assert data["components"]["postgresql"] == "ok"
         assert data["components"]["llm"] == "ok"
 
+    async def test_health_includes_nlp_when_status_set(self):
+        app = create_app(use_lifespan=False)
+        app.state.knowledge_store = MagicMock()
+        app.state.knowledge_store.query.return_value = [{"x": 1}]
+        app.state.pg_pool = _make_pg_pool_mock()
+        mock_llm = AsyncMock()
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+        mock_llm.get.return_value = mock_resp
+        app.state.embedding_client = MagicMock()
+        app.state.embedding_client._client = mock_llm
+        app.state.nlp_status = "ok"
+
+        transport = ASGITransport(app=app)
+        async with AsyncClient(
+            transport=transport,
+            base_url="http://test",
+            cookies={"ks_session": make_test_session_cookie()},
+        ) as c:
+            response = await c.get("/health")
+        data = response.json()
+        assert data["components"]["nlp"] == "ok"
+
+    async def test_health_nlp_unavailable_causes_degraded(self):
+        app = create_app(use_lifespan=False)
+        app.state.knowledge_store = MagicMock()
+        app.state.knowledge_store.query.return_value = [{"x": 1}]
+        app.state.pg_pool = _make_pg_pool_mock()
+        mock_llm = AsyncMock()
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+        mock_llm.get.return_value = mock_resp
+        app.state.embedding_client = MagicMock()
+        app.state.embedding_client._client = mock_llm
+        app.state.nlp_status = "unavailable: spaCy not loaded"
+
+        transport = ASGITransport(app=app)
+        async with AsyncClient(
+            transport=transport,
+            base_url="http://test",
+            cookies={"ks_session": make_test_session_cookie()},
+        ) as c:
+            response = await c.get("/health")
+        data = response.json()
+        assert data["status"] == "degraded"
+        assert "unavailable" in data["components"]["nlp"]
+
+    async def test_health_no_nlp_key_when_status_not_set(self, client):
+        response = await client.get("/health")
+        data = response.json()
+        assert "nlp" not in data["components"]
+
     async def test_health_degraded_when_oxigraph_fails(self):
         app = create_app(use_lifespan=False)
 

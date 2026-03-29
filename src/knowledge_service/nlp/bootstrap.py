@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+from pathlib import Path
 from typing import Any
 
 logger = logging.getLogger(__name__)
@@ -10,6 +11,8 @@ logger = logging.getLogger(__name__)
 
 def load_spacy_nlp(spacy_data_dir: str) -> Any | None:
     """Load spaCy model with entity linker. Returns None if unavailable."""
+    Path(spacy_data_dir).mkdir(parents=True, exist_ok=True)
+
     try:
         import spacy  # noqa: PLC0415
     except ImportError:
