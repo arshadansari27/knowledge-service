@@ -22,7 +22,9 @@ def is_object_entity(item) -> bool:
     """Decide whether an item's object field is an entity reference (vs a literal).
 
     Checks the object_type hint first (from LLM or user), falls back to
-    heuristic: no spaces and <= 60 chars suggests an entity.
+    heuristic: must look like a snake_case entity label (lowercase letters,
+    digits, underscores only). Rejects strings with hyphens, dots, uppercase,
+    or numeric-only patterns that are likely literal values.
 
     Works with both dicts and Pydantic models.
     """
@@ -34,7 +36,9 @@ def is_object_entity(item) -> bool:
     if obj_type == "literal":
         return False
     obj = item.get("object", "") if isinstance(item, dict) else getattr(item, "object", "")
-    return bool(obj) and " " not in obj and len(obj) <= 60
+    if not obj or len(obj) > 60:
+        return False
+    return bool(re.match(r"^[a-z][a-z0-9_]*$", obj))
 
 
 def _to_rdf_term(value: str) -> NamedNode | Literal:
