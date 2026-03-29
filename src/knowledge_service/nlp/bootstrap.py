@@ -29,12 +29,8 @@ def load_spacy_nlp(spacy_data_dir: str) -> Any | None:
         return None
 
     try:
-        nlp.add_pipe(
-            "entityLinker",
-            last=True,
-            config={"resolve_pronouns": False, "data_dir": spacy_data_dir},
-        )
-        logger.info("spaCy entity linker loaded from %s", spacy_data_dir)
+        nlp.add_pipe("entityLinker", last=True)
+        logger.info("spaCy entity linker loaded")
     except Exception:
         logger.warning(
             "spaCy entity linker unavailable — proceeding without Wikidata linking",
