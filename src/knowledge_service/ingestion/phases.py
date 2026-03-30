@@ -4,8 +4,9 @@ import logging
 from dataclasses import dataclass, field
 from typing import Any
 
+from knowledge_service._utils import is_object_entity
 from knowledge_service.ingestion.pipeline import IngestContext, ingest_triple
-from knowledge_service.ontology.uri import is_uri
+from knowledge_service.ontology.uri import is_uri, to_entity_uri
 
 logger = logging.getLogger(__name__)
 
@@ -211,6 +212,12 @@ class ProcessPhase:
                 continue
 
             for triple in triples:
+                # Normalize object to entity URI when it represents an entity
+                # reference (not a literal value). This is essential for inference
+                # rules that need URI objects to chain triples.
+                if is_object_entity(triple):
+                    triple["object"] = to_entity_uri(triple["object"])
+
                 # Resolve entities via embeddings (if entity_store available)
                 if self._entity_store is not None:
                     triple["subject"] = await self._entity_store.resolve_entity(
@@ -219,7 +226,7 @@ class ProcessPhase:
                     triple["predicate"] = await self._entity_store.resolve_predicate(
                         triple["predicate"]
                     )
-                    if triple.get("object_type") == "entity" or is_uri(triple.get("object", "")):
+                    if is_uri(triple.get("object", "")):
                         triple["object"] = await self._entity_store.resolve_entity(triple["object"])
                     entities_resolved += 1
 

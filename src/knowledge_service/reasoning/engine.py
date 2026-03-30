@@ -293,6 +293,13 @@ class InferenceEngine:
                     all_derived.append(derived)
                     queue.append((derived.to_dict(), current_depth + 1))
 
+        if all_derived:
+            logger.info(
+                "InferenceEngine: %d new triples derived from (%s, %s, ...)",
+                len(all_derived),
+                trigger_triple.get("subject", "?")[-40:],
+                trigger_triple.get("predicate", "?")[-30:],
+            )
         return all_derived
 
 
