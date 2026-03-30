@@ -207,6 +207,18 @@ async def run_ingestion(
 
         await tracker.complete(triples_created, entities_resolved, chunks_failed)
 
+        if chunks_failed > 0 and triples_created == 0:
+            total_chunks = len(chunk_records)
+            logger.warning(
+                "Ingestion job %s: all %d/%d chunks failed extraction, 0 triples created "
+                "(title=%s, url=%s)",
+                job_id,
+                chunks_failed,
+                total_chunks,
+                title,
+                source_url,
+            )
+
         # Background federation enrichment (best-effort, after job marked complete)
         if federation_client is not None and triples_created > 0:
             try:

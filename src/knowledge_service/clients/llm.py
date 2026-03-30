@@ -113,7 +113,10 @@ class ExtractionClient(BaseLLMClient):
 
         parsed = _extract_json(raw)
         if parsed is None:
-            logger.warning("ExtractionClient: could not parse JSON from response")
+            logger.warning(
+                "ExtractionClient: could not parse JSON from response (first 200 chars: %s)",
+                raw[:200],
+            )
             return None
 
         return parsed.get("items", [])

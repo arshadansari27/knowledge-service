@@ -106,13 +106,29 @@ class ExtractPhase:
                     for e in nlp_result.entities
                 ]
 
-            items = await self._extraction_client.extract(
-                chunk["chunk_text"],
-                title=title,
-                source_type=source_type,
-                entity_hints=entity_hints,
-            )
+            try:
+                items = await self._extraction_client.extract(
+                    chunk["chunk_text"],
+                    title=title,
+                    source_type=source_type,
+                    entity_hints=entity_hints,
+                )
+            except Exception:
+                logger.exception(
+                    "ExtractPhase: chunk %d extraction raised an exception (title=%s)",
+                    chunk_index,
+                    title,
+                )
+                chunks_failed += 1
+                continue
             if items is None:
+                logger.warning(
+                    "ExtractPhase: chunk %d extraction returned None — LLM call failed "
+                    "(title=%s, chunk_len=%d)",
+                    chunk_index,
+                    title,
+                    len(chunk["chunk_text"]),
+                )
                 chunks_failed += 1
                 continue
             for item in items:

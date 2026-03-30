@@ -8,6 +8,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from knowledge_service.ontology.namespaces import KS_GRAPH_ASSERTED
+from knowledge_service.ontology.uri import to_entity_uri
 
 logger = logging.getLogger(__name__)
 
@@ -58,6 +59,9 @@ class FederationPhase:
             local_uri = entity.get("uri", "")
             if not label or not local_uri:
                 continue
+
+            # Normalize bare labels to full URIs before SPARQL queries
+            local_uri = to_entity_uri(local_uri)
 
             # Skip if already has owl:sameAs
             existing = self._store.get_triples(subject=local_uri, predicate=_OWL_SAME_AS)
