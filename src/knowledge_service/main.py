@@ -260,6 +260,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         embedding_store=stores.content,
         knowledge_store=triple_store,
         community_store=app.state.community_store,
+        entity_store=entity_store,
         classify_client=classify_client,
     )
 
