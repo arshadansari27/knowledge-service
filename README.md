@@ -634,6 +634,82 @@ All settings via environment variables or `.env` file:
 
 ---
 
+## Bulk Ingest CLI
+
+A standalone script to ingest a directory of files and/or a list of URLs in one go.
+
+### Usage
+
+```bash
+# Ingest all supported files in a directory (recursive)
+uv run python scripts/bulk_ingest.py ./documents/
+
+# Ingest URLs from a file (one per line, # comments and blank lines ignored)
+uv run python scripts/bulk_ingest.py --urls urls.txt
+
+# Both at once, with tags and domain hints
+uv run python scripts/bulk_ingest.py ./documents/ --urls urls.txt --tags health,research --domains health
+
+# Preview what would be ingested without doing it
+uv run python scripts/bulk_ingest.py ./documents/ --dry-run
+```
+
+### Supported file types
+
+`.pdf`, `.html`, `.htm`, `.txt`, `.md`, `.json`, `.csv`
+
+Files are uploaded via `POST /api/content/upload`. URLs are submitted via `POST /api/content` (server auto-fetches).
+
+### Options
+
+| Option | Default | Description |
+|--------|---------|-------------|
+| `path` (positional) | — | Directory to scan recursively |
+| `--urls FILE` | — | Text file with one URL per line |
+| `--server URL` | `KNOWLEDGE_URL` env or `http://localhost:8000` | Target server |
+| `--api-key KEY` | `KNOWLEDGE_API_KEY` env | API key for authentication |
+| `--tags t1,t2` | — | Comma-separated tags for all items |
+| `--domains d1,d2` | — | Comma-separated domain hints for extraction |
+| `--dry-run` | — | List items without ingesting |
+| `--poll-timeout N` | `300` | Seconds to wait per item before giving up |
+
+At least one of `path` or `--urls` is required.
+
+### How it works
+
+Items are processed sequentially. For each item, the script POSTs to the server, then polls `GET /api/content/{id}/status` every 5 seconds until the job completes, fails, or times out. Progress is printed as it goes:
+
+```
+Bulk ingest: 6 items (5 files, 1 URLs)
+Target: http://localhost:8000
+
+  [1/6] report.pdf .................. OK  triples=14  23s
+  [2/6] notes.txt ................... OK  triples=6   8s
+  [3/6] https://example.com/article . FAIL  extraction failed  45s
+  ...
+
+Results: 4 passed, 1 failed, 1 skipped (total: 4m 32s)
+```
+
+Exit code is 0 if all items passed, 1 if any failed.
+
+### Against production
+
+```bash
+KNOWLEDGE_URL=https://knowledge.hikmahtech.in \
+KNOWLEDGE_API_KEY=your-key \
+  uv run python scripts/bulk_ingest.py ./documents/ --poll-timeout 600
+```
+
+### Against local docker-compose
+
+```bash
+docker compose up -d
+uv run python scripts/bulk_ingest.py ./documents/ --api-key changeme
+```
+
+---
+
 ## Running Tests
 
 ```bash
@@ -765,6 +841,7 @@ All phases complete and deployed to production (660+ tests).
 | Growable Intelligence | Store decomposition, ingestion pipeline, Noisy-OR, additive ontology, thesis model |
 | Inference Engine | Forward-chaining rules (inverse, transitive, type inheritance), retraction cascade |
 | Multi-Layer Ingestion | Document parsing (PDF/HTML/CSV/JSON), spaCy NLP pre-pass, Wikidata entity linking, two-tier coreference, file upload endpoint, URL auto-fetch |
+| Bulk Ingest CLI | Standalone script for batch ingestion of files and URLs |
 
 ---
 
