@@ -100,7 +100,11 @@ def poll_job(client: httpx.Client, content_id: str, timeout: int) -> dict:
 
 
 def ingest_file(
-    client: httpx.Client, filepath: Path, tags: str, domains: str, poll_timeout: int
+    client: httpx.Client,
+    filepath: Path,
+    tags: list[str],
+    domains: list[str],
+    poll_timeout: int,
 ) -> tuple[str, str]:
     """Upload a file. Returns (status, detail)."""
     ext = filepath.suffix.lower()
@@ -108,9 +112,9 @@ def ingest_file(
 
     data: dict[str, str] = {}
     if tags:
-        data["tags"] = tags
+        data["tags"] = ",".join(tags)
     if domains:
-        data["domains"] = domains
+        data["domains"] = ",".join(domains)
 
     with open(filepath, "rb") as f:
         resp = client.post(
@@ -137,14 +141,18 @@ def ingest_file(
 
 
 def ingest_url(
-    client: httpx.Client, url: str, tags: str, domains: str, poll_timeout: int
+    client: httpx.Client,
+    url: str,
+    tags: list[str],
+    domains: list[str],
+    poll_timeout: int,
 ) -> tuple[str, str]:
     """Submit a URL for ingestion. Returns (status, detail)."""
     body: dict = {"url": url}
     if tags:
-        body["tags"] = [t.strip() for t in tags.split(",")]
+        body["tags"] = tags
     if domains:
-        body["domains"] = [d.strip() for d in domains.split(",")]
+        body["domains"] = domains
 
     resp = client.post("/api/content", json=body)
 
@@ -167,6 +175,12 @@ def ingest_url(
 
 def main():
     args = parse_args()
+
+    # Normalize tags/domains into lists
+    tags: list[str] = [t.strip() for t in args.tags.split(",") if t.strip()] if args.tags else []
+    domains: list[str] = (
+        [d.strip() for d in args.domains.split(",") if d.strip()] if args.domains else []
+    )
 
     # Build item list
     files: list[Path] = []
@@ -210,13 +224,13 @@ def main():
         print(f"  [{i}/{total}] {label} ", end="", flush=True)
         start = time.time()
         try:
-            status, detail = ingest_file(
-                client, filepath, args.tags, args.domains, args.poll_timeout
-            )
+            status, detail = ingest_file(client, filepath, tags, domains, args.poll_timeout)
         except httpx.ConnectError:
             print("FAIL  connection refused")
             print(f"\nERROR: Cannot connect to {args.server}")
             sys.exit(1)
+        except httpx.HTTPError as exc:
+            status, detail = "FAIL", str(exc)[:100]
         elapsed = time.time() - start
         print(f"{status}  {detail}  {elapsed:.0f}s")
         if status == "OK":
@@ -231,11 +245,13 @@ def main():
         print(f"  [{i}/{total}] {url} ", end="", flush=True)
         start = time.time()
         try:
-            status, detail = ingest_url(client, url, args.tags, args.domains, args.poll_timeout)
+            status, detail = ingest_url(client, url, tags, domains, args.poll_timeout)
         except httpx.ConnectError:
             print("FAIL  connection refused")
             print(f"\nERROR: Cannot connect to {args.server}")
             sys.exit(1)
+        except httpx.HTTPError as exc:
+            status, detail = "FAIL", str(exc)[:100]
         elapsed = time.time() - start
         print(f"{status}  {detail}  {elapsed:.0f}s")
         if status == "OK":
