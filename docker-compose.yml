@@ -5,8 +5,10 @@ services:
       - "8000:8000"
     environment:
       DATABASE_URL: postgresql://knowledge:knowledge@postgres:5432/knowledge
-      LLM_BASE_URL: http://host.docker.internal:11434
+      LLM_BASE_URL: ${LLM_BASE_URL:-http://host.docker.internal:11434}
+      LLM_API_KEY: ${LLM_API_KEY:-}
       OXIGRAPH_DATA_DIR: /app/data/oxigraph
+      SECRET_KEY: dev-secret-key-not-for-production
       ADMIN_PASSWORD: changeme
     depends_on:
       postgres:
@@ -29,7 +31,6 @@ services:
       - "5433:5432"
     volumes:
       - pg-data:/var/lib/postgresql/data
-      - ./migrations:/docker-entrypoint-initdb.d
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U knowledge"]
       interval: 5s
