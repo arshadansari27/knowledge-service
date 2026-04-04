@@ -159,7 +159,7 @@ async def run_ingestion(
         chunks_failed = 0
         if not knowledge and raw_text and extraction_client:
             extract = ExtractPhase(extraction_client)
-            knowledge_items, chunk_ids_for_items, chunks_failed = await extract.run(
+            knowledge_items, chunk_ids_for_items, chunks_failed, chunks_skipped = await extract.run(
                 chunk_records,
                 chunk_id_map,
                 title=title,
@@ -167,7 +167,7 @@ async def run_ingestion(
                 nlp_hints=nlp_results,
             )
             extractor = "llm"
-            chunks_extracted = len(chunk_records) - chunks_failed
+            chunks_extracted = len(chunk_records) - chunks_failed - chunks_skipped
         else:
             knowledge_items = list(knowledge or [])
             chunk_ids_for_items = [None] * len(knowledge_items)
