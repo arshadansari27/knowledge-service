@@ -16,6 +16,7 @@ _ALLOWED_JOB_COLUMNS = frozenset(
         "chunks_embedded",
         "chunks_extracted",
         "chunks_failed",
+        "chunks_skipped",
         "triples_created",
         "entities_resolved",
         "entities_linked",
@@ -157,6 +158,7 @@ async def run_ingestion(
         await tracker.update_status("extracting")
 
         chunks_failed = 0
+        chunks_skipped = 0
         if not knowledge and raw_text and extraction_client:
             extract = ExtractPhase(extraction_client)
             knowledge_items, chunk_ids_for_items, chunks_failed, chunks_skipped = await extract.run(
@@ -175,7 +177,10 @@ async def run_ingestion(
             chunks_extracted = 0
 
         await tracker.update_status(
-            "extracting", chunks_extracted=chunks_extracted, chunks_failed=chunks_failed
+            "extracting",
+            chunks_extracted=chunks_extracted,
+            chunks_failed=chunks_failed,
+            chunks_skipped=chunks_skipped,
         )
         graph = KS_GRAPH_ASSERTED if extractor == "api" else KS_GRAPH_EXTRACTED
 
