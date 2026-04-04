@@ -87,7 +87,7 @@ Text:
 
 
 _DEFAULT_COMBINED_TEMPLATE = """{context}You are a knowledge extraction system. Extract entities, events, AND relationships from the text below.
-Return ONLY a JSON object: {{"entities": [...], "relations": []}}
+Return ONLY a JSON object: {{"entities": [...], "relations": [...]}}
 
 ## Step 1: Extract Entities and Events
 

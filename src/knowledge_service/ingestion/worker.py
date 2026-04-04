@@ -47,17 +47,23 @@ class JobTracker:
             await conn.execute(sql, *params)
 
     async def complete(
-        self, triples_created: int, entities_resolved: int, chunks_failed: int
+        self,
+        triples_created: int,
+        entities_resolved: int,
+        chunks_failed: int,
+        chunks_skipped: int = 0,
     ) -> None:
         async with self._pool.acquire() as conn:
             await conn.execute(
                 """UPDATE ingestion_jobs
                    SET status = 'completed', triples_created = $1,
-                       entities_resolved = $2, chunks_failed = $3
-                   WHERE id = $4::uuid""",
+                       entities_resolved = $2, chunks_failed = $3,
+                       chunks_skipped = $4
+                   WHERE id = $5::uuid""",
                 triples_created,
                 entities_resolved,
                 chunks_failed,
+                chunks_skipped,
                 self._job_id,
             )
 
@@ -210,7 +216,7 @@ async def run_ingestion(
             graph,
         )
 
-        await tracker.complete(triples_created, entities_resolved, chunks_failed)
+        await tracker.complete(triples_created, entities_resolved, chunks_failed, chunks_skipped)
 
         if chunks_failed > 0 and triples_created == 0:
             total_chunks = len(chunk_records)
