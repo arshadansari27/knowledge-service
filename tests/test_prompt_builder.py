@@ -115,6 +115,54 @@ class TestBuildRelationPrompt:
         assert "Source type: paper" in prompt
 
 
+class TestBuildCombinedPrompt:
+    def test_combined_prompt_includes_entity_and_relation_instructions(self):
+        reg = _mock_registry()
+        reg.get_domains_for_entity_types.return_value = ["base"]
+        reg.get_predicates.return_value = [
+            PredicateInfo(uri="http://x/causes", label="causes", domain="base"),
+        ]
+        builder = PromptBuilder(reg)
+        prompt = builder.build_combined_prompt("Some text", title="Test", source_type="article")
+        assert "Entity" in prompt
+        assert "Event" in prompt
+        assert "Claim" in prompt
+        assert "Relationship" in prompt
+        assert "snake_case" in prompt
+        assert "Some text" in prompt
+
+    def test_combined_prompt_includes_nlp_hints(self):
+        reg = _mock_registry()
+        reg.get_domains_for_entity_types.return_value = ["base"]
+        reg.get_predicates.return_value = []
+        builder = PromptBuilder(reg)
+        hints = [{"text": "dopamine", "label": "CHEMICAL", "wikidata_id": "Q80635"}]
+        prompt = builder.build_combined_prompt("text", entity_hints=hints)
+        assert "dopamine" in prompt
+        assert "CHEMICAL" in prompt
+
+    def test_combined_prompt_includes_predicates(self):
+        reg = _mock_registry()
+        reg.get_domains_for_entity_types.return_value = ["base"]
+        reg.get_predicates.return_value = [
+            PredicateInfo(uri="http://x/causes", label="causes", domain="base"),
+            PredicateInfo(uri="http://x/increases", label="increases", domain="base"),
+        ]
+        builder = PromptBuilder(reg)
+        prompt = builder.build_combined_prompt("text")
+        assert "causes" in prompt
+        assert "increases" in prompt
+
+    def test_combined_prompt_truncates_text(self):
+        reg = _mock_registry()
+        reg.get_domains_for_entity_types.return_value = ["base"]
+        reg.get_predicates.return_value = []
+        builder = PromptBuilder(reg)
+        long_text = "word " * 2000  # ~10000 chars
+        prompt = builder.build_combined_prompt(long_text)
+        assert len(prompt) < len(long_text)
+
+
 class TestThesisPrompt:
     def test_includes_statement(self):
         reg = _mock_registry()
