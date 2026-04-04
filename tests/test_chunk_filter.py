@@ -26,6 +26,10 @@ class TestScoreChunk:
         chunk = {"chunk_text": "Appendix data.", "section_header": "Appendix A"}
         assert score_chunk(chunk, nlp_result=None) == 0.0
 
+    def test_hierarchical_references_header_returns_zero(self):
+        chunk = {"chunk_text": "Some text.", "section_header": "Paper > References"}
+        assert score_chunk(chunk, nlp_result=None) == 0.0
+
     def test_references_detected_in_first_line(self):
         chunk = {"chunk_text": "References\n[1] Author, A. (2024)...", "section_header": None}
         assert score_chunk(chunk, nlp_result=None) == 0.0
