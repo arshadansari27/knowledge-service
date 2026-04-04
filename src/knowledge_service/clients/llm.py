@@ -154,6 +154,11 @@ class ExtractionClient(BaseLLMClient):
         if "entities" in parsed or "relations" in parsed:
             entities = parsed.get("entities", [])
             relations = parsed.get("relations", [])
+            # qwen3 occasionally returns a dict instead of a list — coerce to list
+            if not isinstance(entities, list):
+                entities = list(entities.values()) if isinstance(entities, dict) else []
+            if not isinstance(relations, list):
+                relations = list(relations.values()) if isinstance(relations, dict) else []
             return entities + relations
 
         return parsed.get("items", [])

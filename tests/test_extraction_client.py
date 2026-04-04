@@ -317,6 +317,26 @@ class TestSinglePassExtract:
         assert len(httpx_mock.get_requests()) == 1
         await client.close()
 
+    async def test_dict_entities_coerced_to_list(self, httpx_mock):
+        """qwen3 sometimes returns {"entities": {}, "relations": []} — must not crash."""
+        httpx_mock.add_response(
+            url=_CHAT_URL,
+            json={
+                "choices": [
+                    {
+                        "message": {
+                            "role": "assistant",
+                            "content": json.dumps({"entities": {}, "relations": []}),
+                        }
+                    }
+                ]
+            },
+        )
+        client = ExtractionClient(base_url=_BASE, model="qwen3:14b", api_key=_KEY)
+        result = await client.extract("text")
+        assert result == []
+        await client.close()
+
     async def test_legacy_items_format_still_works(self, httpx_mock):
         """extract() should also accept legacy {"items": [...]} format."""
         httpx_mock.add_response(
