@@ -16,6 +16,7 @@ _ALLOWED_JOB_COLUMNS = frozenset(
         "chunks_embedded",
         "chunks_extracted",
         "chunks_failed",
+        "chunks_skipped",
         "triples_created",
         "entities_resolved",
         "entities_linked",
@@ -46,17 +47,23 @@ class JobTracker:
             await conn.execute(sql, *params)
 
     async def complete(
-        self, triples_created: int, entities_resolved: int, chunks_failed: int
+        self,
+        triples_created: int,
+        entities_resolved: int,
+        chunks_failed: int,
+        chunks_skipped: int = 0,
     ) -> None:
         async with self._pool.acquire() as conn:
             await conn.execute(
                 """UPDATE ingestion_jobs
                    SET status = 'completed', triples_created = $1,
-                       entities_resolved = $2, chunks_failed = $3
-                   WHERE id = $4::uuid""",
+                       entities_resolved = $2, chunks_failed = $3,
+                       chunks_skipped = $4
+                   WHERE id = $5::uuid""",
                 triples_created,
                 entities_resolved,
                 chunks_failed,
+                chunks_skipped,
                 self._job_id,
             )
 
@@ -157,9 +164,10 @@ async def run_ingestion(
         await tracker.update_status("extracting")
 
         chunks_failed = 0
+        chunks_skipped = 0
         if not knowledge and raw_text and extraction_client:
             extract = ExtractPhase(extraction_client)
-            knowledge_items, chunk_ids_for_items, chunks_failed = await extract.run(
+            knowledge_items, chunk_ids_for_items, chunks_failed, chunks_skipped = await extract.run(
                 chunk_records,
                 chunk_id_map,
                 title=title,
@@ -167,7 +175,7 @@ async def run_ingestion(
                 nlp_hints=nlp_results,
             )
             extractor = "llm"
-            chunks_extracted = len(chunk_records) - chunks_failed
+            chunks_extracted = len(chunk_records) - chunks_failed - chunks_skipped
         else:
             knowledge_items = list(knowledge or [])
             chunk_ids_for_items = [None] * len(knowledge_items)
@@ -175,7 +183,10 @@ async def run_ingestion(
             chunks_extracted = 0
 
         await tracker.update_status(
-            "extracting", chunks_extracted=chunks_extracted, chunks_failed=chunks_failed
+            "extracting",
+            chunks_extracted=chunks_extracted,
+            chunks_failed=chunks_failed,
+            chunks_skipped=chunks_skipped,
         )
         graph = KS_GRAPH_ASSERTED if extractor == "api" else KS_GRAPH_EXTRACTED
 
@@ -205,7 +216,19 @@ async def run_ingestion(
             graph,
         )
 
-        await tracker.complete(triples_created, entities_resolved, chunks_failed)
+        await tracker.complete(triples_created, entities_resolved, chunks_failed, chunks_skipped)
+
+        if chunks_failed > 0 and triples_created == 0:
+            total_chunks = len(chunk_records)
+            logger.warning(
+                "Ingestion job %s: all %d/%d chunks failed extraction, 0 triples created "
+                "(title=%s, url=%s)",
+                job_id,
+                chunks_failed,
+                total_chunks,
+                title,
+                source_url,
+            )
 
         # Background federation enrichment (best-effort, after job marked complete)
         if federation_client is not None and triples_created > 0:

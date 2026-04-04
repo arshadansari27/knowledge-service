@@ -62,12 +62,9 @@ class EmbeddingClient(BaseLLMClient):
 
 
 class ExtractionClient(BaseLLMClient):
-    """Two-phase extraction using DomainRegistry for domain-aware prompts.
+    """Single-pass extraction using DomainRegistry for domain-aware prompts.
 
-    Uses a two-phase extraction strategy:
-      Phase 1: Extract Entity and Event items
-      Phase 2: Extract relations (Claim, Fact, Relationship, TemporalState, Conclusion)
-               constrained to the entities discovered in phase 1
+    Extracts entities, events, and relations in a single LLM call per chunk.
     """
 
     def __init__(
@@ -113,8 +110,51 @@ class ExtractionClient(BaseLLMClient):
 
         parsed = _extract_json(raw)
         if parsed is None:
+            logger.warning(
+                "ExtractionClient: could not parse JSON from response (first 200 chars: %s)",
+                raw[:200],
+            )
+            return None
+
+        return parsed.get("items", [])
+
+    async def _call_llm_combined(self, prompt: str) -> list[dict] | None:
+        """Send a combined prompt and return merged entity + relation dicts.
+
+        Accepts responses in either format:
+        - {"entities": [...], "relations": [...]}  (combined format)
+        - {"items": [...]}  (legacy format)
+        Returns None on failure.
+        """
+        try:
+            response = await self._client.post(
+                "/v1/chat/completions",
+                json={
+                    "model": self._model,
+                    "messages": [{"role": "user", "content": prompt}],
+                },
+            )
+            response.raise_for_status()
+        except httpx.HTTPStatusError as exc:
+            logger.warning("ExtractionClient: LLM API returned %s", exc.response.status_code)
+            return None
+        except httpx.TimeoutException as exc:
+            logger.warning("ExtractionClient: LLM API request timed out: %s", exc)
+            return None
+
+        raw_text = response.json()["choices"][0]["message"]["content"]
+        from knowledge_service._utils import _extract_json  # noqa: PLC0415
+
+        parsed = _extract_json(raw_text)
+        if parsed is None:
             logger.warning("ExtractionClient: could not parse JSON from response")
             return None
+
+        # Accept both combined and legacy format
+        if "entities" in parsed or "relations" in parsed:
+            entities = parsed.get("entities", [])
+            relations = parsed.get("relations", [])
+            return entities + relations
 
         return parsed.get("items", [])
 
@@ -133,79 +173,36 @@ class ExtractionClient(BaseLLMClient):
         domains: list[str] | None = None,
         entity_hints: list[dict] | None = None,
     ) -> list | None:
-        """Extract KnowledgeInput items from raw text using two-phase extraction.
+        """Extract KnowledgeInput items from raw text using single-pass extraction.
 
-        Phase 1: entities/events. Phase 2: relations constrained to phase 1 entities.
-        Returns None if phase 1 LLM call failed (distinguishable from [] = nothing found).
-        If phase 2 fails, returns phase 1 results only.
+        Extracts entities, events, and relations in a single LLM call.
+        Returns None if LLM call failed (distinguishable from [] = nothing found).
         """
-        from knowledge_service.models import (  # noqa: PLC0415
-            EntityInput,
-            EventInput,
-            KnowledgeInput,
-        )
+        from knowledge_service.models import KnowledgeInput  # noqa: PLC0415
 
         adapter = TypeAdapter(KnowledgeInput)
 
-        # --- Phase 1: Entity/Event extraction ---
         if self._prompt_builder:
-            phase1_prompt = self._prompt_builder.build_entity_prompt(
-                text, title, source_type, entity_hints=entity_hints
+            prompt = self._prompt_builder.build_combined_prompt(
+                text, title, source_type, entity_hints=entity_hints, domains=domains
             )
         else:
-            phase1_prompt = _build_entity_extraction_prompt_fallback(
+            prompt = _build_combined_extraction_prompt_fallback(
                 text, title, source_type, entity_hints=entity_hints
             )
 
-        phase1_raw = await self._call_llm(phase1_prompt)
-        if phase1_raw is None:
+        raw = await self._call_llm_combined(prompt)
+        if raw is None:
             return None
-        if not phase1_raw:
-            return []
 
-        phase1_items = []
-        for item_dict in phase1_raw:
+        items = []
+        for item_dict in raw:
             try:
-                phase1_items.append(adapter.validate_python(item_dict))
+                items.append(adapter.validate_python(item_dict))
             except ValidationError as exc:
                 logger.warning("ExtractionClient: skipping invalid item %s: %s", item_dict, exc)
 
-        # Collect entity names from phase 1 results
-        entity_names: list[str] = []
-        for item in phase1_items:
-            if isinstance(item, EntityInput):
-                entity_names.append(item.label)
-            elif isinstance(item, EventInput):
-                entity_names.append(item.subject)
-
-        # If no entities found, skip phase 2
-        if not entity_names:
-            return phase1_items
-
-        # --- Phase 2: Relation extraction constrained to phase 1 entities ---
-        if self._prompt_builder:
-            active_domains = domains or self._registry.get_domains_for_entity_types([]) or ["base"]
-            predicates = self._registry.get_predicates(active_domains)
-            phase2_prompt = self._prompt_builder.build_relation_prompt(
-                text, entity_names, predicates, active_domains, title, source_type
-            )
-        else:
-            phase2_prompt = _build_relation_extraction_prompt_fallback(
-                text, title, source_type, entity_names
-            )
-
-        phase2_raw = await self._call_llm(phase2_prompt)
-        if not phase2_raw:
-            return phase1_items
-
-        phase2_items = []
-        for item_dict in phase2_raw:
-            try:
-                phase2_items.append(adapter.validate_python(item_dict))
-            except ValidationError as exc:
-                logger.warning("ExtractionClient: skipping invalid item %s: %s", item_dict, exc)
-
-        return phase1_items + phase2_items
+        return items
 
     async def decompose_thesis(self, statement: str) -> list[dict] | None:
         """Decompose a thesis statement into constituent claims."""
@@ -330,6 +327,65 @@ Output: {{"items": [
   {{"knowledge_type": "Claim", "subject": "cold_water_immersion", "predicate": "increases", "object": "dopamine", "object_type": "entity", "confidence": 0.75}},
   {{"knowledge_type": "Claim", "subject": "cold_water_immersion", "predicate": "has_property", "object": "250% dopamine increase", "object_type": "literal", "confidence": 0.7}}
 ]}}
+
+Text:
+---
+{text[:_MAX_TEXT_CHARS]}
+---"""
+
+
+def _build_combined_extraction_prompt_fallback(
+    text: str,
+    title: str | None,
+    source_type: str | None,
+    entity_hints: list[dict] | None = None,
+) -> str:
+    """Build a single-pass combined extraction prompt (no DomainRegistry)."""
+    context = ""
+    if title:
+        context += f"Title: {title}\n"
+    if source_type:
+        context += f"Source type: {source_type}\n"
+    if entity_hints:
+        context += "\nNLP-detected entities (confirm, correct, or add to these):\n"
+        for hint in entity_hints:
+            context += f"- {hint['text']} ({hint['label']})\n"
+    return f"""{context}You are a knowledge extraction system. Extract entities, events, AND relationships from the text below.
+Return ONLY a JSON object: {{"entities": [...], "relations": [...]}}
+
+## Step 1: Extract Entities and Events
+
+Each entity/event item must have a knowledge_type field:
+- Entity: uri, rdf_type (e.g. "schema:Person", "schema:Thing"), label, properties (dict), confidence
+- Event: subject, occurred_at (YYYY-MM-DD), confidence, properties (dict)
+
+Entity naming rules:
+- Use canonical, well-known names: "dopamine" not "the neurotransmitter dopamine"
+- Use singular form: "neuron" not "neurons"
+- Use lowercase snake_case: "cold_exposure" not "Cold Exposure"
+- Be specific: "vitamin_d3" not "vitamin_d" when the text specifies D3
+- The uri and label should both use the snake_case form
+
+## Step 2: Extract Relationships Using Those Entities
+
+Each relation item must have a knowledge_type field:
+- Claim: subject, predicate, object, object_type, confidence (0.0-0.89)
+- Fact: subject, predicate, object, object_type, confidence (0.9-1.0) for verified facts
+- Relationship: subject, predicate, object, object_type, confidence
+- TemporalState: subject, property, value, valid_from (YYYY-MM-DD), valid_until (YYYY-MM-DD), confidence
+- Conclusion: concludes (text), derived_from (list of identifiers), inference_method, confidence
+
+Preferred predicates (use these when applicable):
+{_FALLBACK_PREDICATES}
+Only invent a new predicate if none of the above fit.
+
+Use entities from Step 1 as subjects and objects. For object values, include object_type ("entity" or "literal"):
+- "entity": the object is a thing/concept
+- "literal": the object is a measurement, description, or date
+
+Use Claim for uncertain assertions, Fact for high-confidence verifiable statements.
+
+If nothing found, return {{"entities": [], "relations": []}}
 
 Text:
 ---

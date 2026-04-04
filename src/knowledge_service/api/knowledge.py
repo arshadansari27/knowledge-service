@@ -13,6 +13,7 @@ from knowledge_service._utils import (
     _rdf_value_to_str,
     sanitize_sparql_string,
 )
+from knowledge_service.ontology.uri import to_entity_uri, to_predicate_uri
 from knowledge_service.ontology.namespaces import (
     KS,
     KS_CONFIDENCE,
@@ -72,15 +73,17 @@ async def get_knowledge_query(
     triple_store = stores.triples
     provenance_store = stores.provenance
 
+    # Normalize bare labels to full URIs (callers may send non-URI values)
+    if subject and not _is_uri(subject):
+        subject = to_entity_uri(subject)
+    if predicate and not _is_uri(predicate):
+        predicate = to_predicate_uri(predicate)
+
     # Build SPARQL filters
     filters = []
     if subject:
-        if not _is_uri(subject):
-            raise HTTPException(status_code=422, detail="subject must be a valid URI")
         filters.append(f"FILTER(?s = <{sanitize_sparql_string(subject)}>)")
     if predicate:
-        if not _is_uri(predicate):
-            raise HTTPException(status_code=422, detail="predicate must be a valid URI")
         filters.append(f"FILTER(?p = <{sanitize_sparql_string(predicate)}>)")
     if object:
         if _is_uri(object):

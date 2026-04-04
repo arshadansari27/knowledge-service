@@ -539,17 +539,17 @@ class TestGetKnowledgeQueryLocal:
 
 
 @pytest.mark.asyncio
-async def test_knowledge_query_rejects_non_uri_subject(client):
-    """Subject filter must be a valid URI."""
+async def test_knowledge_query_normalizes_non_uri_subject(client):
+    """Non-URI subject is auto-normalized to an entity URI, not rejected."""
     resp = await client.get("/api/knowledge/query", params={"subject": "not-a-uri"})
-    assert resp.status_code == 422
+    assert resp.status_code == 200
 
 
 @pytest.mark.asyncio
-async def test_knowledge_query_rejects_non_uri_predicate(client):
-    """Predicate filter must be a valid URI."""
+async def test_knowledge_query_normalizes_non_uri_predicate(client):
+    """Non-URI predicate is auto-normalized to a predicate URI, not rejected."""
     resp = await client.get("/api/knowledge/query", params={"predicate": "not-a-uri"})
-    assert resp.status_code == 422
+    assert resp.status_code == 200
 
 
 @pytest.mark.asyncio

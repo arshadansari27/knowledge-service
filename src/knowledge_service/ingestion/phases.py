@@ -4,8 +4,9 @@ import logging
 from dataclasses import dataclass, field
 from typing import Any
 
+from knowledge_service._utils import is_object_entity
 from knowledge_service.ingestion.pipeline import IngestContext, ingest_triple
-from knowledge_service.ontology.uri import is_uri
+from knowledge_service.ontology.uri import is_uri, to_entity_uri
 
 logger = logging.getLogger(__name__)
 
@@ -69,19 +70,15 @@ class ExtractPhase:
         title: str | None = None,
         source_type: str | None = None,
         nlp_hints: list | None = None,
-    ) -> tuple[list[dict], list[str | None], int]:
+    ) -> tuple[list[dict], list[str | None], int, int]:
         """Extract knowledge from chunks.
 
-        Args:
-            nlp_hints: Optional list of NlpResult objects from the NLP pre-pass.
-                       When provided, entity hints are forwarded to the LLM extraction
-                       to improve entity recognition.
-
-        Returns (knowledge_items, chunk_ids_for_items, chunks_failed).
+        Returns (knowledge_items, chunk_ids_for_items, chunks_failed, chunks_skipped).
         """
         knowledge: list[dict] = []
         chunk_ids: list[str | None] = []
         chunks_failed = 0
+        chunks_skipped = 0
 
         # Build a lookup from chunk_index → NlpResult for hint injection
         hint_map: dict[int, Any] = {}
@@ -89,13 +86,28 @@ class ExtractPhase:
             for hint in nlp_hints:
                 hint_map[hint.chunk_index] = hint
 
+        # Filter chunks if NLP results are available
+        skip_set: set[int] = set()
+        if nlp_hints:
+            from knowledge_service.ingestion.chunk_filter import filter_chunks  # noqa: PLC0415
+
+            _, skip_indices = filter_chunks(chunk_records, nlp_hints)
+            skip_set = set(skip_indices)
+
         for chunk in chunk_records:
             chunk_index = chunk["chunk_index"]
             cid = chunk_id_map.get(chunk_index)
-
-            # Build entity_hints from NLP results for this chunk
-            entity_hints: list[dict] | None = None
             nlp_result = hint_map.get(chunk_index)
+
+            # --- Skip path: NER fallback only ---
+            if chunk_index in skip_set:
+                chunks_skipped += 1
+                if nlp_result and nlp_result.entities:
+                    self._emit_ner_fallback(nlp_result, cid, knowledge, chunk_ids)
+                continue
+
+            # --- Extract path: LLM call ---
+            entity_hints: list[dict] | None = None
             if nlp_result and nlp_result.entities:
                 entity_hints = [
                     {
@@ -121,33 +133,58 @@ class ExtractPhase:
 
             # Add fallback EntityInput for NLP-detected entities the LLM missed
             if nlp_result and nlp_result.entities and items is not None:
-                from knowledge_service.config import settings  # noqa: PLC0415
-                from knowledge_service.models import EntityInput  # noqa: PLC0415
+                self._emit_ner_missed(nlp_result, items, cid, knowledge, chunk_ids)
 
-                llm_labels = set()
-                for item in items:
-                    if hasattr(item, "label"):
-                        llm_labels.add(item.label.lower())
-                    if hasattr(item, "subject"):
-                        llm_labels.add(item.subject.lower())
-                    elif isinstance(item, dict):
-                        for key in ("label", "subject", "uri"):
-                            val = item.get(key)
-                            if val:
-                                llm_labels.add(val.lower())
+        return knowledge, chunk_ids, chunks_failed, chunks_skipped
 
-                for ent in nlp_result.entities:
-                    if ent.text.lower() not in llm_labels:
-                        fallback = EntityInput(
-                            uri=ent.text,
-                            rdf_type=f"schema:{ent.label}" if ent.label else "schema:Thing",
-                            label=ent.text,
-                            confidence=settings.nlp_entity_confidence,
-                        )
-                        knowledge.append(fallback)
-                        chunk_ids.append(cid)
+    @staticmethod
+    def _emit_ner_fallback(
+        nlp_result: Any, cid: str | None, knowledge: list, chunk_ids: list
+    ) -> None:
+        """Emit all NER entities as fallback EntityInput items."""
+        from knowledge_service.config import settings  # noqa: PLC0415
+        from knowledge_service.models import EntityInput  # noqa: PLC0415
 
-        return knowledge, chunk_ids, chunks_failed
+        for ent in nlp_result.entities:
+            fallback = EntityInput(
+                uri=ent.text,
+                rdf_type=f"schema:{ent.label}" if ent.label else "schema:Thing",
+                label=ent.text,
+                confidence=settings.nlp_entity_confidence,
+            )
+            knowledge.append(fallback)
+            chunk_ids.append(cid)
+
+    @staticmethod
+    def _emit_ner_missed(
+        nlp_result: Any, items: list, cid: str | None, knowledge: list, chunk_ids: list
+    ) -> None:
+        """Emit NER entities that the LLM missed as fallback items."""
+        from knowledge_service.config import settings  # noqa: PLC0415
+        from knowledge_service.models import EntityInput  # noqa: PLC0415
+
+        llm_labels = set()
+        for item in items:
+            if hasattr(item, "label"):
+                llm_labels.add(item.label.lower())
+            if hasattr(item, "subject"):
+                llm_labels.add(item.subject.lower())
+            elif isinstance(item, dict):
+                for key in ("label", "subject", "uri"):
+                    val = item.get(key)
+                    if val:
+                        llm_labels.add(val.lower())
+
+        for ent in nlp_result.entities:
+            if ent.text.lower() not in llm_labels:
+                fallback = EntityInput(
+                    uri=ent.text,
+                    rdf_type=f"schema:{ent.label}" if ent.label else "schema:Thing",
+                    label=ent.text,
+                    confidence=settings.nlp_entity_confidence,
+                )
+                knowledge.append(fallback)
+                chunk_ids.append(cid)
 
 
 class ProcessPhase:
@@ -195,6 +232,12 @@ class ProcessPhase:
                 continue
 
             for triple in triples:
+                # Normalize object to entity URI when it represents an entity
+                # reference (not a literal value). This is essential for inference
+                # rules that need URI objects to chain triples.
+                if is_object_entity(triple):
+                    triple["object"] = to_entity_uri(triple["object"])
+
                 # Resolve entities via embeddings (if entity_store available)
                 if self._entity_store is not None:
                     triple["subject"] = await self._entity_store.resolve_entity(
@@ -203,7 +246,7 @@ class ProcessPhase:
                     triple["predicate"] = await self._entity_store.resolve_predicate(
                         triple["predicate"]
                     )
-                    if triple.get("object_type") == "entity" or is_uri(triple.get("object", "")):
+                    if is_uri(triple.get("object", "")):
                         triple["object"] = await self._entity_store.resolve_entity(triple["object"])
                     entities_resolved += 1
 

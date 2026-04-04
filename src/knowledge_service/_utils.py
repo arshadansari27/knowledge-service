@@ -8,6 +8,8 @@ import re
 
 from pyoxigraph import Literal, NamedNode, Triple
 
+from knowledge_service.ontology.uri import to_entity_uri, to_predicate_uri
+
 
 def _is_uri(value: str) -> bool:
     return value.startswith(("http://", "https://", "urn:"))
@@ -48,9 +50,13 @@ def _to_rdf_term(value: str) -> NamedNode | Literal:
 
 
 def _triple_hash(subject: str, predicate: str, object_: str) -> str:
-    """SHA-256 hash of a triple — must match KnowledgeStore.insert_triple logic."""
-    s = NamedNode(subject)
-    p = NamedNode(predicate)
+    """SHA-256 hash of a triple — must match KnowledgeStore.insert_triple logic.
+
+    Normalizes bare labels to full URIs before hashing so callers don't need
+    to worry about whether values are already URIs.
+    """
+    s = NamedNode(to_entity_uri(subject))
+    p = NamedNode(to_predicate_uri(predicate))
     o = _to_rdf_term(object_)
     triple = Triple(s, p, o)
     return hashlib.sha256(str(triple).encode()).hexdigest()

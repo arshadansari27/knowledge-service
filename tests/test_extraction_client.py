@@ -16,13 +16,26 @@ def _make_chat_response(items: list) -> dict:
     }
 
 
+def _make_combined_response(entities: list, relations: list) -> dict:
+    return {
+        "choices": [
+            {
+                "message": {
+                    "role": "assistant",
+                    "content": json.dumps({"entities": entities, "relations": relations}),
+                }
+            }
+        ],
+    }
+
+
 @pytest.fixture
 def mock_llm(httpx_mock):
-    # Phase 1: entity response
+    # Single combined response
     httpx_mock.add_response(
         url=_CHAT_URL,
-        json=_make_chat_response(
-            [
+        json=_make_combined_response(
+            entities=[
                 {
                     "knowledge_type": "Entity",
                     "uri": "cold_exposure",
@@ -31,14 +44,8 @@ def mock_llm(httpx_mock):
                     "properties": {},
                     "confidence": 0.9,
                 },
-            ]
-        ),
-    )
-    # Phase 2: relation response
-    httpx_mock.add_response(
-        url=_CHAT_URL,
-        json=_make_chat_response(
-            [
+            ],
+            relations=[
                 {
                     "knowledge_type": "Claim",
                     "subject": "cold_exposure",
@@ -46,7 +53,7 @@ def mock_llm(httpx_mock):
                     "object": "dopamine",
                     "confidence": 0.7,
                 }
-            ]
+            ],
         ),
     )
     return httpx_mock
@@ -79,11 +86,11 @@ class TestExtract:
         await client.close()
 
     async def test_skips_invalid_items_returns_valid(self, httpx_mock):
-        # Phase 1: one valid Entity, one invalid item
+        # Combined response: one valid Entity, one invalid item, no relations
         httpx_mock.add_response(
             url=_CHAT_URL,
-            json=_make_chat_response(
-                [
+            json=_make_combined_response(
+                entities=[
                     {
                         "knowledge_type": "Entity",
                         "uri": "a",
@@ -93,11 +100,10 @@ class TestExtract:
                         "confidence": 0.9,
                     },
                     {"knowledge_type": "Entity", "missing_required_fields": True},
-                ]
+                ],
+                relations=[],
             ),
         )
-        # Phase 2: empty (entity 'a' found so phase 2 runs)
-        httpx_mock.add_response(url=_CHAT_URL, json=_make_chat_response([]))
         client = ExtractionClient(base_url=_BASE, model="qwen3:14b", api_key=_KEY)
         result = await client.extract("text")
         assert len(result) == 1
@@ -105,14 +111,18 @@ class TestExtract:
         await client.close()
 
     async def test_returns_empty_list_on_empty_items(self, httpx_mock):
-        httpx_mock.add_response(url=_CHAT_URL, json=_make_chat_response([]))
+        httpx_mock.add_response(
+            url=_CHAT_URL, json=_make_combined_response(entities=[], relations=[])
+        )
         client = ExtractionClient(base_url=_BASE, model="qwen3:14b", api_key=_KEY)
         result = await client.extract("text")
         assert result == []
         await client.close()
 
     async def test_model_name_sent_in_request(self, httpx_mock):
-        httpx_mock.add_response(url=_CHAT_URL, json=_make_chat_response([]))
+        httpx_mock.add_response(
+            url=_CHAT_URL, json=_make_combined_response(entities=[], relations=[])
+        )
         client = ExtractionClient(base_url=_BASE, model="claude-sonnet", api_key=_KEY)
         await client.extract("text")
         body = json.loads(httpx_mock.get_requests()[0].content)
@@ -120,7 +130,9 @@ class TestExtract:
         await client.close()
 
     async def test_uses_chat_completions_format(self, httpx_mock):
-        httpx_mock.add_response(url=_CHAT_URL, json=_make_chat_response([]))
+        httpx_mock.add_response(
+            url=_CHAT_URL, json=_make_combined_response(entities=[], relations=[])
+        )
         client = ExtractionClient(base_url=_BASE, model="qwen3:14b", api_key=_KEY)
         await client.extract("text")
         body = json.loads(httpx_mock.get_requests()[0].content)
@@ -130,7 +142,9 @@ class TestExtract:
         await client.close()
 
     async def test_auth_header_sent(self, httpx_mock):
-        httpx_mock.add_response(url=_CHAT_URL, json=_make_chat_response([]))
+        httpx_mock.add_response(
+            url=_CHAT_URL, json=_make_combined_response(entities=[], relations=[])
+        )
         client = ExtractionClient(base_url=_BASE, model="qwen3:14b", api_key="sk-mykey")
         await client.extract("text")
         headers = httpx_mock.get_requests()[0].headers
@@ -240,12 +254,12 @@ class TestRelationExtractionPrompt:
         assert "Prefer these entities" in prompt
 
 
-class TestTwoPhaseExtract:
-    async def test_makes_two_llm_calls(self, httpx_mock):
+class TestSinglePassExtract:
+    async def test_makes_one_llm_call(self, httpx_mock):
         httpx_mock.add_response(
             url=_CHAT_URL,
-            json=_make_chat_response(
-                [
+            json=_make_combined_response(
+                entities=[
                     {
                         "knowledge_type": "Entity",
                         "uri": "dopamine",
@@ -254,13 +268,8 @@ class TestTwoPhaseExtract:
                         "properties": {},
                         "confidence": 0.9,
                     },
-                ]
-            ),
-        )
-        httpx_mock.add_response(
-            url=_CHAT_URL,
-            json=_make_chat_response(
-                [
+                ],
+                relations=[
                     {
                         "knowledge_type": "Claim",
                         "subject": "cold_exposure",
@@ -268,16 +277,48 @@ class TestTwoPhaseExtract:
                         "object": "dopamine",
                         "confidence": 0.7,
                     },
-                ]
+                ],
             ),
         )
         client = ExtractionClient(base_url=_BASE, model="qwen3:14b", api_key=_KEY)
         result = await client.extract("Cold exposure increases dopamine.")
-        assert len(httpx_mock.get_requests()) == 2
+        assert len(httpx_mock.get_requests()) == 1
         assert len(result) == 2
         await client.close()
 
-    async def test_returns_entities_only_when_phase2_fails(self, httpx_mock):
+    async def test_returns_entities_only_when_no_relations(self, httpx_mock):
+        httpx_mock.add_response(
+            url=_CHAT_URL,
+            json=_make_combined_response(
+                entities=[
+                    {
+                        "knowledge_type": "Entity",
+                        "uri": "x",
+                        "rdf_type": "schema:Thing",
+                        "label": "x",
+                        "properties": {},
+                        "confidence": 0.9,
+                    },
+                ],
+                relations=[],
+            ),
+        )
+        client = ExtractionClient(base_url=_BASE, model="qwen3:14b", api_key=_KEY)
+        result = await client.extract("text")
+        assert len(result) == 1
+        assert isinstance(result[0], EntityInput)
+        await client.close()
+
+    async def test_returns_none_when_call_fails(self, httpx_mock):
+        httpx_mock.add_response(url=_CHAT_URL, status_code=500)
+        client = ExtractionClient(base_url=_BASE, model="qwen3:14b", api_key=_KEY)
+        result = await client.extract("text")
+        assert result is None
+        assert len(httpx_mock.get_requests()) == 1
+        await client.close()
+
+    async def test_legacy_items_format_still_works(self, httpx_mock):
+        """extract() should also accept legacy {"items": [...]} format."""
         httpx_mock.add_response(
             url=_CHAT_URL,
             json=_make_chat_response(
@@ -293,60 +334,10 @@ class TestTwoPhaseExtract:
                 ]
             ),
         )
-        httpx_mock.add_response(url=_CHAT_URL, status_code=500)
         client = ExtractionClient(base_url=_BASE, model="qwen3:14b", api_key=_KEY)
         result = await client.extract("text")
         assert len(result) == 1
         assert isinstance(result[0], EntityInput)
-        await client.close()
-
-    async def test_returns_none_when_phase1_fails(self, httpx_mock):
-        httpx_mock.add_response(url=_CHAT_URL, status_code=500)
-        client = ExtractionClient(base_url=_BASE, model="qwen3:14b", api_key=_KEY)
-        result = await client.extract("text")
-        assert result is None
-        assert len(httpx_mock.get_requests()) == 1
-        await client.close()
-
-    async def test_phase2_prompt_contains_phase1_entities(self, httpx_mock):
-        httpx_mock.add_response(
-            url=_CHAT_URL,
-            json=_make_chat_response(
-                [
-                    {
-                        "knowledge_type": "Entity",
-                        "uri": "cold_exposure",
-                        "rdf_type": "schema:Thing",
-                        "label": "cold_exposure",
-                        "properties": {},
-                        "confidence": 0.9,
-                    },
-                    {
-                        "knowledge_type": "Entity",
-                        "uri": "dopamine",
-                        "rdf_type": "schema:Thing",
-                        "label": "dopamine",
-                        "properties": {},
-                        "confidence": 0.95,
-                    },
-                ]
-            ),
-        )
-        httpx_mock.add_response(url=_CHAT_URL, json=_make_chat_response([]))
-        client = ExtractionClient(base_url=_BASE, model="qwen3:14b", api_key=_KEY)
-        await client.extract("Cold exposure increases dopamine.")
-        phase2_body = json.loads(httpx_mock.get_requests()[1].content)
-        phase2_prompt = phase2_body["messages"][0]["content"]
-        assert "cold_exposure" in phase2_prompt
-        assert "dopamine" in phase2_prompt
-        await client.close()
-
-    async def test_skips_phase2_when_no_entities(self, httpx_mock):
-        httpx_mock.add_response(url=_CHAT_URL, json=_make_chat_response([]))
-        client = ExtractionClient(base_url=_BASE, model="qwen3:14b", api_key=_KEY)
-        result = await client.extract("text")
-        assert result == []
-        assert len(httpx_mock.get_requests()) == 1
         await client.close()
 
 
@@ -354,7 +345,7 @@ class TestNoAuth:
     async def test_no_auth_header_when_key_empty(self, httpx_mock):
         httpx_mock.add_response(
             url=_CHAT_URL,
-            json=_make_chat_response([]),
+            json=_make_combined_response(entities=[], relations=[]),
         )
         client = ExtractionClient(base_url=_BASE, model="qwen3:14b", api_key="")
         await client.extract("test")

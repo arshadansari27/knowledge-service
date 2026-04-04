@@ -32,6 +32,25 @@ def test_triple_hash_differs_for_different_inputs():
     assert _triple_hash("http://s", "http://p", "a") != _triple_hash("http://s", "http://p", "b")
 
 
+def test_triple_hash_bare_labels_do_not_crash():
+    """Bare labels (non-URIs) are auto-normalized — must not raise ValueError."""
+    h = _triple_hash("community_abc", "has_summary", "Some summary text")
+    assert isinstance(h, str) and len(h) == 64
+
+
+def test_triple_hash_bare_label_matches_normalized():
+    """Hashing a bare label should match hashing its normalized URI equivalent."""
+    from knowledge_service.ontology.uri import to_entity_uri, to_predicate_uri
+
+    bare = _triple_hash("cold_exposure", "causes", "dopamine release")
+    normalized = _triple_hash(
+        to_entity_uri("cold_exposure"),
+        to_predicate_uri("causes"),
+        "dopamine release",
+    )
+    assert bare == normalized
+
+
 def test_rdf_value_to_str_named_node():
     assert _rdf_value_to_str(NamedNode("http://example.com")) == "http://example.com"
 
