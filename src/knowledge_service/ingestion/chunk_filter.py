@@ -94,3 +94,34 @@ def score_chunk(chunk: dict, nlp_result: NlpResult | None) -> float:
         + 0.2 * diversity_score
     )
     return max(0.0, min(1.0, score))
+
+
+_SCORE_THRESHOLD = 0.3
+
+
+def filter_chunks(
+    chunk_records: list[dict],
+    nlp_results: list[NlpResult] | None,
+) -> tuple[list[int], list[int]]:
+    """Partition chunk indices into extract vs skip sets based on scoring.
+
+    Returns (extract_indices, skip_indices) where each list contains chunk_index values.
+    """
+    nlp_map: dict[int, NlpResult] = {}
+    if nlp_results:
+        for r in nlp_results:
+            nlp_map[r.chunk_index] = r
+
+    extract_indices: list[int] = []
+    skip_indices: list[int] = []
+
+    for chunk in chunk_records:
+        idx = chunk.get("chunk_index", 0)
+        nlp_result = nlp_map.get(idx)
+        score = score_chunk(chunk, nlp_result)
+        if score < _SCORE_THRESHOLD:
+            skip_indices.append(idx)
+        else:
+            extract_indices.append(idx)
+
+    return extract_indices, skip_indices

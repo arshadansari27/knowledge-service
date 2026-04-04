@@ -1,4 +1,4 @@
-from knowledge_service.ingestion.chunk_filter import score_chunk
+from knowledge_service.ingestion.chunk_filter import filter_chunks, score_chunk
 from knowledge_service.nlp import NlpEntity, NlpResult
 
 
@@ -84,3 +84,61 @@ class TestScoreChunk:
         chunk = {"chunk_text": "x " * 100, "section_header": None}
         score = score_chunk(chunk, nlp_result=nlp_result)
         assert 0.0 <= score <= 1.0
+
+
+class TestFilterChunks:
+    def test_partitions_by_threshold(self):
+        chunks = [
+            {
+                "chunk_text": "Some references here.",
+                "chunk_index": 0,
+                "section_header": "References",
+            },
+            {
+                "chunk_text": (
+                    "Cold water immersion has been studied extensively in recent years. "
+                    "Researchers found significant increases in dopamine levels. "
+                    "The protocol involved three-minute exposures. "
+                    "Participants reported enhanced mood and alertness."
+                ),
+                "chunk_index": 1,
+                "section_header": "Results",
+            },
+        ]
+        entities = [
+            NlpEntity(text="dopamine", label="CHEMICAL", start_char=0, end_char=8),
+            NlpEntity(text="cold water", label="EVENT", start_char=10, end_char=20),
+        ]
+        nlp_results = [
+            NlpResult(chunk_index=0, entities=[], sentence_count=1),
+            NlpResult(chunk_index=1, entities=entities, sentence_count=4),
+        ]
+        extract_indices, skip_indices = filter_chunks(chunks, nlp_results)
+        assert 0 in skip_indices
+        assert 1 in extract_indices
+
+    def test_all_chunks_skipped_when_all_low_value(self):
+        chunks = [
+            {"chunk_text": "Refs.", "chunk_index": 0, "section_header": "References"},
+            {"chunk_text": "Thanks.", "chunk_index": 1, "section_header": "Acknowledgements"},
+        ]
+        nlp_results = [
+            NlpResult(chunk_index=0, entities=[], sentence_count=1),
+            NlpResult(chunk_index=1, entities=[], sentence_count=1),
+        ]
+        extract_indices, skip_indices = filter_chunks(chunks, nlp_results)
+        assert len(extract_indices) == 0
+        assert len(skip_indices) == 2
+
+    def test_no_nlp_results_still_works(self):
+        chunks = [
+            {
+                "chunk_text": "Some normal text with multiple sentences. Another one here. And another.",
+                "chunk_index": 0,
+                "section_header": None,
+            },
+        ]
+        extract_indices, skip_indices = filter_chunks(chunks, nlp_results=None)
+        assert isinstance(extract_indices, list)
+        assert isinstance(skip_indices, list)
+        assert len(extract_indices) + len(skip_indices) == 1
