@@ -267,6 +267,23 @@ class ContentStore:
 
         return vector_results
 
+    async def get_chunks(self, content_id: str) -> list[dict] | None:
+        """Return all chunks for a content item, ordered by chunk_index.
+
+        Returns None if the content_id doesn't exist.
+        """
+        sql = """
+            SELECT c.chunk_index, c.chunk_text, c.section_header, c.char_start, c.char_end
+            FROM content c
+            WHERE c.content_id = $1::uuid
+            ORDER BY c.chunk_index
+        """
+        async with self._pool.acquire() as conn:
+            rows = await conn.fetch(sql, content_id)
+        if not rows:
+            return None
+        return [dict(row) for row in rows]
+
     async def _search_bm25(
         self,
         query_text: str,
