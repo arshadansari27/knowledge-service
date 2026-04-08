@@ -313,3 +313,43 @@ class TestGetSearchNullSummary:
         assert response.status_code == 200
         data = response.json()
         assert data[0]["tags"] == []
+
+
+# ---------------------------------------------------------------------------
+# Tests: content_id filter
+# ---------------------------------------------------------------------------
+
+
+class TestSearchContentIdFilter:
+    async def test_passes_content_id_to_store(self):
+        """When content_id is provided, it should be forwarded to the content store search."""
+        app = _make_app(search_rows=[_SAMPLE_ROW])
+        transport = ASGITransport(app=app)
+        async with AsyncClient(
+            transport=transport,
+            base_url="http://test",
+            cookies={"ks_session": make_test_session_cookie()},
+        ) as c:
+            resp = await c.get(
+                "/api/search",
+                params={"q": "test query", "content_id": "content-uuid-1234"},
+            )
+        assert resp.status_code == 200
+        store = app.state.stores.content
+        call_kwargs = store.search.call_args
+        assert call_kwargs.kwargs.get("content_id") == "content-uuid-1234"
+
+    async def test_works_without_content_id(self):
+        """Backward compat: omitting content_id should work as before."""
+        app = _make_app(search_rows=[_SAMPLE_ROW])
+        transport = ASGITransport(app=app)
+        async with AsyncClient(
+            transport=transport,
+            base_url="http://test",
+            cookies={"ks_session": make_test_session_cookie()},
+        ) as c:
+            resp = await c.get("/api/search", params={"q": "test query"})
+        assert resp.status_code == 200
+        store = app.state.stores.content
+        call_kwargs = store.search.call_args
+        assert call_kwargs.kwargs.get("content_id") is None

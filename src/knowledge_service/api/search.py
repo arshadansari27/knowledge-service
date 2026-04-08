@@ -16,6 +16,7 @@ async def get_search(
     limit: int = Query(10, ge=1, le=100, description="Maximum number of results to return"),
     source_type: str | None = Query(None, description="Filter by source type"),
     tags: list[str] | None = Query(None, description="Filter by tags (all must match)"),
+    content_id: str | None = Query(None, description="Scope search to a specific content item"),
 ) -> list[SearchResult]:
     """Search ingested content by semantic similarity.
 
@@ -34,6 +35,7 @@ async def get_search(
         source_type=source_type,
         tags=tags,
         query_text=q,
+        content_id=content_id,
     )
 
     return [
