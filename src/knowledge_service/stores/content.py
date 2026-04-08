@@ -205,6 +205,7 @@ class ContentStore:
         tags: list[str] | None = None,
         min_date: Any | None = None,
         query_text: str | None = None,
+        content_id: str | None = None,
     ) -> list[dict]:
         """Return chunk rows ranked by cosine similarity, joined with content metadata.
 
@@ -237,6 +238,10 @@ class ContentStore:
             params.append(min_date)
             conditions.append(f"m.ingested_at >= ${len(params)}")
 
+        if content_id is not None:
+            params.append(content_id)
+            conditions.append(f"c.content_id = ${len(params)}::uuid")
+
         params.append(overfetch)
         limit_placeholder = f"${len(params)}"
 
@@ -261,11 +266,28 @@ class ContentStore:
 
         if query_text:
             bm25_results = await self._search_bm25(
-                query_text, overfetch, source_type, tags, min_date
+                query_text, overfetch, source_type, tags, min_date, content_id
             )
             return reciprocal_rank_fusion(vector_results, bm25_results, key="id", k=60, limit=limit)
 
         return vector_results
+
+    async def get_chunks(self, content_id: str) -> list[dict] | None:
+        """Return all chunks for a content item, ordered by chunk_index.
+
+        Returns None if the content_id doesn't exist.
+        """
+        sql = """
+            SELECT c.chunk_index, c.chunk_text, c.section_header, c.char_start, c.char_end
+            FROM content c
+            WHERE c.content_id = $1::uuid
+            ORDER BY c.chunk_index
+        """
+        async with self._pool.acquire() as conn:
+            rows = await conn.fetch(sql, content_id)
+        if not rows:
+            return None
+        return [dict(row) for row in rows]
 
     async def _search_bm25(
         self,
@@ -274,6 +296,7 @@ class ContentStore:
         source_type: str | None = None,
         tags: list[str] | None = None,
         min_date: Any | None = None,
+        content_id: str | None = None,
     ) -> list[dict]:
         """Full-text search using PostgreSQL tsvector/tsquery.
 
@@ -297,6 +320,10 @@ class ContentStore:
         if min_date is not None:
             params.append(min_date)
             conditions.append(f"m.ingested_at >= ${len(params)}")
+
+        if content_id is not None:
+            params.append(content_id)
+            conditions.append(f"c.content_id = ${len(params)}::uuid")
 
         params.append(limit)
         limit_placeholder = f"${len(params)}"

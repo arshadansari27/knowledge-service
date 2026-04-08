@@ -343,3 +343,14 @@ async def get_content_status(content_id: str, request: Request):
         "created_at": row["created_at"].isoformat() if row["created_at"] else None,
         "updated_at": row["updated_at"].isoformat() if row["updated_at"] else None,
     }
+
+
+@router.get("/content/{content_id}/chunks")
+async def get_content_chunks(content_id: str, request: Request):
+    """Return all chunks for a content item, ordered by chunk_index."""
+    stores = request.app.state.stores
+    content_store = stores.content
+    chunks = await content_store.get_chunks(content_id)
+    if chunks is None:
+        return JSONResponse(status_code=404, content={"detail": "Content not found"})
+    return chunks

@@ -594,3 +594,76 @@ class TestContentChunking:
             await c.post("/api/content", json=SHORT_TEXT_PAYLOAD)
 
         mock_cs.delete_chunks.assert_called_once_with("content-uuid-1234")
+
+
+# ---------------------------------------------------------------------------
+# Tests: GET /api/content/{content_id}/chunks
+# ---------------------------------------------------------------------------
+
+_SAMPLE_CHUNKS = [
+    {
+        "chunk_index": 0,
+        "chunk_text": "CONSULTANCY AGREEMENT dated 31 July 2025",
+        "section_header": "INTERPRETATION",
+        "char_start": 0,
+        "char_end": 3800,
+    },
+    {
+        "chunk_index": 1,
+        "chunk_text": "The Company shall pay a fee of £317.90 per day",
+        "section_header": "FEES",
+        "char_start": 3800,
+        "char_end": 7600,
+    },
+]
+
+
+def _make_chunks_app(chunks=None):
+    """Create test app with mocked content store that returns chunks."""
+    app = create_app(use_lifespan=False)
+
+    content_mock = AsyncMock()
+    content_mock.get_chunks.return_value = chunks
+
+    stores = MagicMock()
+    stores.content = content_mock
+    stores.triples = MagicMock()
+    stores.entities = AsyncMock()
+    stores.provenance = AsyncMock()
+    stores.theses = AsyncMock()
+    stores.pg_pool = MagicMock()
+    app.state.stores = stores
+    app.state.embedding_client = _make_embedding_client_mock()
+    app.state.knowledge_store = stores.triples
+    app.state.pg_pool = stores.pg_pool
+    return app
+
+
+class TestGetContentChunks:
+    async def test_returns_chunks_ordered(self):
+        app = _make_chunks_app(chunks=_SAMPLE_CHUNKS)
+        transport = ASGITransport(app=app)
+        async with AsyncClient(
+            transport=transport,
+            base_url="http://test",
+            cookies={"ks_session": make_test_session_cookie()},
+        ) as client:
+            resp = await client.get("/api/content/content-uuid-1234/chunks")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert len(data) == 2
+        assert data[0]["chunk_index"] == 0
+        assert data[1]["chunk_index"] == 1
+        assert "chunk_text" in data[0]
+        assert "section_header" in data[0]
+
+    async def test_returns_404_when_not_found(self):
+        app = _make_chunks_app(chunks=None)
+        transport = ASGITransport(app=app)
+        async with AsyncClient(
+            transport=transport,
+            base_url="http://test",
+            cookies={"ks_session": make_test_session_cookie()},
+        ) as client:
+            resp = await client.get("/api/content/nonexistent-uuid/chunks")
+        assert resp.status_code == 404
