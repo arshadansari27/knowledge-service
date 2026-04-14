@@ -48,6 +48,7 @@ def _make_content_store_mock():
         return [(c["chunk_index"], f"chunk-uuid-{c['chunk_index']}") for c in chunks]
 
     mock.insert_chunks.side_effect = _insert_chunks
+    mock.replace_chunks.side_effect = _insert_chunks
     return mock
 
 

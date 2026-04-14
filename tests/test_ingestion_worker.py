@@ -64,6 +64,7 @@ class TestRunIngestionWithNlp:
         stores.content = AsyncMock()
         stores.content.delete_chunks = AsyncMock()
         stores.content.insert_chunks = AsyncMock(return_value=[(0, "chunk-uuid-0")])
+        stores.content.replace_chunks = AsyncMock(return_value=[(0, "chunk-uuid-0")])
 
         # Mock embedding client
         embedding_client = AsyncMock()
