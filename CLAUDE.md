@@ -93,6 +93,16 @@ Content arrives via `/api/content`, `/api/content/upload` (file upload), or `/ap
 
 SQL migrations live in `migrations/` and are applied automatically at startup via advisory-lock-protected runner in `stores/migrations.py`. Tracked in `schema_migrations` table.
 
+## Content pipeline invariants
+
+Ingestion splits across a sync acceptance phase (`_accept_content_request`) and an async background worker (`run_ingestion`). Because triples live in pyoxigraph and chunks/provenance live in PostgreSQL, no single transaction can cover the whole pipeline. The state machine instead relies on these invariants:
+
+- **`ingestion_jobs` is the source of truth for completion.** Readers that care about finished state should join on `status='completed'`. A `content_metadata` row can exist without a completed job (accepted, in-flight, or failed).
+- **Only one active job per `content_id`.** Enforced by the partial unique index `idx_ingestion_jobs_active` (`WHERE status NOT IN ('completed','failed')`). Re-ingest is blocked until the current job reaches a terminal state.
+- **Startup janitor recovers from process crashes.** The lifespan in `main.py` marks every non-terminal job as `failed` on startup so a SIGTERM/OOM mid-worker doesn't leave the content permanently un-reingestable.
+- **EmbedPhase uses `ContentStore.replace_chunks()`, not separate `delete_chunks` + `insert_chunks`.** DELETE and INSERT must land in a single PG transaction. Losing this atomicity is a silent data-quality bug: `provenance.chunk_id` is `ON DELETE SET NULL`, so a delete without a follow-up insert permanently wipes chunk-level evidence for every previously-ingested triple linked to that content.
+- **ProcessPhase is not transactional across stores.** A crash during triple ingestion can leave partial pyoxigraph writes. This is a known 2PC-shaped gap; current mitigation is the job status + startup janitor + operator-driven retry.
+
 ## Testing Patterns
 
 - **CI tests** (`tests/`): All tests mock external dependencies — no PostgreSQL, Ollama, or network needed. `pytest-asyncio` with `asyncio_mode = "auto"`. `pytest-httpx` for mocking HTTP calls. Tests create `TripleStore(data_dir=None)` for in-memory pyoxigraph. API tests use `create_app(use_lifespan=False)` and inject mocks via `app.state.stores`.

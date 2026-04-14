@@ -52,8 +52,7 @@ class EmbedPhase:
         for rec, emb in zip(chunk_records, embeddings):
             rec["embedding"] = emb
 
-        await self._content_store.delete_chunks(content_id)
-        chunk_id_pairs = await self._content_store.insert_chunks(content_id, chunk_records)
+        chunk_id_pairs = await self._content_store.replace_chunks(content_id, chunk_records)
         return dict(chunk_id_pairs) if chunk_id_pairs else {}
 
 

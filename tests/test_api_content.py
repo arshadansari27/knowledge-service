@@ -77,6 +77,7 @@ def _make_content_store_mock():
         return [(c["chunk_index"], f"chunk-uuid-{c['chunk_index']}") for c in chunks]
 
     mock.insert_chunks.side_effect = _insert_chunks
+    mock.replace_chunks.side_effect = _insert_chunks
     return mock
 
 
@@ -560,9 +561,9 @@ class TestContentChunking:
             response = await c.post("/api/content", json=SHORT_TEXT_PAYLOAD)
 
         assert response.status_code == 202
-        # Background worker inserts chunks
-        mock_cs.insert_chunks.assert_called_once()
-        chunks = mock_cs.insert_chunks.call_args[0][1]
+        # Background worker replaces chunks atomically
+        mock_cs.replace_chunks.assert_called_once()
+        chunks = mock_cs.replace_chunks.call_args[0][1]
         assert len(chunks) == 1
 
     async def test_long_content_creates_multiple_chunks(self):
@@ -578,11 +579,11 @@ class TestContentChunking:
             response = await c.post("/api/content", json=LONG_TEXT_PAYLOAD)
 
         assert response.status_code == 202
-        mock_cs.insert_chunks.assert_called_once()
-        chunks = mock_cs.insert_chunks.call_args[0][1]
+        mock_cs.replace_chunks.assert_called_once()
+        chunks = mock_cs.replace_chunks.call_args[0][1]
         assert len(chunks) >= 2
 
-    async def test_reingestion_deletes_old_chunks(self):
+    async def test_reingestion_replaces_chunks_atomically(self):
         app = _make_app_with_mocks()
         mock_cs = app.state.stores.content
         transport = ASGITransport(app=app)
@@ -593,7 +594,11 @@ class TestContentChunking:
         ) as c:
             await c.post("/api/content", json=SHORT_TEXT_PAYLOAD)
 
-        mock_cs.delete_chunks.assert_called_once_with("content-uuid-1234")
+        mock_cs.replace_chunks.assert_called_once()
+        assert mock_cs.replace_chunks.call_args[0][0] == "content-uuid-1234"
+        # The old non-atomic pair must not be used from the ingest pipeline
+        mock_cs.delete_chunks.assert_not_called()
+        mock_cs.insert_chunks.assert_not_called()
 
 
 # ---------------------------------------------------------------------------

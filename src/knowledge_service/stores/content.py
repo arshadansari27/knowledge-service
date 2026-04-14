@@ -150,7 +150,41 @@ class ContentStore:
         """
         if not chunks:
             return []
+        async with self._pool.acquire() as conn:
+            rows = await self._insert_chunks_on_conn(conn, content_id, chunks)
+        return [(row["chunk_index"], str(row["id"])) for row in rows]
 
+    async def replace_chunks(
+        self,
+        content_id: str,
+        chunks: list[dict],
+    ) -> list[tuple[int, str]]:
+        """Atomically delete existing chunks and insert new ones for a content_id.
+
+        DELETE and INSERT run in a single transaction on one connection so a
+        failure after the delete does not leave the content with zero chunks.
+        Zero chunks would permanently null out `provenance.chunk_id` for every
+        previously-ingested triple linked to this content (the FK is
+        ON DELETE SET NULL), destroying chunk-level evidence for RAG.
+        """
+        async with self._pool.acquire() as conn:
+            async with conn.transaction():
+                await conn.execute(
+                    "DELETE FROM content WHERE content_id = $1",
+                    content_id,
+                )
+                if not chunks:
+                    return []
+                rows = await self._insert_chunks_on_conn(conn, content_id, chunks)
+        return [(row["chunk_index"], str(row["id"])) for row in rows]
+
+    async def _insert_chunks_on_conn(
+        self,
+        conn: Any,
+        content_id: str,
+        chunks: list[dict],
+    ) -> list[Any]:
+        """Execute the chunk INSERT on a caller-provided connection."""
         placeholders = []
         values: list = []
         for i, chunk in enumerate(chunks):
@@ -180,9 +214,7 @@ class ContentStore:
             RETURNING chunk_index, id
         """
 
-        async with self._pool.acquire() as conn:
-            rows = await conn.fetch(sql, *values)
-        return [(row["chunk_index"], str(row["id"])) for row in rows]
+        return await conn.fetch(sql, *values)
 
     async def get_chunks_by_ids(self, chunk_ids: list[str]) -> dict[str, str]:
         """Return {chunk_id: chunk_text} for the given IDs."""

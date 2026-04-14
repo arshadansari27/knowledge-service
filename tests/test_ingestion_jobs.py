@@ -78,6 +78,7 @@ def _make_worker_stores():
     stores.content = AsyncMock()
     stores.content.delete_chunks.return_value = None
     stores.content.insert_chunks.return_value = [(0, "chunk-uuid-0")]
+    stores.content.replace_chunks.return_value = [(0, "chunk-uuid-0")]
     stores.entities = AsyncMock()
     stores.provenance = AsyncMock()
     stores.provenance.get_by_triple.return_value = []
@@ -162,6 +163,53 @@ class TestIngestionWorker:
 
         calls = [str(c) for c in conn.execute.call_args_list]
         assert any("completed" in s for s in calls)
+
+    async def test_worker_marks_job_failed_when_embed_phase_crashes(self):
+        """If EmbedPhase.replace_chunks raises, the worker must mark the job
+        'failed' so the partial-unique index unblocks re-ingest, and must
+        NOT proceed to extract/process phases."""
+        from knowledge_service.ingestion.worker import run_ingestion
+
+        stores, conn = _make_worker_stores()
+        stores.content.replace_chunks.side_effect = RuntimeError("DB insert crashed")
+
+        embedding_client = AsyncMock()
+        embedding_client.embed_batch.return_value = [[0.1] * 768]
+        extraction_client = AsyncMock()
+        extraction_client.extract = AsyncMock()
+
+        chunks = [
+            {
+                "chunk_index": 0,
+                "chunk_text": "text",
+                "char_start": 0,
+                "char_end": 4,
+                "section_header": None,
+            }
+        ]
+
+        # run_ingestion swallows the exception via its own try/except
+        await run_ingestion(
+            job_id="job-1",
+            content_id="content-1",
+            chunk_records=chunks,
+            raw_text="text",
+            knowledge=None,
+            title="Test",
+            source_url="http://test.com",
+            source_type="article",
+            stores=stores,
+            embedding_client=embedding_client,
+            extraction_client=extraction_client,
+            entity_store=stores.entities,
+        )
+
+        executed = [str(c) for c in conn.execute.call_args_list]
+        assert any("status = 'failed'" in s for s in executed), (
+            f"Expected job to be marked failed; got: {executed}"
+        )
+        # Extraction must not have been attempted — failure was in embed
+        extraction_client.extract.assert_not_called()
 
 
 # ---------------------------------------------------------------------------
