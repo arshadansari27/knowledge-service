@@ -1,6 +1,5 @@
 # tests/test_outbox.py
 from unittest.mock import AsyncMock
-import pytest
 from knowledge_service.ingestion.outbox import OutboxStore
 
 
@@ -29,8 +28,8 @@ class TestOutboxStoreStage:
         # First positional is the SQL string
         assert "INSERT INTO triple_outbox" in args[0]
         # Params follow — check a couple of them
-        assert args[1] == "abc"             # triple_hash
-        assert args[2] == "insert"          # operation
+        assert args[1] == "abc"  # triple_hash
+        assert args[2] == "insert"  # operation
 
     async def test_stage_serialises_payload(self):
         conn = AsyncMock()
