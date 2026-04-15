@@ -274,6 +274,12 @@ Search ingested content by semantic similarity using pgvector cosine distance. R
 | `source_type` | string | no | — | Filter by source type |
 | `tags` | string[] | no | — | Filter by tags (repeat for multiple) |
 
+**In-flight content is excluded.** Results only include content whose latest
+ingestion job has reached a terminal state (`completed` or `failed`), or
+content with no recorded job. Mid-pipeline content is filtered out until
+embedding, extraction, and processing finish. This behavior is controlled by
+the `READER_EXCLUDE_INFLIGHT` environment variable (default `true`).
+
 **Response:**
 
 ```json
@@ -495,6 +501,12 @@ Ask a natural language question against the knowledge base. Retrieves relevant c
 | `sources` | array | Deduplicated content sources used in retrieval |
 | `knowledge_types_used` | string[] | Which of the 7 knowledge types contributed to the answer |
 | `contradictions` | array | Conflicting claims with subject, predicate, object, and confidence |
+
+**In-flight content is excluded.** The hybrid retriever backing this endpoint
+only reads content whose latest ingestion job has reached a terminal state
+(`completed` or `failed`), or content with no recorded job. Mid-pipeline
+content is filtered out until embedding, extraction, and processing finish.
+Controlled by `READER_EXCLUDE_INFLIGHT` (default `true`).
 
 **Status Codes:** `200` OK, `422` Validation Error, `502` LLM Service Error
 
