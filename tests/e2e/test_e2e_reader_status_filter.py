@@ -23,6 +23,31 @@ from knowledge_service.stores.content import ContentStore
 pytestmark = pytest.mark.asyncio
 
 
+_TEST_URL_PREFIX = "http://ks-test/reader-filter/"
+
+
+@pytest.fixture(autouse=True)
+async def _cleanup_reader_filter_rows(pg_pool):
+    """Remove leftover reader-filter test rows before and after each test.
+
+    Test URLs reuse stable paths (ON CONFLICT UPDATE), so prior runs can leave
+    stale ingestion_jobs that would flip assertions — notably the no-job case
+    in test_lateral_filter_excludes_only_inflight. DELETE on content_metadata
+    cascades to content and ingestion_jobs.
+    """
+
+    async def _purge():
+        async with pg_pool.acquire() as conn:
+            await conn.execute(
+                "DELETE FROM content_metadata WHERE url LIKE $1",
+                _TEST_URL_PREFIX + "%",
+            )
+
+    await _purge()
+    yield
+    await _purge()
+
+
 async def _insert_content(pool, url: str, chunk_text: str, embedding):
     async with pool.acquire() as conn:
         async with conn.transaction():
