@@ -32,6 +32,9 @@ class Settings(BaseSettings):
     url_fetch_timeout: int = 30
     nlp_entity_confidence: float = 0.5
 
+    # Reader-side status filtering
+    reader_exclude_inflight: bool = True  # env: READER_EXCLUDE_INFLIGHT
+
     model_config = {"env_file": ".env"}
 
 
