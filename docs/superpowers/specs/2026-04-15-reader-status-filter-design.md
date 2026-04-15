@@ -101,8 +101,8 @@ DESC LIMIT 1` on the small per-content result set is cheap.
 Single boolean, set at startup, plumbed into `ContentStore.__init__`:
 
 ```python
-# knowledge_service/config.py (env var: KS_READER_EXCLUDE_INFLIGHT)
-KS_READER_EXCLUDE_INFLIGHT: bool = True  # default on
+# knowledge_service/config.py (env var: READER_EXCLUDE_INFLIGHT)
+reader_exclude_inflight: bool = True  # default on
 ```
 
 Behavior:
@@ -133,7 +133,7 @@ search results until its pipeline finishes.
 > terminal state (`completed` or `failed`), or content with no recorded job.
 > Mid-pipeline content is excluded until embedding, extraction, and
 > processing finish. This behavior is controlled by the
-> `KS_READER_EXCLUDE_INFLIGHT` environment variable (default `true`).
+> `READER_EXCLUDE_INFLIGHT` environment variable (default `true`).
 
 `/api/content/{id}/chunks` is explicitly untouched. It reads chunks by ID
 directly via `ContentStore.get_chunks()`, which is an operator/debug path
@@ -154,7 +154,7 @@ A new file `tests/test_reader_status_filter.py` covers both `search()` and
    (Captures legacy/fixture case.)
 5. **Latest-job-wins:** content with one `completed` job followed by one
    `processing` job → excluded.
-6. **Flag off bypasses filter:** with `KS_READER_EXCLUDE_INFLIGHT=False`, all
+6. **Flag off bypasses filter:** with `READER_EXCLUDE_INFLIGHT=False`, all
    of the above rows are returned regardless of status.
 
 Each test runs against both `search()` (vector path) and `_search_bm25()`
@@ -175,12 +175,12 @@ Explicitly out of scope:
 
 ## Rollout
 
-1. Ship with `KS_READER_EXCLUDE_INFLIGHT=true` as the compile-time default.
+1. Ship with `READER_EXCLUDE_INFLIGHT=true` as the compile-time default.
 2. Deploy. Monitor `/api/search` and `/api/ask` for recall drop reports from
    AEGIS and other consumers.
 3. If any downstream consumer breaks, flip the env var to `false` on the
    production stack via `docker --context swarm-baa service update
-   --env-add KS_READER_EXCLUDE_INFLIGHT=false aegis_knowledge` and
+   --env-add READER_EXCLUDE_INFLIGHT=false aegis_knowledge` and
    investigate.
 4. Once stable for one week, the flag can be removed in a follow-up; not
    part of this spec.
