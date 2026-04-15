@@ -1,6 +1,11 @@
 # tests/test_outbox.py
+from pathlib import Path
 from unittest.mock import AsyncMock
-from knowledge_service.ingestion.outbox import OutboxStore
+
+from knowledge_service.ingestion.outbox import OutboxDrainer, OutboxStore
+from knowledge_service.ontology.bootstrap import bootstrap_ontology
+from knowledge_service.ontology.namespaces import KS_GRAPH_EXTRACTED
+from knowledge_service.stores.triples import TripleStore
 
 
 class TestOutboxStoreStage:
@@ -52,13 +57,6 @@ class TestOutboxStoreStage:
         payload_param = args[-1]
         assert '"derived_from"' in payload_param
         assert '"inverse"' in payload_param
-
-
-from knowledge_service.ingestion.outbox import OutboxDrainer
-from knowledge_service.stores.triples import TripleStore
-from knowledge_service.ontology.namespaces import KS_GRAPH_EXTRACTED
-from knowledge_service.ontology.bootstrap import bootstrap_ontology
-from pathlib import Path
 
 
 def _build_triple_store():
