@@ -4,7 +4,7 @@ from unittest.mock import AsyncMock
 
 from knowledge_service.ingestion.outbox import OutboxDrainer, OutboxStore
 from knowledge_service.ontology.bootstrap import bootstrap_ontology
-from knowledge_service.ontology.namespaces import KS_GRAPH_EXTRACTED
+from knowledge_service.ontology.namespaces import KS_GRAPH_EXTRACTED, KS_GRAPH_INFERRED
 from knowledge_service.stores.triples import TripleStore
 
 
@@ -271,3 +271,86 @@ class TestOutboxDrainerRetractInference:
         pool.applied_ids.discard(rid)
         again = await drainer.drain_ids([rid])
         assert again[0].operation == "retract_inference"
+
+
+class TestOutboxDrainerInsertInferred:
+    async def test_drain_insert_inferred(self):
+        ts = _build_triple_store()
+        pool = _FakePool()
+        store = OutboxStore()
+
+        async with pool.acquire() as conn:
+            rid = await store.stage(
+                conn,
+                operation="insert_inferred",
+                triple_hash="ignored",
+                subject="http://knowledge.local/data/fluffy",
+                predicate="http://knowledge.local/is_a",
+                object_="http://knowledge.local/data/animal",
+                confidence=0.72,
+                knowledge_type="inferred",
+                graph=KS_GRAPH_INFERRED,
+                payload={"derived_from": ["h1", "h2"], "inference_method": "transitive"},
+            )
+
+        drainer = OutboxDrainer(pool, ts)
+        applied = await drainer.drain_ids([rid])
+        assert applied[0].operation == "insert_inferred"
+
+        # Base triple exists in inferred graph
+        rows = ts.get_triples(subject="http://knowledge.local/data/fluffy",
+                              graphs=[KS_GRAPH_INFERRED])
+        assert len(rows) == 1
+
+        # ks:derivedFrom annotation is present
+        ask = f"""
+            ASK {{
+                GRAPH <{KS_GRAPH_INFERRED}> {{
+                    << <http://knowledge.local/data/fluffy>
+                       <http://knowledge.local/is_a>
+                       <http://knowledge.local/data/animal> >>
+                    <http://knowledge.local/ks/derivedFrom> "h1" .
+                }}
+            }}
+        """
+        assert ts.query(ask) is True
+
+    async def test_drain_insert_inferred_idempotent(self):
+        ts = _build_triple_store()
+        pool = _FakePool()
+        store = OutboxStore()
+
+        async with pool.acquire() as conn:
+            rid = await store.stage(
+                conn,
+                operation="insert_inferred",
+                triple_hash="ignored",
+                subject="http://knowledge.local/data/fluffy",
+                predicate="http://knowledge.local/is_a",
+                object_="http://knowledge.local/data/animal",
+                confidence=0.72,
+                knowledge_type="inferred",
+                graph=KS_GRAPH_INFERRED,
+                payload={"derived_from": ["h1"], "inference_method": "transitive"},
+            )
+
+        drainer = OutboxDrainer(pool, ts)
+        await drainer.drain_ids([rid])
+        # Simulate crash-before-mark-applied
+        pool.rows[0]["applied_at"] = None
+        pool.applied_ids.discard(rid)
+        await drainer.drain_ids([rid])
+
+        # Count derivedFrom annotations — must be exactly 1.
+        rows = ts.query(f"""
+            SELECT (COUNT(*) AS ?c) WHERE {{
+                GRAPH <{KS_GRAPH_INFERRED}> {{
+                    << <http://knowledge.local/data/fluffy>
+                       <http://knowledge.local/is_a>
+                       <http://knowledge.local/data/animal> >>
+                    <http://knowledge.local/ks/derivedFrom> "h1" .
+                }}
+            }}
+        """)
+        count = int(list(rows)[0]["c"].value)
+        assert count == 1

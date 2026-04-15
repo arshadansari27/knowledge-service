@@ -134,6 +134,8 @@ class OutboxDrainer:
             return await self._apply_update_confidence(row)
         if op == "retract_inference":
             return await self._apply_retract_inference(row)
+        if op == "insert_inferred":
+            return await self._apply_insert_inferred(row)
         logger.warning("OutboxDrainer: unknown operation %r (row id=%s)", op, row["id"])
         return None
 
@@ -179,4 +181,76 @@ class OutboxDrainer:
             operation="retract_inference",
             triple_hash=row["triple_hash"],
             is_new=None,
+        )
+
+    async def _apply_insert_inferred(self, row: dict) -> AppliedEntry:
+        from knowledge_service.ontology.uri import is_uri  # noqa: PLC0415
+
+        triple_hash, is_new = await asyncio.to_thread(
+            self._triples.insert,
+            row["subject"],
+            row["predicate"],
+            row["object"],
+            row["confidence"],
+            row["knowledge_type"] or "inferred",
+            row["valid_from"],
+            row["valid_until"],
+            row["graph"],
+        )
+
+        payload_raw = row.get("payload")
+        if isinstance(payload_raw, str):
+            payload = json.loads(payload_raw) if payload_raw else {}
+        else:
+            payload = payload_raw or {}
+        method = payload.get("inference_method", "")
+        derived_from = payload.get("derived_from", [])
+
+        obj_sparql = f"<{row['object']}>" if is_uri(row["object"]) else f'"{row["object"]}"'
+        quoted = f"<< <{row['subject']}> <{row['predicate']}> {obj_sparql} >>"
+        graph = row["graph"]
+
+        # Annotation property URIs — ks:derivedFrom / ks:inferenceMethod
+        _KS = "http://knowledge.local/ks/"
+
+        def _apply_annotations():
+            if method:
+                ask_method = f"""
+                    ASK {{
+                        GRAPH <{graph}> {{
+                            {quoted} <{_KS}inferenceMethod> "{method}" .
+                        }}
+                    }}
+                """
+                if not self._triples.store.query(ask_method):
+                    self._triples.store.update(f"""
+                        INSERT DATA {{
+                            GRAPH <{graph}> {{
+                                {quoted} <{_KS}inferenceMethod> "{method}" .
+                            }}
+                        }}
+                    """)
+            for src in derived_from:
+                ask_src = f"""
+                    ASK {{
+                        GRAPH <{graph}> {{
+                            {quoted} <{_KS}derivedFrom> "{src}" .
+                        }}
+                    }}
+                """
+                if not self._triples.store.query(ask_src):
+                    self._triples.store.update(f"""
+                        INSERT DATA {{
+                            GRAPH <{graph}> {{
+                                {quoted} <{_KS}derivedFrom> "{src}" .
+                            }}
+                        }}
+                    """)
+
+        await asyncio.to_thread(_apply_annotations)
+        return AppliedEntry(
+            id=row["id"],
+            operation="insert_inferred",
+            triple_hash=triple_hash,
+            is_new=is_new,
         )

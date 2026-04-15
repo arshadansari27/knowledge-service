@@ -431,13 +431,18 @@ class TripleStore:
             return int(row["cnt"].value)
         return 0
 
-    def query(self, sparql: str) -> list[dict]:
-        """Execute a SPARQL SELECT query.
+    def query(self, sparql: str):
+        """Execute a SPARQL query.
 
-        Returns:
-            List of dicts mapping variable names (without '?') to values.
+        For SELECT queries returns a list of dicts mapping variable names
+        (without '?') to values.  For ASK queries returns a bool.
         """
+        from pyoxigraph import QueryBoolean  # noqa: PLC0415
+
         query_result = self._store.query(sparql)
+        if isinstance(query_result, QueryBoolean):
+            return bool(query_result)
+        # SELECT (QuerySolutions)
         variables = [str(v).lstrip("?") for v in query_result.variables]
         results = []
         for solution in query_result:
