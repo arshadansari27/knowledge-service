@@ -148,7 +148,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     entity_store = EntityStore(pg_pool, embedding_client)
     stores = Stores(
         triples=triple_store,
-        content=ContentStore(pg_pool),
+        content=ContentStore(pg_pool, exclude_inflight=settings.reader_exclude_inflight),
         entities=entity_store,
         provenance=ProvenanceStore(pg_pool),
         theses=ThesisStore(pg_pool),
