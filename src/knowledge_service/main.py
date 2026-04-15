@@ -158,6 +158,13 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     app.state.stores = stores
     app.state.outbox_drainer = OutboxDrainer(pg_pool, triple_store)
 
+    drained = await app.state.outbox_drainer.drain_pending()
+    if drained:
+        logger.info(
+            "Startup drain: applied %d pending outbox rows from prior run",
+            len(drained),
+        )
+
     # DomainRegistry
     prompts_dir = ontology_dir / "prompts"
     domain_registry = DomainRegistry(triple_store, prompts_dir)
