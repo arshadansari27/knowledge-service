@@ -132,6 +132,8 @@ class OutboxDrainer:
             return await self._apply_insert(row)
         if op == "update_confidence":
             return await self._apply_update_confidence(row)
+        if op == "retract_inference":
+            return await self._apply_retract_inference(row)
         logger.warning("OutboxDrainer: unknown operation %r (row id=%s)", op, row["id"])
         return None
 
@@ -160,12 +162,21 @@ class OutboxDrainer:
             "predicate": row["predicate"],
             "object": row["object"],
         }
-        await asyncio.to_thread(
-            self._triples.update_confidence, triple_dict, row["confidence"]
-        )
+        await asyncio.to_thread(self._triples.update_confidence, triple_dict, row["confidence"])
         return AppliedEntry(
             id=row["id"],
             operation="update_confidence",
+            triple_hash=row["triple_hash"],
+            is_new=None,
+        )
+
+    async def _apply_retract_inference(self, row: dict) -> AppliedEntry:
+        from knowledge_service.ingestion.pipeline import retract_stale_inferences  # noqa: PLC0415
+
+        await asyncio.to_thread(retract_stale_inferences, row["triple_hash"], self._triples)
+        return AppliedEntry(
+            id=row["id"],
+            operation="retract_inference",
             triple_hash=row["triple_hash"],
             is_new=None,
         )

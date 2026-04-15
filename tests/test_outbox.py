@@ -70,7 +70,7 @@ class _FakePool:
     """Minimal asyncpg-shaped pool that hands out a single tracked connection."""
 
     def __init__(self):
-        self.rows = []        # staged rows (dict-like)
+        self.rows = []  # staged rows (dict-like)
         self.applied_ids = set()
         self.next_id = 1
 
@@ -244,3 +244,30 @@ class TestOutboxDrainerInsert:
         assert second[0].is_new is False
         rows = ts.get_triples(subject="http://knowledge.local/data/cat")
         assert len(rows) == 1
+
+
+class TestOutboxDrainerRetractInference:
+    async def test_drain_retract_inference_no_rows_is_noop(self):
+        ts = _build_triple_store()
+        pool = _FakePool()
+        store = OutboxStore()
+
+        async with pool.acquire() as conn:
+            rid = await store.stage(
+                conn,
+                operation="retract_inference",
+                triple_hash="nonexistent_hash",
+                subject="http://knowledge.local/data/x",
+                predicate="http://knowledge.local/p",
+                object_="http://knowledge.local/data/y",
+                graph="http://knowledge.local/graph/inferred",
+            )
+
+        drainer = OutboxDrainer(pool, ts)
+        applied = await drainer.drain_ids([rid])
+        assert applied[0].operation == "retract_inference"
+        # Idempotent: re-run is also a no-op.
+        pool.rows[0]["applied_at"] = None
+        pool.applied_ids.discard(rid)
+        again = await drainer.drain_ids([rid])
+        assert again[0].operation == "retract_inference"
