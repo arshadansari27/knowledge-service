@@ -102,6 +102,55 @@ class TestInsert:
         conn.execute.assert_called_once()
         # Should not raise — default metadata is handled internally
 
+    async def test_insert_with_caller_conn_does_not_acquire_pool(self, store):
+        pool = MagicMock()
+        pool.acquire = MagicMock()
+        conn = AsyncMock()
+
+        store = ProvenanceStore(pool)
+        await store.insert(
+            triple_hash="abc",
+            subject="s",
+            predicate="p",
+            object_="o",
+            source_url="http://x",
+            source_type="article",
+            extractor="api",
+            confidence=0.8,
+            conn=conn,
+        )
+        # Pool must NOT be acquired — caller already holds a txn.
+        pool.acquire.assert_not_called()
+        # Insert went through caller's conn
+        assert conn.execute.await_count == 1
+
+    async def test_insert_without_conn_acquires_pool(self):
+        pool_conn = AsyncMock()
+        pool = MagicMock()
+
+        class _Ctx:
+            async def __aenter__(self_inner):
+                return pool_conn
+
+            async def __aexit__(self_inner, *exc):
+                return False
+
+        pool.acquire = MagicMock(return_value=_Ctx())
+
+        store = ProvenanceStore(pool)
+        await store.insert(
+            triple_hash="abc",
+            subject="s",
+            predicate="p",
+            object_="o",
+            source_url="http://x",
+            source_type="article",
+            extractor="api",
+            confidence=0.8,
+        )
+        pool.acquire.assert_called_once()
+        assert pool_conn.execute.await_count == 1
+
 
 class TestGetByTriple:
     async def test_get_by_triple_queries_correctly(self, store, mock_pool):

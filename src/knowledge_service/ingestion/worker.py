@@ -206,7 +206,8 @@ async def run_ingestion(
         # Phase 5: Process
         current_phase = "processing"
         await tracker.update_status("processing")
-        process = ProcessPhase(stores, entity_store, engine=engine)
+        drainer = getattr(app_state, "outbox_drainer", None) if app_state is not None else None
+        process = ProcessPhase(stores, entity_store, engine=engine, drainer=drainer)
         triples_created, entities_resolved = await process.run(
             knowledge_items,
             chunk_ids_for_items,

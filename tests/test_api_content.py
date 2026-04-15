@@ -11,6 +11,7 @@ from unittest.mock import AsyncMock, MagicMock
 from httpx import AsyncClient, ASGITransport
 
 from knowledge_service.main import create_app
+from knowledge_service.ingestion.outbox import OutboxStore, OutboxDrainer
 from tests.conftest import make_test_session_cookie
 
 
@@ -20,21 +21,66 @@ from tests.conftest import make_test_session_cookie
 
 
 def _make_pg_pool_mock():
-    """Build a mock asyncpg pool whose .acquire() works as an async context manager."""
-    mock_conn = AsyncMock()
-    mock_conn.execute.return_value = "INSERT 0 1"
+    """Build a mock asyncpg pool that records outbox rows and supports draining."""
+    outbox_rows: list[dict] = []
+    next_id = [1]
 
-    async def _fetchrow(sql, *args):
-        if "ingestion_jobs" in sql and "INSERT" in sql:
-            return {"id": "job-uuid-1234"}
-        return {"id": "content-uuid-1234"}
+    class _Conn:
+        async def execute(self, sql, *args):
+            if "applied_at" in sql:
+                target = args[0]
+                for r in outbox_rows:
+                    if r["id"] == target:
+                        r["applied_at"] = "now"
+            return "OK"
 
-    mock_conn.fetchrow.side_effect = _fetchrow
-    mock_conn.fetch.return_value = []
+        async def fetchval(self, sql, *args):
+            rid = next_id[0]
+            next_id[0] += 1
+            row = {
+                "id": rid,
+                "triple_hash": args[0],
+                "operation": args[1],
+                "subject": args[2],
+                "predicate": args[3],
+                "object": args[4],
+                "confidence": args[5],
+                "knowledge_type": args[6],
+                "valid_from": args[7],
+                "valid_until": args[8],
+                "graph": args[9],
+                "payload": args[10],
+                "applied_at": None,
+            }
+            outbox_rows.append(row)
+            return rid
+
+        async def fetchrow(self, sql, *args):
+            if "ingestion_jobs" in sql and "INSERT" in sql:
+                return {"id": "job-uuid-1234"}
+            return {"id": "content-uuid-1234"}
+
+        async def fetch(self, sql, *args):
+            if args and isinstance(args[0], list):
+                ids = set(args[0])
+                return [r for r in outbox_rows if r["id"] in ids and r["applied_at"] is None]
+            return []
+
+        def transaction(self):
+            return _txn_cm()
+
+    class _txn_cm:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *exc):
+            return False
+
+    _conn = _Conn()
 
     @asynccontextmanager
     async def _acquire():
-        yield mock_conn
+        yield _conn
 
     mock_pool = MagicMock()
     mock_pool.acquire = _acquire
@@ -119,6 +165,7 @@ def _make_app_with_mocks(**overrides):
     stores.provenance = mock_provenance
     stores.theses = mock_theses
     stores.pg_pool = mock_pg
+    stores.outbox = overrides.get("outbox", OutboxStore())
     app.state.stores = stores
 
     app.state.embedding_client = overrides.get("embedding_client", _make_embedding_client_mock())
@@ -128,6 +175,7 @@ def _make_app_with_mocks(**overrides):
     app.state.knowledge_store = mock_ts
     app.state.pg_pool = mock_pg
     app.state.reasoning_engine = None
+    app.state.outbox_drainer = OutboxDrainer(mock_pg, mock_ts)
     return app
 
 

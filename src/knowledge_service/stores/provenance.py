@@ -49,12 +49,16 @@ class ProvenanceStore:
         valid_from: datetime | None = None,
         valid_until: datetime | None = None,
         chunk_id: str | None = None,
+        conn: Any | None = None,
     ) -> None:
         """Upsert a provenance record.
 
         On conflict (triple_hash, source_url) the confidence, metadata,
         temporal bounds, and chunk_id are updated to the new values,
         leaving ingested_at unchanged.
+
+        If conn is provided, runs on caller's transaction; else acquires
+        from pool.
         """
         metadata_json = json.dumps(metadata if metadata is not None else {})
 
@@ -73,22 +77,26 @@ class ProvenanceStore:
                 chunk_id    = EXCLUDED.chunk_id
         """
 
-        async with self._pool.acquire() as conn:
-            await conn.execute(
-                sql,
-                triple_hash,
-                subject,
-                predicate,
-                object_,
-                source_url,
-                source_type,
-                extractor,
-                confidence,
-                metadata_json,
-                valid_from,
-                valid_until,
-                chunk_id,
-            )
+        params = (
+            triple_hash,
+            subject,
+            predicate,
+            object_,
+            source_url,
+            source_type,
+            extractor,
+            confidence,
+            metadata_json,
+            valid_from,
+            valid_until,
+            chunk_id,
+        )
+
+        if conn is not None:
+            await conn.execute(sql, *params)
+        else:
+            async with self._pool.acquire() as c:
+                await c.execute(sql, *params)
 
     # ------------------------------------------------------------------
     # Read operations
