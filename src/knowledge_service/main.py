@@ -143,6 +143,8 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     )
 
     # Build Stores dataclass
+    from knowledge_service.ingestion.outbox import OutboxStore, OutboxDrainer  # noqa: PLC0415
+
     entity_store = EntityStore(pg_pool, embedding_client)
     stores = Stores(
         triples=triple_store,
@@ -150,9 +152,11 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         entities=entity_store,
         provenance=ProvenanceStore(pg_pool),
         theses=ThesisStore(pg_pool),
+        outbox=OutboxStore(),
         pg_pool=pg_pool,
     )
     app.state.stores = stores
+    app.state.outbox_drainer = OutboxDrainer(pg_pool, triple_store)
 
     # DomainRegistry
     prompts_dir = ontology_dir / "prompts"
