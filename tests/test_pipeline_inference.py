@@ -1,9 +1,11 @@
 # tests/test_pipeline_inference.py
 import pytest
+from contextlib import asynccontextmanager
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock
 
 from knowledge_service.ingestion.pipeline import ingest_triple, IngestContext, IngestResult
+from knowledge_service.ingestion.outbox import OutboxStore, OutboxDrainer
 from knowledge_service.reasoning.engine import (
     InferenceEngine,
     InverseRule,
@@ -25,6 +27,68 @@ def ts_with_ontology():
     return ts
 
 
+def _make_stateful_pool():
+    """Return (pool, drainer_factory) with a stateful outbox-aware pool."""
+    outbox_rows: list[dict] = []
+    next_id = [1]
+
+    class _Conn:
+        async def execute(self, sql, *args):
+            if "applied_at" in sql:
+                target = args[0]
+                for r in outbox_rows:
+                    if r["id"] == target:
+                        r["applied_at"] = "now"
+            return "OK"
+
+        async def fetchval(self, sql, *args):
+            rid = next_id[0]
+            next_id[0] += 1
+            row = {
+                "id": rid,
+                "triple_hash": args[0],
+                "operation": args[1],
+                "subject": args[2],
+                "predicate": args[3],
+                "object": args[4],
+                "confidence": args[5],
+                "knowledge_type": args[6],
+                "valid_from": args[7],
+                "valid_until": args[8],
+                "graph": args[9],
+                "payload": args[10],
+                "applied_at": None,
+            }
+            outbox_rows.append(row)
+            return rid
+
+        async def fetch(self, sql, *args):
+            if args and isinstance(args[0], list):
+                ids = set(args[0])
+                return [r for r in outbox_rows if r["id"] in ids and r["applied_at"] is None]
+            return []
+
+        def transaction(self):
+            return _TxnCM()
+
+    class _TxnCM:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *exc):
+            return False
+
+    _conn = _Conn()
+
+    @asynccontextmanager
+    async def _acquire():
+        yield _conn
+
+    mock_pool = MagicMock()
+    mock_pool.acquire = _acquire
+    return mock_pool
+
+
 @pytest.fixture
 def mock_stores(ts_with_ontology):
     provenance = AsyncMock()
@@ -32,11 +96,21 @@ def mock_stores(ts_with_ontology):
     provenance.insert = AsyncMock()
     theses = AsyncMock()
     theses.find_by_hashes = AsyncMock(return_value=[])
+
+    mock_pool = _make_stateful_pool()
+
     stores = MagicMock(spec=Stores)
     stores.triples = ts_with_ontology
     stores.provenance = provenance
     stores.theses = theses
+    stores.pg_pool = mock_pool
+    stores.outbox = OutboxStore()
     return stores
+
+
+@pytest.fixture
+def drainer(mock_stores):
+    return OutboxDrainer(mock_stores.pg_pool, mock_stores.triples)
 
 
 @pytest.fixture
@@ -171,7 +245,7 @@ class TestInferredAnnotations:
 
 
 class TestRetraction:
-    async def test_retraction_removes_annotations(self, mock_stores, engine):
+    async def test_retraction_removes_annotations(self, mock_stores, engine, drainer):
         """Retracting a stale inferred triple must remove its RDF-star annotation quads.
 
         Steps:
@@ -195,7 +269,7 @@ class TestRetraction:
             "valid_from": None,
             "valid_until": None,
         }
-        await ingest_triple(triple_ab, mock_stores, ctx, engine=engine)
+        await ingest_triple(triple_ab, mock_stores, ctx, engine=engine, drainer=drainer)
 
         # Step 2: Verify inferred triple B part_of A exists
         inferred_before = ts.get_triples(
@@ -237,7 +311,7 @@ class TestRetraction:
             "valid_from": None,
             "valid_until": None,
         }
-        await ingest_triple(triple_ac, mock_stores, ctx, engine=engine)
+        await ingest_triple(triple_ac, mock_stores, ctx, engine=engine, drainer=drainer)
 
         # Step 4: Old inferred triple (B part_of A) should be gone
         inferred_after = ts.get_triples(
