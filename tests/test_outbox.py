@@ -144,6 +144,45 @@ class _FakeTxn:
         return False
 
 
+class TestOutboxDrainerUpdateConfidence:
+    async def test_drain_update_confidence(self):
+        ts = _build_triple_store()
+        pool = _FakePool()
+        store = OutboxStore()
+
+        # Seed: insert a triple so the confidence annotation exists.
+        ts.insert(
+            "http://knowledge.local/data/cat",
+            "http://knowledge.local/is_a",
+            "http://knowledge.local/data/animal",
+            0.9,
+            "claim",
+            None,
+            None,
+            KS_GRAPH_EXTRACTED,
+        )
+
+        async with pool.acquire() as conn:
+            rid = await store.stage(
+                conn,
+                operation="update_confidence",
+                triple_hash="ignored",
+                subject="http://knowledge.local/data/cat",
+                predicate="http://knowledge.local/is_a",
+                object_="http://knowledge.local/data/animal",
+                confidence=0.4,
+                graph=KS_GRAPH_EXTRACTED,
+            )
+
+        drainer = OutboxDrainer(pool, ts)
+        applied = await drainer.drain_ids([rid])
+
+        assert applied[0].operation == "update_confidence"
+        # Query back the confidence
+        rows = ts.get_triples(subject="http://knowledge.local/data/cat")
+        assert rows[0]["confidence"] == 0.4
+
+
 class TestOutboxDrainerInsert:
     async def test_drain_ids_applies_insert_to_pyoxigraph(self):
         ts = _build_triple_store()

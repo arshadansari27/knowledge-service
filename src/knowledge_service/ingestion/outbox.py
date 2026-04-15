@@ -130,6 +130,8 @@ class OutboxDrainer:
         op = row["operation"]
         if op == "insert":
             return await self._apply_insert(row)
+        if op == "update_confidence":
+            return await self._apply_update_confidence(row)
         logger.warning("OutboxDrainer: unknown operation %r (row id=%s)", op, row["id"])
         return None
 
@@ -150,4 +152,20 @@ class OutboxDrainer:
             operation="insert",
             triple_hash=triple_hash,
             is_new=is_new,
+        )
+
+    async def _apply_update_confidence(self, row: dict) -> AppliedEntry:
+        triple_dict = {
+            "subject": row["subject"],
+            "predicate": row["predicate"],
+            "object": row["object"],
+        }
+        await asyncio.to_thread(
+            self._triples.update_confidence, triple_dict, row["confidence"]
+        )
+        return AppliedEntry(
+            id=row["id"],
+            operation="update_confidence",
+            triple_hash=row["triple_hash"],
+            is_new=None,
         )
