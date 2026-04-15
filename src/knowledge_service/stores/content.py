@@ -65,8 +65,9 @@ def reciprocal_rank_fusion(
 class ContentStore:
     """Wraps an asyncpg connection pool for content metadata and chunk operations."""
 
-    def __init__(self, pool: Any) -> None:
+    def __init__(self, pool: Any, *, exclude_inflight: bool = False) -> None:
         self._pool = pool
+        self._exclude_inflight = exclude_inflight
 
     # ------------------------------------------------------------------
     # Helpers
