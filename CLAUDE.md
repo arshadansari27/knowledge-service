@@ -132,6 +132,17 @@ Deployed as part of the **AEGIS Docker Swarm stack** on a homelab cluster. Full 
 - **Deploy:** `source .env && ansible-playbook -i inventory/hosts.yml playbooks/deploy-aegis.yml`
 - **Quick update:** `docker --context swarm-baa service update --image arshadansari27/knowledge-service:latest --force aegis_knowledge`
 
+## ProcessPhase consistency
+
+`ProcessPhase` writes to both pyoxigraph (triples, RDF-star annotations) and PostgreSQL (provenance, outbox). These stores cannot share a transaction, so coordination is handled via an **outbox pattern**:
+
+- **Commit boundary is PostgreSQL.** Every pyoxigraph write is first staged as a row in `triple_outbox` inside the same PG transaction as its matching `provenance` row. After commit, an `OutboxDrainer` replays the staged rows to pyoxigraph and marks them `applied_at`.
+- **Invariant:** Every `provenance` row references a triple that is either already durable in pyoxigraph or present as an unapplied `triple_outbox` row. The inverse (pyoxigraph triple without provenance) is never produced by this layer.
+- **Drain happens twice:** synchronously after each PG commit (fast path) and at application startup via `app.state.outbox_drainer.drain_pending()` (recovery path for crashes between commit and drain).
+- **All outbox operations are idempotent.** Re-applying an `insert` is a no-op (pyoxigraph deduplicates by content hash). `update_confidence` is idempotent when writing the target value. `insert_inferred` guards RDF-star annotations with SPARQL ASK (per `lesson_pyoxigraph_rdfstar`). `retract_inference` re-runs against a hash whose inferences have already been removed and finds nothing to do.
+- **Derived work is skippable.** Contradictions penalty and inference-engine runs happen *after* the base triple is durable in both stores. A crash during derived work leaves the base triple intact; re-ingestion re-runs derived work deterministically because the engine is pure and content-addressed inserts are idempotent.
+- **Not the same as the stuck-job janitor.** The janitor marks `ingestion_jobs` as failed on process restart; the outbox drainer recovers per-triple store drift. They are independent mechanisms.
+
 ## LLM Integration Gotchas
 
 - **Do NOT use `response_format: {"type": "json_object"}`** with qwen3 via Ollama/LiteLLM. It returns empty `{}` silently, breaking extraction. The `_extract_json()` utility in `_utils.py` already handles freeform LLM output (markdown fences, `<think>` tags, trailing text).
