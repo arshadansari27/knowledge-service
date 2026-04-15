@@ -36,9 +36,7 @@ def _make_pool_capturing_sql():
     return pool, captured
 
 
-_INFLIGHT_PREDICATE = (
-    "j.status IS NULL OR j.status IN ('completed', 'failed')"
-)
+_INFLIGHT_PREDICATE = "(j.status IS NULL OR j.status IN ('completed', 'failed'))"
 
 
 class TestVectorSearchInflightFilter:
