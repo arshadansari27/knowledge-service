@@ -385,6 +385,23 @@ class ContentStore:
 
         where_clause = f"WHERE {' AND '.join(conditions)}"
 
+        if self._exclude_inflight:
+            lateral_join = """
+                LEFT JOIN LATERAL (
+                    SELECT status
+                    FROM ingestion_jobs
+                    WHERE content_id = m.id
+                    ORDER BY created_at DESC
+                    LIMIT 1
+                ) j ON TRUE
+            """
+            inflight_predicate = (
+                "(j.status IS NULL OR j.status IN ('completed', 'failed'))"
+            )
+            where_clause = f"{where_clause} AND {inflight_predicate}"
+        else:
+            lateral_join = ""
+
         sql = f"""
             SELECT
                 c.id, c.chunk_text, c.chunk_index, c.section_header,
@@ -393,6 +410,7 @@ class ContentStore:
                 ts_rank(c.tsv, plainto_tsquery('english', $1)) AS similarity
             FROM content c
             JOIN content_metadata m ON c.content_id = m.id
+            {lateral_join}
             {where_clause}
             ORDER BY ts_rank(c.tsv, plainto_tsquery('english', $1)) DESC
             LIMIT {limit_placeholder}
