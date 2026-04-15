@@ -4,7 +4,12 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock
 
-from knowledge_service.ingestion.pipeline import ingest_triple, IngestContext, IngestResult, compute_hash
+from knowledge_service.ingestion.pipeline import (
+    ingest_triple,
+    IngestContext,
+    IngestResult,
+    compute_hash,
+)
 from knowledge_service.ingestion.outbox import OutboxStore, OutboxDrainer
 from knowledge_service.reasoning.engine import (
     InferenceEngine,
@@ -257,6 +262,7 @@ class TestInferenceViaOutbox:
         class _SingleDerivedEngine:
             def run(self, triple):
                 from knowledge_service.reasoning.engine import DerivedTriple  # noqa: PLC0415
+
                 return [
                     DerivedTriple(
                         subject=triple["subject"],

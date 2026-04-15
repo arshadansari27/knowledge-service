@@ -124,7 +124,9 @@ async def check_thesis_impact(triple_hash, contradictions, stores) -> list[dict]
     return await stores.theses.find_by_hashes(affected_hashes, status="active")
 
 
-async def run_inference(triple: dict, engine, stores, context: IngestContext, drainer=None) -> list[dict]:
+async def run_inference(
+    triple: dict, engine, stores, context: IngestContext, drainer=None
+) -> list[dict]:
     """Run inference engine and persist derived triples via the outbox."""
     if engine is None:
         return []
@@ -421,6 +423,7 @@ async def ingest_triple(
         confidence = combined
 
     from knowledge_service.ontology.uri import to_entity_uri, to_predicate_uri  # noqa: PLC0415
+
     normalized = {
         **triple,
         "subject": to_entity_uri(triple["subject"]),

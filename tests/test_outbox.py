@@ -298,8 +298,9 @@ class TestOutboxDrainerInsertInferred:
         assert applied[0].operation == "insert_inferred"
 
         # Base triple exists in inferred graph
-        rows = ts.get_triples(subject="http://knowledge.local/data/fluffy",
-                              graphs=[KS_GRAPH_INFERRED])
+        rows = ts.get_triples(
+            subject="http://knowledge.local/data/fluffy", graphs=[KS_GRAPH_INFERRED]
+        )
         assert len(rows) == 1
 
         # ks:derivedFrom annotation is present

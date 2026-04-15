@@ -1,5 +1,6 @@
 # tests/test_ingestion_crash_injection.py
 """Crash-injection tests for ProcessPhase outbox coordination."""
+
 from __future__ import annotations
 
 from pathlib import Path
@@ -34,10 +35,7 @@ def _triple(s="cat", p="is_a", o="animal", conf=0.8, kt="claim"):
 
 def _triple_store():
     ts = TripleStore(data_dir=None)
-    ontology_dir = (
-        Path(__file__).resolve().parent.parent
-        / "src" / "knowledge_service" / "ontology"
-    )
+    ontology_dir = Path(__file__).resolve().parent.parent / "src" / "knowledge_service" / "ontology"
     bootstrap_ontology(ts, ontology_dir)
     return ts
 
@@ -84,11 +82,19 @@ class _Conn:
         rid = self.pool.next_id
         self.pool.next_id += 1
         row = {
-            "id": rid, "triple_hash": args[0], "operation": args[1],
-            "subject": args[2], "predicate": args[3], "object": args[4],
-            "confidence": args[5], "knowledge_type": args[6],
-            "valid_from": args[7], "valid_until": args[8],
-            "graph": args[9], "payload": args[10], "applied_at": None,
+            "id": rid,
+            "triple_hash": args[0],
+            "operation": args[1],
+            "subject": args[2],
+            "predicate": args[3],
+            "object": args[4],
+            "confidence": args[5],
+            "knowledge_type": args[6],
+            "valid_from": args[7],
+            "valid_until": args[8],
+            "graph": args[9],
+            "payload": args[10],
+            "applied_at": None,
         }
         self.pool.outbox_rows.append(row)
         return rid
@@ -96,8 +102,7 @@ class _Conn:
     async def fetch(self, sql, *args):
         if args and isinstance(args[0], list):
             ids = set(args[0])
-            return [r for r in self.pool.outbox_rows
-                    if r["id"] in ids and r["applied_at"] is None]
+            return [r for r in self.pool.outbox_rows if r["id"] in ids and r["applied_at"] is None]
         return [r for r in self.pool.outbox_rows if r["applied_at"] is None]
 
 
@@ -129,11 +134,11 @@ async def test_crash_after_base_commit_before_drain():
     pool = _Pool()
     drainer = OutboxDrainer(pool, ts)
     stores = _stores(pool, ts)
-    ctx = IngestContext(source_url="http://t", source_type="article",
-                        extractor="api", graph=KS_GRAPH_EXTRACTED)
+    ctx = IngestContext(
+        source_url="http://t", source_type="article", extractor="api", graph=KS_GRAPH_EXTRACTED
+    )
 
-    with patch.object(OutboxDrainer, "drain_ids",
-                      side_effect=RuntimeError("simulated crash")):
+    with patch.object(OutboxDrainer, "drain_ids", side_effect=RuntimeError("simulated crash")):
         with pytest.raises(RuntimeError, match="simulated crash"):
             await ingest_triple(_triple(), stores, ctx, drainer=drainer)
 
@@ -155,9 +160,15 @@ async def test_crash_mid_drain():
     async with pool.acquire() as conn:
         for i in range(3):
             await store.stage(
-                conn, operation="insert", triple_hash=f"h{i}",
-                subject=f"{KS_DATA}e{i}", predicate=f"{KS}p", object_=f"{KS_DATA}o",
-                confidence=0.5, knowledge_type="claim", graph=KS_GRAPH_EXTRACTED,
+                conn,
+                operation="insert",
+                triple_hash=f"h{i}",
+                subject=f"{KS_DATA}e{i}",
+                predicate=f"{KS}p",
+                object_=f"{KS_DATA}o",
+                confidence=0.5,
+                knowledge_type="claim",
+                graph=KS_GRAPH_EXTRACTED,
             )
 
     drainer = OutboxDrainer(pool, ts)
@@ -187,11 +198,11 @@ async def test_crash_before_base_commit():
     pool = _Pool()
     drainer = OutboxDrainer(pool, ts)
     stores = _stores(pool, ts)
-    ctx = IngestContext(source_url="http://t", source_type="article",
-                        extractor="api", graph=KS_GRAPH_EXTRACTED)
+    ctx = IngestContext(
+        source_url="http://t", source_type="article", extractor="api", graph=KS_GRAPH_EXTRACTED
+    )
 
-    with patch.object(OutboxStore, "stage",
-                      side_effect=RuntimeError("stage failure")):
+    with patch.object(OutboxStore, "stage", side_effect=RuntimeError("stage failure")):
         with pytest.raises(RuntimeError, match="stage failure"):
             await ingest_triple(_triple(), stores, ctx, drainer=drainer)
 
@@ -206,9 +217,15 @@ async def test_idempotent_redrain():
     store = OutboxStore()
     async with pool.acquire() as conn:
         rid = await store.stage(
-            conn, operation="insert", triple_hash="h",
-            subject=f"{KS_DATA}x", predicate=f"{KS}p", object_=f"{KS_DATA}y",
-            confidence=0.7, knowledge_type="claim", graph=KS_GRAPH_EXTRACTED,
+            conn,
+            operation="insert",
+            triple_hash="h",
+            subject=f"{KS_DATA}x",
+            predicate=f"{KS}p",
+            object_=f"{KS_DATA}y",
+            confidence=0.7,
+            knowledge_type="claim",
+            graph=KS_GRAPH_EXTRACTED,
         )
     drainer = OutboxDrainer(pool, ts)
     await drainer.drain_ids([rid])
@@ -227,9 +244,15 @@ async def test_startup_drainer_replays_pending():
     async with pool.acquire() as conn:
         for i in range(4):
             await store.stage(
-                conn, operation="insert", triple_hash=f"h{i}",
-                subject=f"{KS_DATA}e{i}", predicate=f"{KS}p", object_=f"{KS_DATA}o",
-                confidence=0.5, knowledge_type="claim", graph=KS_GRAPH_EXTRACTED,
+                conn,
+                operation="insert",
+                triple_hash=f"h{i}",
+                subject=f"{KS_DATA}e{i}",
+                predicate=f"{KS}p",
+                object_=f"{KS_DATA}o",
+                confidence=0.5,
+                knowledge_type="claim",
+                graph=KS_GRAPH_EXTRACTED,
             )
 
     drainer = OutboxDrainer(pool, ts)
@@ -246,25 +269,29 @@ async def test_inferred_triple_crash_and_recovery():
     pool = _Pool()
     drainer = OutboxDrainer(pool, ts)
     stores = _stores(pool, ts)
-    ctx = IngestContext(source_url="http://t", source_type="article",
-                        extractor="api", graph=KS_GRAPH_EXTRACTED)
+    ctx = IngestContext(
+        source_url="http://t", source_type="article", extractor="api", graph=KS_GRAPH_EXTRACTED
+    )
 
     class _Engine:
         def __init__(self):
             self._called = False
+
         def run(self, triple):
             if self._called:
                 return []
             self._called = True
-            return [DerivedTriple(
-                subject=triple["subject"],
-                predicate=f"{KS}inverse_p",
-                object_=triple["subject"],
-                confidence=0.5,
-                inference_method="inverse",
-                derived_from=[compute_hash(triple)],
-                depth=0,
-            )]
+            return [
+                DerivedTriple(
+                    subject=triple["subject"],
+                    predicate=f"{KS}inverse_p",
+                    object_=triple["subject"],
+                    confidence=0.5,
+                    inference_method="inverse",
+                    derived_from=[compute_hash(triple)],
+                    depth=0,
+                )
+            ]
 
     engine = _Engine()
     orig_drain = OutboxDrainer.drain_ids
@@ -280,8 +307,11 @@ async def test_inferred_triple_crash_and_recovery():
             await ingest_triple(_triple(), stores, ctx, engine=engine, drainer=drainer)
 
     assert len(ts.get_triples(subject=f"{KS_DATA}cat")) == 1
-    pending = [r for r in pool.outbox_rows
-               if r["operation"] == "insert_inferred" and r["applied_at"] is None]
+    pending = [
+        r
+        for r in pool.outbox_rows
+        if r["operation"] == "insert_inferred" and r["applied_at"] is None
+    ]
     assert len(pending) == 1
 
     applied = await drainer.drain_pending()

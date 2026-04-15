@@ -92,16 +92,14 @@ class TestDetectDelta:
 
 def _real_triple_store():
     ts = TripleStore(data_dir=None)
-    ontology_dir = (
-        Path(__file__).resolve().parent.parent
-        / "src" / "knowledge_service" / "ontology"
-    )
+    ontology_dir = Path(__file__).resolve().parent.parent / "src" / "knowledge_service" / "ontology"
     bootstrap_ontology(ts, ontology_dir)
     return ts
 
 
 class _PoolRecording:
     """Asyncpg-shaped pool that records staged rows and supports txns."""
+
     def __init__(self):
         self.provenance_rows: list[tuple] = []
         self.outbox_rows: list[dict] = []
