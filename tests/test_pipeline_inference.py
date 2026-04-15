@@ -4,7 +4,7 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock
 
-from knowledge_service.ingestion.pipeline import ingest_triple, IngestContext, IngestResult
+from knowledge_service.ingestion.pipeline import ingest_triple, IngestContext, IngestResult, compute_hash
 from knowledge_service.ingestion.outbox import OutboxStore, OutboxDrainer
 from knowledge_service.reasoning.engine import (
     InferenceEngine,
@@ -14,9 +14,11 @@ from knowledge_service.reasoning.engine import (
 )
 from knowledge_service.stores.triples import TripleStore
 from knowledge_service.stores import Stores
+from knowledge_service.stores.provenance import ProvenanceStore
 from knowledge_service.ontology.bootstrap import bootstrap_ontology
 from knowledge_service.ontology.uri import KS, KS_DATA
-from knowledge_service.ontology.namespaces import KS_GRAPH_INFERRED
+from knowledge_service.ontology.namespaces import KS_GRAPH_INFERRED, KS_GRAPH_EXTRACTED
+from tests.test_pipeline import _real_triple_store, _PoolRecording, _triple
 
 
 @pytest.fixture
@@ -139,7 +141,7 @@ class TestPipelineInference:
         inv = [t for t in result.inferred_triples if t.get("predicate", "").endswith("part_of")]
         assert len(inv) == 1
 
-    async def test_inferred_in_correct_graph(self, mock_stores, engine):
+    async def test_inferred_in_correct_graph(self, mock_stores, engine, drainer):
         ctx = IngestContext.from_content("http://example.com", "article", "api")
         triple = {
             "subject": f"{KS_DATA}a",
@@ -150,7 +152,7 @@ class TestPipelineInference:
             "valid_from": None,
             "valid_until": None,
         }
-        await ingest_triple(triple, mock_stores, ctx, engine=engine)
+        await ingest_triple(triple, mock_stores, ctx, engine=engine, drainer=drainer)
         inferred = mock_stores.triples.get_triples(
             subject=f"{KS_DATA}b",
             predicate=f"{KS}part_of",
@@ -191,7 +193,7 @@ class TestPipelineInference:
 
 
 class TestInferredAnnotations:
-    async def test_derived_from_annotation(self, mock_stores, engine):
+    async def test_derived_from_annotation(self, mock_stores, engine, drainer):
         ts = mock_stores.triples
         ctx = IngestContext.from_content("http://example.com", "article", "api")
         triple = {
@@ -203,7 +205,7 @@ class TestInferredAnnotations:
             "valid_from": None,
             "valid_until": None,
         }
-        await ingest_triple(triple, mock_stores, ctx, engine=engine)
+        await ingest_triple(triple, mock_stores, ctx, engine=engine, drainer=drainer)
         rows = ts.query(f"""
             SELECT ?derived_hash WHERE {{
                 GRAPH <{KS_GRAPH_INFERRED}> {{
@@ -214,7 +216,7 @@ class TestInferredAnnotations:
         """)
         assert len(rows) >= 1
 
-    async def test_inference_method_annotation(self, mock_stores, engine):
+    async def test_inference_method_annotation(self, mock_stores, engine, drainer):
         ts = mock_stores.triples
         ctx = IngestContext.from_content("http://example.com", "article", "api")
         triple = {
@@ -226,7 +228,7 @@ class TestInferredAnnotations:
             "valid_from": None,
             "valid_until": None,
         }
-        await ingest_triple(triple, mock_stores, ctx, engine=engine)
+        await ingest_triple(triple, mock_stores, ctx, engine=engine, drainer=drainer)
         rows = ts.query(f"""
             SELECT ?method WHERE {{
                 GRAPH <{KS_GRAPH_INFERRED}> {{
@@ -242,6 +244,64 @@ class TestInferredAnnotations:
             else str(rows[0]["method"])
         )
         assert method_val == "inverse"
+
+
+class TestInferenceViaOutbox:
+    async def test_inferred_triple_goes_through_outbox(self):
+        ts = _real_triple_store()
+        pool = _PoolRecording()
+        prov = ProvenanceStore(pool)
+        outbox = OutboxStore()
+        drainer = OutboxDrainer(pool, ts)
+
+        class _SingleDerivedEngine:
+            def run(self, triple):
+                from knowledge_service.reasoning.engine import DerivedTriple  # noqa: PLC0415
+                return [
+                    DerivedTriple(
+                        subject=triple["subject"],
+                        predicate="http://knowledge.local/schema/inverse_p",
+                        object_=triple["subject"],
+                        confidence=0.5,
+                        inference_method="inverse",
+                        derived_from=[compute_hash(triple)],
+                        depth=0,
+                    )
+                ]
+
+        class _StubThesis:
+            async def find_by_hashes(self, hashes, status=None):
+                return []
+
+        stores = MagicMock()
+        stores.triples = ts
+        stores.provenance = prov
+        stores.outbox = outbox
+        stores.theses = _StubThesis()
+        stores.pg_pool = pool
+
+        ctx = IngestContext(
+            source_url="http://t",
+            source_type="article",
+            extractor="api",
+            graph=KS_GRAPH_EXTRACTED,
+        )
+        result = await ingest_triple(
+            _triple(s="cat", p="is_a", o="animal"),
+            stores,
+            ctx,
+            engine=_SingleDerivedEngine(),
+            drainer=drainer,
+        )
+        # Base insert + inferred insert_inferred
+        ops = [r["operation"] for r in pool.outbox_rows]
+        assert ops.count("insert") == 1
+        assert ops.count("insert_inferred") == 1
+        # Every outbox row applied
+        for r in pool.outbox_rows:
+            assert r["applied_at"] == "now"
+        # Inferred result reported
+        assert len(result.inferred_triples) == 1
 
 
 class TestRetraction:

@@ -124,69 +124,67 @@ async def check_thesis_impact(triple_hash, contradictions, stores) -> list[dict]
     return await stores.theses.find_by_hashes(affected_hashes, status="active")
 
 
-async def run_inference(triple: dict, engine, stores, context: IngestContext) -> list[dict]:
-    """Run inference engine and persist derived triples with RDF-star annotations."""
+async def run_inference(triple: dict, engine, stores, context: IngestContext, drainer=None) -> list[dict]:
+    """Run inference engine and persist derived triples via the outbox."""
     if engine is None:
         return []
 
-    from knowledge_service.ontology.namespaces import KS_GRAPH_INFERRED
-    from knowledge_service.ontology.uri import KS as KS_NS
+    from knowledge_service.ontology.namespaces import KS_GRAPH_INFERRED  # noqa: PLC0415
 
     derived_list = engine.run(triple)
     results = []
 
     for derived in derived_list:
-        derived_hash, _ = await asyncio.to_thread(
-            stores.triples.insert,
-            derived.subject,
-            derived.predicate,
-            derived.object_,
-            derived.confidence,
-            "inferred",
-            None,
-            None,
-            KS_GRAPH_INFERRED,
-        )
-
-        # Add inference-specific RDF-star annotations (ks:derivedFrom + ks:inferenceMethod)
-        obj_sparql = f"<{derived.object_}>" if is_uri(derived.object_) else f'"{derived.object_}"'
-        quoted = f"<< <{derived.subject}> <{derived.predicate}> {obj_sparql} >>"
-
-        annotation_lines = [
-            f'{quoted} <{KS_NS}inferenceMethod> "{derived.inference_method}" .',
-        ]
-        for source_hash in derived.derived_from:
-            annotation_lines.append(f'{quoted} <{KS_NS}derivedFrom> "{source_hash}" .')
-
-        body = "\n                    ".join(annotation_lines)
-        await asyncio.to_thread(
-            stores.triples.store.update,
-            f"""INSERT DATA {{
-                GRAPH <{KS_GRAPH_INFERRED}> {{
-                    {body}
-                }}
-            }}""",
-        )
-
-        # Provenance for inferred triple
-        await stores.provenance.insert(
-            derived_hash,
-            derived.subject,
-            derived.predicate,
-            derived.object_,
-            context.source_url,
-            context.source_type,
-            f"inference:{derived.inference_method}",
-            derived.confidence,
-            {"derived_from": derived.derived_from},
-            None,
-            None,
-            None,
-        )
-
+        derived_hash = _derived_hash(derived)
+        async with stores.pg_pool.acquire() as conn:
+            async with conn.transaction():
+                staged_id = await stores.outbox.stage(
+                    conn,
+                    operation="insert_inferred",
+                    triple_hash=derived_hash,
+                    subject=derived.subject,
+                    predicate=derived.predicate,
+                    object_=derived.object_,
+                    confidence=derived.confidence,
+                    knowledge_type="inferred",
+                    graph=KS_GRAPH_INFERRED,
+                    payload={
+                        "derived_from": list(derived.derived_from),
+                        "inference_method": derived.inference_method,
+                    },
+                )
+                await stores.provenance.insert(
+                    derived_hash,
+                    derived.subject,
+                    derived.predicate,
+                    derived.object_,
+                    context.source_url,
+                    context.source_type,
+                    f"inference:{derived.inference_method}",
+                    derived.confidence,
+                    {"derived_from": list(derived.derived_from)},
+                    None,
+                    None,
+                    None,
+                    conn=conn,
+                )
+        if drainer is not None:
+            await drainer.drain_ids([staged_id])
         results.append(derived.to_dict())
 
     return results
+
+
+def _derived_hash(derived) -> str:
+    """SHA-256 of derived triple's canonical form, matching compute_hash()."""
+    import hashlib  # noqa: PLC0415
+
+    from pyoxigraph import Literal, NamedNode, Triple  # noqa: PLC0415
+
+    s = NamedNode(derived.subject)
+    p = NamedNode(derived.predicate)
+    o = NamedNode(derived.object_) if is_uri(derived.object_) else Literal(derived.object_)
+    return hashlib.sha256(str(Triple(s, p, o)).encode()).hexdigest()
 
 
 def _remove_inferred_triple_with_annotations(raw_store, s, p, o, graph_node) -> None:
@@ -422,8 +420,6 @@ async def ingest_triple(
         await drainer.drain_ids([comb_id])
         confidence = combined
 
-    # Inference still uses the existing run_inference helper. T10 will
-    # re-route it through the outbox.
     from knowledge_service.ontology.uri import to_entity_uri, to_predicate_uri  # noqa: PLC0415
     normalized = {
         **triple,
@@ -431,7 +427,7 @@ async def ingest_triple(
         "predicate": to_predicate_uri(triple["predicate"]),
         "confidence": confidence,
     }
-    inferred = await run_inference(normalized, engine, stores, context)
+    inferred = await run_inference(normalized, engine, stores, context, drainer=drainer)
 
     thesis_breaks = await check_thesis_impact(triple_hash, contradictions, stores)
     return IngestResult(is_new, delta, contradictions, confidence, thesis_breaks, inferred)
