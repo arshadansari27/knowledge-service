@@ -56,8 +56,11 @@ PostgreSQL
 ├── entity_embeddings  Entity URIs with embeddings for resolution
 ├── entity_aliases     Coreference alias → canonical URI mappings
 ├── communities        Leiden communities with LLM-generated summaries
-└── ingestion_jobs     Async job tracking with per-phase progress
+├── ingestion_jobs     Async job tracking with per-phase progress
+└── triple_outbox      Staged pyoxigraph writes — drained after PG commit
 ```
+
+**ProcessPhase consistency.** Triples live in pyoxigraph, provenance lives in PostgreSQL, and a single transaction cannot cover both. Each per-triple write is staged as a row in `triple_outbox` inside the same PG transaction as its `provenance` row; an `OutboxDrainer` applies staged rows to pyoxigraph after commit, and re-runs on application startup to recover from crashes between commit and drain. Every outbox operation is idempotent (content-addressed inserts, SPARQL ASK-guarded RDF-star annotations). See `docs/superpowers/specs/2026-04-15-processphase-2pc-outbox-design.md`.
 
 For deployment details, see [docs/deployment.md](docs/deployment.md).
 
