@@ -290,9 +290,7 @@ class ContentStore:
                     LIMIT 1
                 ) j ON TRUE
             """
-            inflight_predicate = (
-                "(j.status IS NULL OR j.status IN ('completed', 'failed'))"
-            )
+            inflight_predicate = "(j.status IS NULL OR j.status IN ('completed', 'failed'))"
             where_clause = (
                 f"{where_clause} AND {inflight_predicate}"
                 if where_clause
@@ -395,9 +393,7 @@ class ContentStore:
                     LIMIT 1
                 ) j ON TRUE
             """
-            inflight_predicate = (
-                "(j.status IS NULL OR j.status IN ('completed', 'failed'))"
-            )
+            inflight_predicate = "(j.status IS NULL OR j.status IN ('completed', 'failed'))"
             where_clause = f"{where_clause} AND {inflight_predicate}"
         else:
             lateral_join = ""
