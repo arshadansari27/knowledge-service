@@ -143,6 +143,29 @@ Deployed as part of the **AEGIS Docker Swarm stack** on a homelab cluster. Full 
 - **Derived work is skippable.** Contradictions penalty and inference-engine runs happen *after* the base triple is durable in both stores. A crash during derived work leaves the base triple intact; re-ingestion re-runs derived work deterministically because the engine is pure and content-addressed inserts are idempotent.
 - **Not the same as the stuck-job janitor.** The janitor marks `ingestion_jobs` as failed on process restart; the outbox drainer recovers per-triple store drift. They are independent mechanisms.
 
+## Reader-side status filtering
+
+`ContentStore.search()` and `ContentStore._search_bm25()` filter out content
+whose latest `ingestion_jobs.status` is non-terminal (any of `accepted`,
+`embedding`, `analyzing`, `extracting`, `resolving`, `processing`). Content
+with `completed`, `failed`, or no job row passes through. This prevents the
+hybrid retriever from returning chunks whose KG triples have not yet
+committed — the "half-picture" problem.
+
+- The filter is applied in SQL via `LEFT JOIN LATERAL` against
+  `ingestion_jobs`, ordered by `created_at DESC LIMIT 1` so the latest job
+  wins (re-ingest semantics).
+- `RAGRetriever` inherits the filter transparently because it calls
+  `ContentStore.search()`.
+- `/api/content/{id}/chunks` is deliberately exempt — that endpoint reads
+  chunks by ID for operator/debug flows and must see in-flight content.
+- Controlled by `settings.reader_exclude_inflight` (env:
+  `READER_EXCLUDE_INFLIGHT`, default `true`). The flag exists as a rollout
+  escape hatch, not a per-request knob.
+- `failed` jobs are intentionally included. The outbox 2PC may have
+  committed partial triples before the failure; hiding them would remove
+  real evidence. Operators promote failed → completed via re-ingest.
+
 ## LLM Integration Gotchas
 
 - **Do NOT use `response_format: {"type": "json_object"}`** with qwen3 via Ollama/LiteLLM. It returns empty `{}` silently, breaking extraction. The `_extract_json()` utility in `_utils.py` already handles freeform LLM output (markdown fences, `<think>` tags, trailing text).
