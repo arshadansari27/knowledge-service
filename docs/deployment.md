@@ -42,6 +42,7 @@ The knowledge-service runs as part of the **AEGIS stack** on a Docker Swarm clus
 | `ADMIN_PASSWORD` | Via `aegis_knowledge_admin_password` secret |
 | `SECRET_KEY` | Via `aegis_knowledge_secret_key` secret |
 | `SPACY_DATA_DIR` | `/app/data/spacy` |
+| `READER_EXCLUDE_INFLIGHT` | `true` (default) — hides non-terminal `ingestion_jobs` content from `/api/search` and `/api/ask`; set `false` to bypass during rollout |
 
 ### Resources
 

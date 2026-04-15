@@ -62,6 +62,8 @@ PostgreSQL
 
 **ProcessPhase consistency.** Triples live in pyoxigraph, provenance lives in PostgreSQL, and a single transaction cannot cover both. Each per-triple write is staged as a row in `triple_outbox` inside the same PG transaction as its `provenance` row; an `OutboxDrainer` applies staged rows to pyoxigraph after commit, and re-runs on application startup to recover from crashes between commit and drain. Every outbox operation is idempotent (content-addressed inserts, SPARQL ASK-guarded RDF-star annotations). See `docs/superpowers/specs/2026-04-15-processphase-2pc-outbox-design.md`.
 
+**Reader-side status filtering.** `/api/search`, `/api/ask`, and `RAGRetriever` only return content whose latest `ingestion_jobs.status` is terminal (`completed` or `failed`), or has no job row. In-flight content is hidden in SQL via a `LEFT JOIN LATERAL` against `ingestion_jobs`, so chunks without their KG triples never reach the retriever. Controlled by `READER_EXCLUDE_INFLIGHT` (default `true`). `/api/content/{id}/chunks` is deliberately exempt. See `docs/superpowers/specs/2026-04-15-reader-status-filter-design.md`.
+
 For deployment details, see [docs/deployment.md](docs/deployment.md).
 
 ---
