@@ -112,3 +112,18 @@ def client(e2e_service, e2e_config):
 def api_headers(e2e_config):
     """Return headers with API key for authenticated endpoints."""
     return {"X-API-Key": e2e_config["admin_password"]}
+
+
+@pytest.fixture
+async def pg_pool(e2e_service, e2e_config):
+    """Expose an asyncpg pool against the E2E Postgres instance.
+
+    Depends on e2e_service so the service startup has applied migrations.
+    """
+    import asyncpg
+
+    pool = await asyncpg.create_pool(e2e_config["db_url"], min_size=1, max_size=4)
+    try:
+        yield pool
+    finally:
+        await pool.close()
