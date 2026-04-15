@@ -14,7 +14,7 @@ CREATE TABLE IF NOT EXISTS triple_outbox (
     valid_until     TIMESTAMPTZ,
     graph           TEXT NOT NULL,
     payload         JSONB,
-    created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    created_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
     applied_at      TIMESTAMPTZ
 );
 
