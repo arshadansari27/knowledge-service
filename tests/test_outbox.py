@@ -309,7 +309,7 @@ class TestOutboxDrainerInsertInferred:
                     << <http://knowledge.local/data/fluffy>
                        <http://knowledge.local/is_a>
                        <http://knowledge.local/data/animal> >>
-                    <http://knowledge.local/ks/derivedFrom> "h1" .
+                    <http://knowledge.local/schema/derivedFrom> "h1" .
                 }}
             }}
         """
@@ -348,7 +348,7 @@ class TestOutboxDrainerInsertInferred:
                     << <http://knowledge.local/data/fluffy>
                        <http://knowledge.local/is_a>
                        <http://knowledge.local/data/animal> >>
-                    <http://knowledge.local/ks/derivedFrom> "h1" .
+                    <http://knowledge.local/schema/derivedFrom> "h1" .
                 }}
             }}
         """)

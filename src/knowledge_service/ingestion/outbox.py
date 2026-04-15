@@ -184,7 +184,7 @@ class OutboxDrainer:
         )
 
     async def _apply_insert_inferred(self, row: dict) -> AppliedEntry:
-        from knowledge_service.ontology.uri import is_uri  # noqa: PLC0415
+        from knowledge_service.ontology.uri import KS as KS_NS, is_uri  # noqa: PLC0415
 
         triple_hash, is_new = await asyncio.to_thread(
             self._triples.insert,
@@ -210,15 +210,12 @@ class OutboxDrainer:
         quoted = f"<< <{row['subject']}> <{row['predicate']}> {obj_sparql} >>"
         graph = row["graph"]
 
-        # Annotation property URIs — ks:derivedFrom / ks:inferenceMethod
-        _KS = "http://knowledge.local/ks/"
-
         def _apply_annotations():
             if method:
                 ask_method = f"""
                     ASK {{
                         GRAPH <{graph}> {{
-                            {quoted} <{_KS}inferenceMethod> "{method}" .
+                            {quoted} <{KS_NS}inferenceMethod> "{method}" .
                         }}
                     }}
                 """
@@ -226,7 +223,7 @@ class OutboxDrainer:
                     self._triples.store.update(f"""
                         INSERT DATA {{
                             GRAPH <{graph}> {{
-                                {quoted} <{_KS}inferenceMethod> "{method}" .
+                                {quoted} <{KS_NS}inferenceMethod> "{method}" .
                             }}
                         }}
                     """)
@@ -234,7 +231,7 @@ class OutboxDrainer:
                 ask_src = f"""
                     ASK {{
                         GRAPH <{graph}> {{
-                            {quoted} <{_KS}derivedFrom> "{src}" .
+                            {quoted} <{KS_NS}derivedFrom> "{src}" .
                         }}
                     }}
                 """
@@ -242,7 +239,7 @@ class OutboxDrainer:
                     self._triples.store.update(f"""
                         INSERT DATA {{
                             GRAPH <{graph}> {{
-                                {quoted} <{_KS}derivedFrom> "{src}" .
+                                {quoted} <{KS_NS}derivedFrom> "{src}" .
                             }}
                         }}
                     """)
