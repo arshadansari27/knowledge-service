@@ -38,19 +38,29 @@ async def get_search(
         content_id=content_id,
     )
 
-    return [
-        SearchResult(
-            content_id=str(row["content_id"]),
-            url=row["url"],
-            title=row["title"],
-            summary=row.get("summary"),
-            similarity=float(row["similarity"]),
-            source_type=row["source_type"],
-            tags=list(row["tags"]) if row["tags"] else [],
-            ingested_at=row["ingested_at"],
-            chunk_text=row["chunk_text"],
-            chunk_index=row["chunk_index"],
-            section_header=row.get("section_header"),
+    results: list[SearchResult] = []
+    for row in rows:
+        # When hybrid (vector + BM25 + RRF) is active, ``similarity`` may be
+        # None for BM25-only hits and ``rrf_score`` carries the fused rank.
+        # When only vector search ran, both fields equal the cosine similarity.
+        sim = row.get("similarity")
+        rrf = row.get("rrf_score")
+        if rrf is None and sim is not None:
+            rrf = float(sim)
+        results.append(
+            SearchResult(
+                content_id=str(row["content_id"]),
+                url=row["url"],
+                title=row["title"],
+                summary=row.get("summary"),
+                similarity=float(sim) if sim is not None else None,
+                rrf_score=float(rrf) if rrf is not None else None,
+                source_type=row["source_type"],
+                tags=list(row["tags"]) if row["tags"] else [],
+                ingested_at=row["ingested_at"],
+                chunk_text=row["chunk_text"],
+                chunk_index=row["chunk_index"],
+                section_header=row.get("section_header"),
+            )
         )
-        for row in rows
-    ]
+    return results
