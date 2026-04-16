@@ -4,7 +4,6 @@ from unittest.mock import AsyncMock, MagicMock
 
 from knowledge_service.ingestion.phases import ExtractPhase
 from knowledge_service.ingestion.worker import JobTracker, run_ingestion
-from knowledge_service.nlp import NlpEntity, NlpResult
 
 
 class TestJobTracker:
@@ -114,74 +113,16 @@ class TestRunIngestionWithNlp:
         # Verify NLP was called on the chunk
         mock_nlp.assert_called_once_with("Test sentence.")
 
-        # The single-sentence chunk scores below threshold and is skipped by
-        # chunk filtering — LLM extraction is NOT called for low-value chunks.
-        extraction_client.extract.assert_not_called()
+        # LLM extraction should be called on every chunk now that chunk filtering is gone.
+        extraction_client.extract.assert_called_once()
 
         # Verify job was marked complete (not failed)
-        # The last execute call should be the complete update
         calls = conn.execute.call_args_list
         final_sql = str(calls[-1])
         assert "completed" in final_sql.lower()
 
 
 class TestExtractPhaseFiltering:
-    async def test_skips_low_value_chunks_and_emits_ner_fallback(self):
-        """Chunks in skip set should not trigger LLM calls but should emit NER entities."""
-        extraction_client = AsyncMock()
-        extraction_client.extract = AsyncMock(
-            return_value=[
-                {
-                    "knowledge_type": "Entity",
-                    "uri": "dopamine",
-                    "rdf_type": "schema:Thing",
-                    "label": "dopamine",
-                    "properties": {},
-                    "confidence": 0.9,
-                },
-            ]
-        )
-
-        phase = ExtractPhase(extraction_client)
-
-        chunk_records = [
-            {
-                "chunk_text": "[1] Smith (2024). [2] Jones (2023).",
-                "chunk_index": 0,
-                "section_header": "References",
-            },
-            {
-                "chunk_text": "Cold exposure significantly increases dopamine release in the brain. Multiple studies confirm this. The effect is dose-dependent. Results were consistent across participants.",
-                "chunk_index": 1,
-                "section_header": "Results",
-            },
-        ]
-        chunk_id_map = {0: "uuid-0", 1: "uuid-1"}
-
-        nlp_results = [
-            NlpResult(chunk_index=0, entities=[], sentence_count=1),
-            NlpResult(
-                chunk_index=1,
-                entities=[
-                    NlpEntity(text="dopamine", label="CHEMICAL", start_char=0, end_char=8),
-                ],
-                sentence_count=4,
-            ),
-        ]
-
-        knowledge, chunk_ids, chunks_failed, chunks_skipped = await phase.run(
-            chunk_records,
-            chunk_id_map,
-            title="Test",
-            source_type="article",
-            nlp_hints=nlp_results,
-        )
-
-        # LLM should only be called for chunk 1 (not chunk 0)
-        assert extraction_client.extract.call_count == 1
-        # chunks_skipped should be 1 (the references chunk)
-        assert chunks_skipped == 1
-
     async def test_no_filtering_when_no_nlp_hints(self):
         """Without NLP hints, all chunks go to LLM (no filtering)."""
         extraction_client = AsyncMock()

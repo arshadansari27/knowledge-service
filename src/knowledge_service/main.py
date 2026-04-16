@@ -1,6 +1,5 @@
 """FastAPI application factory and lifespan management for the Knowledge Service."""
 
-import asyncio
 import logging
 from contextlib import asynccontextmanager
 from importlib.metadata import version as pkg_version
@@ -20,7 +19,6 @@ from knowledge_service.stores.entities import EntityStore
 from knowledge_service.stores.migrations import run_migrations
 from knowledge_service.stores.provenance import ProvenanceStore
 from knowledge_service.stores.rag import RAGRetriever
-from knowledge_service.stores.theses import ThesisStore
 from knowledge_service.stores.triples import TripleStore
 from knowledge_service.api import (
     health,
@@ -33,8 +31,6 @@ from knowledge_service.api import (
     changes,
     upload as upload_api,
 )
-from knowledge_service.api.theses import router as theses_router
-from knowledge_service.admin.theses import router as admin_theses_router
 
 logger = logging.getLogger(__name__)
 
@@ -151,7 +147,6 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         content=ContentStore(pg_pool, exclude_inflight=settings.reader_exclude_inflight),
         entities=entity_store,
         provenance=ProvenanceStore(pg_pool),
-        theses=ThesisStore(pg_pool),
         outbox=OutboxStore(),
         pg_pool=pg_pool,
     )
@@ -195,28 +190,18 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     app.state.extraction_client = extraction_client
     app.state.embedding_client = embedding_client
 
-    # Federation client (optional enrichment)
-    federation_client = None
-    if settings.federation_enabled:
-        from knowledge_service.clients.federation import FederationClient  # noqa: PLC0415
-
-        federation_client = FederationClient(timeout=settings.federation_timeout)
-        app.state.federation_client = federation_client
-
     # Parser registry
     from knowledge_service.parsing import ParserRegistry  # noqa: PLC0415
     from knowledge_service.parsing.text import TextParser  # noqa: PLC0415
     from knowledge_service.parsing.pdf import PdfParser  # noqa: PLC0415
     from knowledge_service.parsing.html import HtmlParser  # noqa: PLC0415
     from knowledge_service.parsing.structured import StructuredParser  # noqa: PLC0415
-    from knowledge_service.parsing.image import ImageParser  # noqa: PLC0415
 
     parser_registry = ParserRegistry()
     parser_registry.register(TextParser())
     parser_registry.register(PdfParser())
     parser_registry.register(HtmlParser())
     parser_registry.register(StructuredParser())
-    parser_registry.register(ImageParser())
     app.state.parser_registry = parser_registry
 
     # Make parser_registry available to content endpoint module
@@ -260,51 +245,13 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         api_key=settings.llm_api_key,
     )
 
-    # Community store
-    from knowledge_service.stores.community import CommunityStore  # noqa: PLC0415
-
-    app.state.community_store = CommunityStore(pg_pool)
-    app.state._last_community_rebuild = 0.0
-
     app.state.rag_retriever = RAGRetriever(
         embedding_client=embedding_client,
         embedding_store=stores.content,
         knowledge_store=triple_store,
-        community_store=app.state.community_store,
         entity_store=entity_store,
         classify_client=classify_client,
     )
-
-    # Optional periodic community rebuild
-    _rebuild_task = None
-    if settings.community_rebuild_interval > 0:
-
-        async def _community_rebuild_loop() -> None:
-            while True:
-                await asyncio.sleep(settings.community_rebuild_interval)
-                try:
-                    from knowledge_service.stores.community import (  # noqa: PLC0415
-                        CommunityDetector,
-                        CommunitySummarizer,
-                    )
-
-                    detector = CommunityDetector(triple_store)
-                    communities = await asyncio.to_thread(detector.detect)
-                    summarizer = CommunitySummarizer(
-                        extraction_client.client,
-                        triple_store,
-                        model=extraction_client.model,
-                    )
-                    summarized = []
-                    for c in communities:
-                        summarized.append(await summarizer.summarize_one(c))
-                    await app.state.community_store.replace_all(summarized)
-                    logger.info("Periodic community rebuild: %d communities", len(summarized))
-                except Exception as exc:
-                    logger.warning("Periodic community rebuild failed: %s", exc)
-
-        _rebuild_task = asyncio.create_task(_community_rebuild_loop())
-        app.state._community_rebuild_task = _rebuild_task
 
     # BACKWARD COMPAT: Keep old state references for any code not yet migrated
     app.state.knowledge_store = triple_store
@@ -315,20 +262,12 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     yield
 
     # --- Shutdown ---
-    if hasattr(app.state, "_community_rebuild_task") and app.state._community_rebuild_task:
-        app.state._community_rebuild_task.cancel()
-        try:
-            await app.state._community_rebuild_task
-        except asyncio.CancelledError:
-            pass
     triple_store.flush()
     await pg_pool.close()
     await classify_client.close()
     await app.state.rag_client.close()
     await embedding_client.close()
     await extraction_client.close()
-    if federation_client is not None:
-        await federation_client.close()
 
 
 def create_app(use_lifespan: bool = True) -> FastAPI:
@@ -358,8 +297,6 @@ def create_app(use_lifespan: bool = True) -> FastAPI:
     app.include_router(contradictions.router, prefix="/api")
     app.include_router(ask.router, prefix="/api")
     app.include_router(changes.router)
-    app.include_router(theses_router)
-    app.include_router(admin_theses_router)
 
     # Admin panel — store credentials on app.state so both middleware and login route use the same
     from knowledge_service.admin.auth import AuthMiddleware, login_router
@@ -369,13 +306,11 @@ def create_app(use_lifespan: bool = True) -> FastAPI:
     app.state.secret_key = settings.secret_key
 
     from knowledge_service.admin.stats import router as stats_router
-    from knowledge_service.admin.communities import router as communities_router
     from knowledge_service.admin.jobs import router as jobs_router
 
     app.include_router(login_router)
     app.include_router(admin_router)
     app.include_router(stats_router, prefix="/api/admin")
-    app.include_router(communities_router, prefix="/api/admin")
     app.include_router(jobs_router, prefix="/api/admin")
 
     app.add_middleware(

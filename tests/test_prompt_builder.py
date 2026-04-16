@@ -161,19 +161,3 @@ class TestBuildCombinedPrompt:
         long_text = "word " * 2000  # ~10000 chars
         prompt = builder.build_combined_prompt(long_text)
         assert len(prompt) < len(long_text)
-
-
-class TestThesisPrompt:
-    def test_includes_statement(self):
-        reg = _mock_registry()
-        builder = PromptBuilder(reg)
-        prompt = builder.build_thesis_decomposition_prompt("Cold exposure boosts dopamine")
-        assert "Cold exposure boosts dopamine" in prompt
-
-    def test_requests_json_format(self):
-        reg = _mock_registry()
-        builder = PromptBuilder(reg)
-        prompt = builder.build_thesis_decomposition_prompt("test statement")
-        assert '{"items": [...]}' in prompt
-        assert "subject" in prompt
-        assert "predicate" in prompt

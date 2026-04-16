@@ -59,12 +59,8 @@ async def get_entity_changes(
     # 3. Sort by materiality * confidence
     changes.sort(key=lambda c: c["materiality"] * (c["confidence"] or 0), reverse=True)
 
-    # 4. Check thesis breaks
-    thesis_breaks = await stores.theses.find_breaks_for_entity(entity_uri, since_dt)
-
     return {
         "entity": entity_uri,
         "since": since,
         "changes": changes[:limit],
-        "thesis_breaks": thesis_breaks,
     }

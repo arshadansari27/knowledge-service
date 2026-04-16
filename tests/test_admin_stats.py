@@ -56,7 +56,6 @@ async def test_counts_endpoint(stats_client, mock_pg_pool):
     assert "triples" in data
     assert "entities" in data
     assert "content" in data
-    assert "events" in data
 
 
 async def test_confidence_endpoint(stats_client):
@@ -103,10 +102,3 @@ async def test_triples_browse_no_duplicates(stats_client):
         key = (item["subject"], item["predicate"], item["object"])
         assert key not in seen, f"Duplicate triple in browse results: {key}"
         seen.add(key)
-
-
-async def test_recent_activity_endpoint(stats_client):
-    resp = await stats_client.get("/api/admin/stats/activity")
-    assert resp.status_code == 200
-    data = resp.json()
-    assert isinstance(data, list)
