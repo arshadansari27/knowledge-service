@@ -160,7 +160,11 @@ async def _accept_content_request(body: ContentRequest, stores) -> dict:
         )
         chunk_records = chunk_records[:_MAX_CHUNKS]
 
-    # Step 4+5: Atomically create job if no active one exists
+    # Step 4+5: Atomically create job if no active one exists. If an active
+    # job is already running for this content_id, we surface *that* job's id
+    # to the caller instead of 409 Conflict. This makes POST /api/content
+    # idempotent under upstream retry-spam (observed 25× 409s in prod over
+    # 48h, all from the same caller re-submitting identical payloads).
     async with pg_pool.acquire() as conn:
         try:
             job_row = await conn.fetchrow(
@@ -172,11 +176,34 @@ async def _accept_content_request(body: ContentRequest, stores) -> dict:
                 chunks_capped_from,
             )
         except asyncpg.exceptions.UniqueViolationError:
-            return {"conflict": True, "content_id": content_id}
+            existing = await conn.fetchrow(
+                """SELECT id, chunks_total, chunks_capped_from, status
+                   FROM ingestion_jobs
+                   WHERE content_id = $1::uuid
+                     AND status NOT IN ('completed', 'failed')
+                   ORDER BY created_at DESC LIMIT 1""",
+                content_id,
+            )
+            if existing is None:
+                # Race: the active job just finished between INSERT and
+                # SELECT. Treat as conflict so the caller retries.
+                return {"conflict": True, "content_id": content_id}
+            return {
+                "conflict": False,
+                "reused_existing_job": True,
+                "content_id": content_id,
+                "job_id": str(existing["id"]),
+                "chunks_total": existing["chunks_total"],
+                "chunks_capped_from": existing["chunks_capped_from"],
+                "chunk_records": [],
+                "body": body,
+                "existing_status": existing["status"],
+            }
     job_id = str(job_row["id"])
 
     return {
         "conflict": False,
+        "reused_existing_job": False,
         "content_id": content_id,
         "job_id": job_id,
         "chunks_total": len(chunk_records),
@@ -258,28 +285,31 @@ async def post_content(request: Request, background_tasks: BackgroundTasks):
                 if result.get("conflict"):
                     results.append(
                         {
-                            "error": "Active job exists for this content",
+                            "error": "Active job just finished; please retry",
                             "content_id": result["content_id"],
                             "status_code": 409,
                         }
                     )
                     continue
-                background_tasks.add_task(
-                    _run_ingestion_worker,
-                    result["job_id"],
-                    result["content_id"],
-                    result["body"],
-                    result["chunk_records"],
-                    request.app.state,
-                )
-                results.append(
-                    ContentAcceptedResponse(
-                        content_id=result["content_id"],
-                        job_id=result["job_id"],
-                        chunks_total=result["chunks_total"],
-                        chunks_capped_from=result["chunks_capped_from"],
-                    ).model_dump()
-                )
+                if not result.get("reused_existing_job"):
+                    background_tasks.add_task(
+                        _run_ingestion_worker,
+                        result["job_id"],
+                        result["content_id"],
+                        result["body"],
+                        result["chunk_records"],
+                        request.app.state,
+                    )
+                response = ContentAcceptedResponse(
+                    content_id=result["content_id"],
+                    job_id=result["job_id"],
+                    chunks_total=result["chunks_total"],
+                    chunks_capped_from=result["chunks_capped_from"],
+                    status=result.get("existing_status", "accepted"),
+                ).model_dump()
+                if result.get("reused_existing_job"):
+                    response["reused_existing_job"] = True
+                results.append(response)
             return JSONResponse(results, status_code=202)
 
         body = ContentRequest(**raw)
@@ -289,25 +319,27 @@ async def post_content(request: Request, background_tasks: BackgroundTasks):
         if result.get("conflict"):
             return JSONResponse(
                 status_code=409,
-                content={"detail": "Active ingestion job exists for this content"},
+                content={"detail": "Active ingestion job just finished; please retry"},
             )
-        background_tasks.add_task(
-            _run_ingestion_worker,
-            result["job_id"],
-            result["content_id"],
-            result["body"],
-            result["chunk_records"],
-            request.app.state,
-        )
-        return JSONResponse(
-            ContentAcceptedResponse(
-                content_id=result["content_id"],
-                job_id=result["job_id"],
-                chunks_total=result["chunks_total"],
-                chunks_capped_from=result["chunks_capped_from"],
-            ).model_dump(),
-            status_code=202,
-        )
+        if not result.get("reused_existing_job"):
+            background_tasks.add_task(
+                _run_ingestion_worker,
+                result["job_id"],
+                result["content_id"],
+                result["body"],
+                result["chunk_records"],
+                request.app.state,
+            )
+        response = ContentAcceptedResponse(
+            content_id=result["content_id"],
+            job_id=result["job_id"],
+            chunks_total=result["chunks_total"],
+            chunks_capped_from=result["chunks_capped_from"],
+            status=result.get("existing_status", "accepted"),
+        ).model_dump()
+        if result.get("reused_existing_job"):
+            response["reused_existing_job"] = True
+        return JSONResponse(response, status_code=202)
     except ValidationError as exc:
         return JSONResponse(status_code=422, content={"detail": exc.errors()})
 

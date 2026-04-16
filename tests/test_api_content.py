@@ -531,8 +531,14 @@ class TestPostContentBatch:
 
 
 class TestIdempotencyGuard:
-    async def test_active_job_returns_409(self):
-        """Second request for same content_id returns 409 when partial unique index fires."""
+    async def test_active_job_returns_existing_id_not_409(self):
+        """Second request for same content_id returns 202 with existing job_id.
+
+        Previous behavior was 409 Conflict. In prod this triggered retry-spam
+        from callers that had no way to recover. Now the unique-violation path
+        looks up the active job and returns it instead, with a
+        ``reused_existing_job`` flag so callers can distinguish.
+        """
 
         insert_count = 0
 
@@ -541,12 +547,19 @@ class TestIdempotencyGuard:
             if "ingestion_jobs" in sql and "INSERT" in sql:
                 insert_count += 1
                 if insert_count > 1:
-                    # Simulate the partial unique index rejecting a duplicate active job
                     raise asyncpg.exceptions.UniqueViolationError(
                         "duplicate key value violates unique constraint "
                         '"idx_ingestion_jobs_active_content"'
                     )
                 return {"id": "job-uuid-1234"}
+            # Lookup of active job after UniqueViolation
+            if "SELECT id, chunks_total" in sql:
+                return {
+                    "id": "job-uuid-1234",
+                    "chunks_total": 1,
+                    "chunks_capped_from": None,
+                    "status": "processing",
+                }
             return {"id": "content-uuid-1234"}
 
         mock_conn = AsyncMock()
@@ -568,11 +581,57 @@ class TestIdempotencyGuard:
             base_url="http://test",
             cookies={"ks_session": make_test_session_cookie()},
         ) as c:
-            # First request succeeds
             resp1 = await c.post("/api/content", json=MINIMAL_PAYLOAD)
             assert resp1.status_code == 202
+            job_id_1 = resp1.json()["job_id"]
 
-            # Second request gets 409 because the unique index blocks the INSERT
+            resp2 = await c.post("/api/content", json=MINIMAL_PAYLOAD)
+            assert resp2.status_code == 202
+            body = resp2.json()
+            assert body["job_id"] == job_id_1
+            assert body.get("reused_existing_job") is True
+            assert body["status"] == "processing"
+
+    async def test_race_between_insert_and_lookup_returns_409(self):
+        """If the active job finishes between our INSERT and the fallback SELECT,
+        return 409 so the caller retries — that retry will succeed."""
+        insert_count = 0
+
+        async def _fetchrow(sql, *args):
+            nonlocal insert_count
+            if "ingestion_jobs" in sql and "INSERT" in sql:
+                insert_count += 1
+                if insert_count > 1:
+                    raise asyncpg.exceptions.UniqueViolationError(
+                        "duplicate key value violates unique constraint "
+                        '"idx_ingestion_jobs_active_content"'
+                    )
+                return {"id": "job-uuid-1234"}
+            if "SELECT id, chunks_total" in sql:
+                return None  # race: no active job now
+            return {"id": "content-uuid-1234"}
+
+        mock_conn = AsyncMock()
+        mock_conn.execute.return_value = "INSERT 0 1"
+        mock_conn.fetchrow.side_effect = _fetchrow
+        mock_conn.fetch.return_value = []
+
+        @asynccontextmanager
+        async def _acquire():
+            yield mock_conn
+
+        mock_pool = MagicMock()
+        mock_pool.acquire = _acquire
+
+        app = _make_app_with_mocks(pg_pool=mock_pool)
+        transport = ASGITransport(app=app)
+        async with AsyncClient(
+            transport=transport,
+            base_url="http://test",
+            cookies={"ks_session": make_test_session_cookie()},
+        ) as c:
+            resp1 = await c.post("/api/content", json=MINIMAL_PAYLOAD)
+            assert resp1.status_code == 202
             resp2 = await c.post("/api/content", json=MINIMAL_PAYLOAD)
             assert resp2.status_code == 409
 

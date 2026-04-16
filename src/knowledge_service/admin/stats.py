@@ -165,7 +165,7 @@ async def browse_triples(
     min_confidence: float = Query(0.0, ge=0.0, le=1.0),
     max_confidence: float = Query(1.0, ge=0.0, le=1.0),
     sort: str = Query("subject", pattern="^(subject|confidence)$"),
-    limit: int = Query(50, ge=1, le=200),
+    limit: int = Query(50, ge=1, le=500),
     offset: int = Query(0, ge=0),
 ) -> dict:
     knowledge_store = request.app.state.knowledge_store
