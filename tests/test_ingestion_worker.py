@@ -72,18 +72,16 @@ class TestRunIngestionWithNlp:
 
         # Mock extraction client — returns one entity item
         extraction_client = AsyncMock()
-        extraction_client.extract = AsyncMock(
-            return_value=[
-                {
-                    "knowledge_type": "Entity",
-                    "uri": "test_entity",
-                    "rdf_type": "schema:Thing",
-                    "label": "test_entity",
-                    "properties": {},
-                    "confidence": 0.9,
-                }
-            ]
-        )
+        _entity_item = {
+            "knowledge_type": "Entity",
+            "uri": "test_entity",
+            "rdf_type": "schema:Thing",
+            "label": "test_entity",
+            "properties": {},
+            "confidence": 0.9,
+        }
+        extraction_client.extract = AsyncMock(return_value=[_entity_item])
+        extraction_client.extract_with_stats = AsyncMock(return_value=([_entity_item], 0))
         # _call_llm used by CoreferencePhase tier 2
         extraction_client._call_llm = AsyncMock(return_value=None)
 
@@ -129,18 +127,16 @@ class TestExtractPhaseFiltering:
     async def test_skips_low_value_chunks_and_emits_ner_fallback(self):
         """Chunks in skip set should not trigger LLM calls but should emit NER entities."""
         extraction_client = AsyncMock()
-        extraction_client.extract = AsyncMock(
-            return_value=[
-                {
-                    "knowledge_type": "Entity",
-                    "uri": "dopamine",
-                    "rdf_type": "schema:Thing",
-                    "label": "dopamine",
-                    "properties": {},
-                    "confidence": 0.9,
-                },
-            ]
-        )
+        _dop_item = {
+            "knowledge_type": "Entity",
+            "uri": "dopamine",
+            "rdf_type": "schema:Thing",
+            "label": "dopamine",
+            "properties": {},
+            "confidence": 0.9,
+        }
+        extraction_client.extract = AsyncMock(return_value=[_dop_item])
+        extraction_client.extract_with_stats = AsyncMock(return_value=([_dop_item], 0))
 
         phase = ExtractPhase(extraction_client)
 
@@ -169,7 +165,7 @@ class TestExtractPhaseFiltering:
             ),
         ]
 
-        knowledge, chunk_ids, chunks_failed, chunks_skipped = await phase.run(
+        knowledge, chunk_ids, chunks_failed, chunks_skipped, items_rejected = await phase.run(
             chunk_records,
             chunk_id_map,
             title="Test",
@@ -178,14 +174,16 @@ class TestExtractPhaseFiltering:
         )
 
         # LLM should only be called for chunk 1 (not chunk 0)
-        assert extraction_client.extract.call_count == 1
+        assert extraction_client.extract_with_stats.call_count == 1
         # chunks_skipped should be 1 (the references chunk)
         assert chunks_skipped == 1
+        assert items_rejected == 0
 
     async def test_no_filtering_when_no_nlp_hints(self):
         """Without NLP hints, all chunks go to LLM (no filtering)."""
         extraction_client = AsyncMock()
         extraction_client.extract = AsyncMock(return_value=[])
+        extraction_client.extract_with_stats = AsyncMock(return_value=([], 0))
 
         phase = ExtractPhase(extraction_client)
 
@@ -195,14 +193,15 @@ class TestExtractPhaseFiltering:
         ]
         chunk_id_map = {0: "uuid-0", 1: "uuid-1"}
 
-        knowledge, chunk_ids, chunks_failed, chunks_skipped = await phase.run(
+        knowledge, chunk_ids, chunks_failed, chunks_skipped, items_rejected = await phase.run(
             chunk_records,
             chunk_id_map,
             nlp_hints=None,
         )
 
-        assert extraction_client.extract.call_count == 2
+        assert extraction_client.extract_with_stats.call_count == 2
         assert chunks_skipped == 0
+        assert items_rejected == 0
 
 
 class TestJobTrackerChunksSkipped:

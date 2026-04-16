@@ -1,0 +1,2 @@
+ALTER TABLE ingestion_jobs
+    ADD COLUMN IF NOT EXISTS items_rejected INTEGER NOT NULL DEFAULT 0;

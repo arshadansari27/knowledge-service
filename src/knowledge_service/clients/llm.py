@@ -183,6 +183,29 @@ class ExtractionClient(BaseLLMClient):
         Extracts entities, events, and relations in a single LLM call.
         Returns None if LLM call failed (distinguishable from [] = nothing found).
         """
+        items, _rejected = await self.extract_with_stats(
+            text=text,
+            title=title,
+            source_type=source_type,
+            domains=domains,
+            entity_hints=entity_hints,
+        )
+        return items
+
+    async def extract_with_stats(
+        self,
+        text: str,
+        title: str | None = None,
+        source_type: str | None = None,
+        domains: list[str] | None = None,
+        entity_hints: list[dict] | None = None,
+    ) -> tuple[list | None, int]:
+        """Extract + return (items, rejected_count).
+
+        rejected_count = items the LLM returned that failed KnowledgeInput schema
+        validation. This is the signal to look at when chunks_extracted>0 but
+        triples_created==0 — it means the model is emitting shapes we can't use.
+        """
         from knowledge_service.models import KnowledgeInput  # noqa: PLC0415
 
         adapter = TypeAdapter(KnowledgeInput)
@@ -198,16 +221,28 @@ class ExtractionClient(BaseLLMClient):
 
         raw = await self._call_llm_combined(prompt)
         if raw is None:
-            return None
+            return None, 0
 
-        items = []
+        items: list = []
+        rejected = 0
         for item_dict in raw:
             try:
                 items.append(adapter.validate_python(item_dict))
             except ValidationError as exc:
-                logger.warning("ExtractionClient: skipping invalid item %s: %s", item_dict, exc)
+                rejected += 1
+                logger.warning(
+                    "ExtractionClient: rejected item (schema): %s -- error: %s",
+                    item_dict,
+                    exc.errors()[:3],
+                )
 
-        return items
+        if raw and not items:
+            logger.warning(
+                "ExtractionClient: LLM returned %d items, all rejected as schema-invalid",
+                len(raw),
+            )
+
+        return items, rejected
 
     async def decompose_thesis(self, statement: str) -> list[dict] | None:
         """Decompose a thesis statement into constituent claims."""
