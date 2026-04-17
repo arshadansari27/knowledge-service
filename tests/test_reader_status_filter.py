@@ -11,7 +11,7 @@ from __future__ import annotations
 from contextlib import asynccontextmanager
 from unittest.mock import AsyncMock, MagicMock
 
-from knowledge_service.stores.content import ContentStore
+from knowledge_service.stores.content import ContentStore, _build_or_tsquery
 
 
 def _make_pool_capturing_sql():
@@ -76,3 +76,39 @@ class TestBm25SearchInflightFilter:
         sql = captured["sql"]
         assert "LEFT JOIN LATERAL" not in sql
         assert "ingestion_jobs" not in sql
+
+
+class TestBm25OrTsquery:
+    def test_single_word(self):
+        assert _build_or_tsquery("caffeine") == "caffeine"
+
+    def test_multi_word_or_joined(self):
+        assert _build_or_tsquery("cold exposure") == "cold | exposure"
+
+    def test_strips_punctuation(self):
+        assert _build_or_tsquery("what is aegis?") == "what | is | aegis"
+
+    def test_empty_query_returns_empty(self):
+        assert _build_or_tsquery("") == ""
+        assert _build_or_tsquery("   ") == ""
+        assert _build_or_tsquery("!?!") == ""
+
+    def test_preserves_alphanumeric_tokens(self):
+        assert _build_or_tsquery("covid19 mrna-1273") == "covid19 | mrna | 1273"
+
+    async def test_search_uses_to_tsquery_with_or_expression(self):
+        pool, captured = _make_pool_capturing_sql()
+        store = ContentStore(pool, exclude_inflight=False)
+        await store._search_bm25(query_text="cold exposure", limit=5)
+        sql = captured["sql"]
+        params = captured["params"]
+        assert "to_tsquery('english', $1)" in sql
+        assert "plainto_tsquery" not in sql
+        assert params[0] == "cold | exposure"
+
+    async def test_search_returns_empty_when_query_has_no_tokens(self):
+        pool, captured = _make_pool_capturing_sql()
+        store = ContentStore(pool, exclude_inflight=False)
+        rows = await store._search_bm25(query_text="???", limit=5)
+        assert rows == []
+        assert captured["sql"] is None
