@@ -4,7 +4,7 @@
 [![Docker](https://img.shields.io/docker/v/arshadansari27/knowledge-service?label=docker&sort=semver)](https://hub.docker.com/r/arshadansari27/knowledge-service)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
-A personal knowledge graph with Bayesian epistemics. Ingests content you encounter, structures it using established ontologies, reasons over it with probabilistic logic, and makes the resulting knowledge queryable via SPARQL and semantic search — without requiring deliberate organisation from the user.
+A personal knowledge service that ingests content you encounter and exposes it through **hybrid BM25 + vector RAG** with a small **RDF knowledge-graph layer** behind it. Documents are parsed, chunked, and embedded; an LLM extracts entity/relation triples per chunk; triples carry per-source confidence and are combined via Noisy-OR when multiple sources agree; a lightweight 3-rule inference pass (inverse / transitive / type-inheritance) materialises extra conclusions at ingestion time. Queryable via SPARQL and semantic search, with source chunks and provenance returned as evidence.
 
 Built by [Hikmah Technologies](https://hikmahtechnologies.com) | [@hikmahtech](https://x.com/hikmahtech) | [@arshadansari27](https://x.com/arshadansari27)
 
@@ -20,11 +20,11 @@ Every "second brain" tool treats all content as equal — a bookmark, a note, a 
 
 This system separates **content** (what you consumed) from **knowledge** (what you derived from it), and models knowledge with:
 
-- **Uncertainty** — claims carry Bayesian probability, not boolean truth
-- **Provenance** — every triple traces back to its source, extraction method, and timestamp
+- **Uncertainty** — triples carry a confidence score; when multiple sources assert the same fact, their confidences combine via Noisy-OR (`1 - Π(1 - cᵢ)`)
+- **Provenance** — every triple traces back to its source, extraction method, timestamp, and the specific chunk it was derived from
 - **Temporality** — knowledge has `valid_from` / `valid_until`, not just `created_at`
 - **Ontological structure** — concepts link to established vocabularies (Schema.org, Dublin Core, SKOS) so "PostgreSQL" in your codebase and "PostgreSQL" in an article are the same entity
-- **Inference** — derived conclusions preserve their reasoning chain
+- **Inference** — inverse/transitive/type-inheritance rules derive extra triples at ingestion time, with source triples preserved for retraction
 
 ---
 
@@ -37,15 +37,13 @@ FastAPI Process
 ├── ParserRegistry     Pluggable document parsing (PDF, HTML, CSV, JSON, images)
 ├── NlpPhase           spaCy NER + Wikidata entity linking pre-pass
 ├── CoreferencePhase   Entity dedup by shared Wikidata QID
-├── KnowledgeStore     pyoxigraph — RDF 1.2, RDF-star, named graphs (5 trust tiers)
-├── InferenceEngine    Forward-chaining rules (inverse, transitive, type inheritance)
-├── QueryClassifier    Intent routing (semantic/entity/graph/global)
-├── RAGRetriever       4 retrieval strategies with multi-hop traversal
-├── GraphTraverser     BFS up to 4 hops, Bayesian confidence propagation
-├── CommunityDetector  Leiden algorithm, 2-level hierarchy
-├── EmbeddingStore     PostgreSQL + pgvector — BM25 + vector hybrid search (RRF)
-├── ExtractionClient   Two-phase LLM extraction (entities first, then relations)
-└── ProvenanceStore    Chunk-level evidence trail (SHA-256 hash keyed)
+├── TripleStore        pyoxigraph — RDF 1.2, RDF-star, 5 named graphs by provenance
+├── InferenceEngine    3 forward-chaining rules (inverse, transitive, type inheritance)
+├── QueryClassifier    Intent routing (semantic / entity / graph), LLM-classified
+├── RAGRetriever       Hybrid chunk retrieval (BM25 + vector RRF) + KG triple context
+├── ContentStore       PostgreSQL + pgvector — BM25 + vector hybrid search (RRF)
+├── ExtractionClient   LLM extraction with retry-on-5xx/timeout
+└── ProvenanceStore    Per-source evidence rows with chunk_id FK
 
 Pipeline: Parse → Chunk → Embed → NLP Pre-pass → Extract → Coreference → Process
 
@@ -55,7 +53,6 @@ PostgreSQL
 ├── provenance         Per-source evidence rows with chunk_id FK
 ├── entity_embeddings  Entity URIs with embeddings for resolution
 ├── entity_aliases     Coreference alias → canonical URI mappings
-├── communities        Leiden communities with LLM-generated summaries
 ├── ingestion_jobs     Async job tracking with per-phase progress
 └── triple_outbox      Staged pyoxigraph writes — drained after PG commit
 ```
@@ -79,7 +76,7 @@ Every piece of knowledge is classified as one of these seven types:
 | **Event** | Timestamped, deterministic | Salary payment received 2026-03-01 |
 | **Entity** | Typed, ontology-linked | "AEGIS is a schema:SoftwareApplication" |
 | **Relationship** | Typed link between entities | "AEGIS depends-on PostgreSQL" |
-| **Conclusion** | Derived, reasoning chain preserved | "Cold exposure likely increases dopamine" — Bayesian combination of 3 sources |
+| **Conclusion** | Derived, reasoning chain preserved | "Cold exposure likely increases dopamine" — Noisy-OR combination of 3 sources |
 | **TemporalState** | Time-bounded property (valid_until required) | Bitcoin price $X between date A and date B |
 
 ---
@@ -88,7 +85,7 @@ Every piece of knowledge is classified as one of these seven types:
 
 **Two-layer design:**
 
-1. **RDF-star annotation on each triple** — the system's current Bayesian belief:
+1. **RDF-star annotation on each triple** — the combined confidence after Noisy-OR over all sources:
    ```turtle
    <<:cold_exposure :increases :dopamine>>
        ks:confidence "0.88"^^xsd:float .
@@ -635,7 +632,7 @@ All settings via environment variables or `.env` file:
 | `MAX_UPLOAD_SIZE` | `52428800` | Maximum file upload size in bytes (default 50MB) |
 | `URL_FETCH_TIMEOUT` | `30` | Timeout for URL auto-fetch (seconds) |
 | `NLP_ENTITY_CONFIDENCE` | `0.5` | Confidence for spaCy-only fallback entities |
-| `COMMUNITY_REBUILD_INTERVAL` | `0` | Periodic community rebuild (seconds, 0 = disabled) |
+| `READER_EXCLUDE_INFLIGHT` | `true` | Exclude in-flight content from hybrid retrieval |
 
 ---
 
@@ -753,9 +750,7 @@ src/knowledge_service/
 │   ├── auth.py              # AuthMiddleware, login/logout, rate limiter, session cookies
 │   ├── routes.py            # Admin page routes (dashboard, knowledge, chat, contradictions)
 │   ├── stats.py             # /api/admin/stats/* and /api/admin/knowledge/triples endpoints
-│   ├── communities.py       # /api/admin/rebuild-communities
 │   ├── jobs.py              # /api/admin/jobs
-│   ├── theses.py            # /api/admin/theses/* (activate, archive)
 │   └── templates/           # Jinja2 templates (base, dashboard, knowledge, chat, etc.)
 ├── api/
 │   ├── content.py           # POST /api/content (JSON + URL auto-fetch)
@@ -765,7 +760,6 @@ src/knowledge_service/
 │   ├── knowledge.py         # GET /api/knowledge/query, POST /api/knowledge/sparql
 │   ├── contradictions.py    # GET /api/knowledge/contradictions
 │   ├── ask.py               # POST /api/ask (RAG question answering)
-│   ├── theses.py            # /api/theses CRUD
 │   ├── changes.py           # GET /api/entity/{id}/changes
 │   └── health.py            # GET /health
 ├── parsing/
@@ -790,9 +784,7 @@ src/knowledge_service/
 │   ├── content.py           # ContentStore — metadata + chunks + embeddings
 │   ├── entities.py          # EntityStore — entity/predicate resolution + aliases
 │   ├── provenance.py        # ProvenanceStore — per-source evidence rows
-│   ├── theses.py            # ThesisStore — thesis/claim collections
-│   ├── rag.py               # RAGRetriever — 4 intent-based retrieval strategies
-│   ├── community.py         # Leiden community detection, storage, summarization
+│   ├── rag.py               # RAGRetriever — hybrid chunk + KG retrieval, intent-routed
 │   └── graph_migration.py   # One-time migration to named graphs
 ├── reasoning/
 │   ├── engine.py            # InferenceEngine — forward-chaining rules
@@ -832,21 +824,21 @@ The system reuses established vocabularies and keeps the custom `ks:` namespace 
 
 ## Status
 
-All phases complete and deployed to production (660+ tests).
+Deployed to production (~640 tests).
 
-| Phase | What |
-|-------|------|
-| Foundation | Knowledge model, RDF store, probabilistic reasoning, admin panel, RAG endpoint, federation |
-| 1-3 | Named graphs (5 trust tiers), chunk-level provenance |
-| 4 | BM25 hybrid search with Reciprocal Rank Fusion |
-| 5-6 | Two-phase LLM extraction + markdown-aware chunking |
-| 7 | Query intent classification (semantic/entity/graph) |
-| 8 | Multi-hop graph retrieval with Bayesian confidence propagation |
-| 9 | Community detection (Leiden), global search |
-| Growable Intelligence | Store decomposition, ingestion pipeline, Noisy-OR, additive ontology, thesis model |
-| Inference Engine | Forward-chaining rules (inverse, transitive, type inheritance), retraction cascade |
-| Multi-Layer Ingestion | Document parsing (PDF/HTML/CSV/JSON), spaCy NLP pre-pass, Wikidata entity linking, two-tier coreference, file upload endpoint, URL auto-fetch |
-| Bulk Ingest CLI | Standalone script for batch ingestion of files and URLs |
+| Capability | What |
+|------------|------|
+| Knowledge model | 7 knowledge types (Claim / Fact / Event / Entity / Relationship / Conclusion / TemporalState), RDF-star confidence, temporal validity |
+| RDF store | pyoxigraph, 5 named graphs by provenance class (ontology / asserted / extracted / inferred / federated) |
+| Ingestion | Parse (PDF / HTML / CSV / JSON / text) → chunk → embed → spaCy NER + Wikidata linking → LLM extraction → QID-based coreference → ingest |
+| Hybrid retrieval | BM25 (OR-tokenised `to_tsquery`) + pgvector, fused via Reciprocal Rank Fusion |
+| RAG endpoint | `/api/ask` with intent classification (semantic / entity / graph), returns answer + source chunks + triples + contradictions |
+| Evidence combination | Noisy-OR across multi-source confidences: `1 - Π(1 − cᵢ)` |
+| Inference | 3 forward-chaining rules (inverse / transitive / type-inheritance), retraction cascade when source triples change |
+| Consistency | Outbox 2PC between pyoxigraph and Postgres, startup drainer recovers from crash-between-commit-and-drain |
+| Reader-side filter | In-flight content excluded from retrieval until ingestion reaches a terminal status |
+
+**Not currently enforced** (declared but not filtered on the read path): graph-level trust tiers, contradictions. Both are surfaced as labels / response fields, not used to re-rank or exclude results.
 
 ---
 
@@ -864,7 +856,8 @@ All phases complete and deployed to production (660+ tests).
 |-----------|-----------|
 | API | Python 3.12, FastAPI, uvicorn |
 | Knowledge store | pyoxigraph (embedded, RDF 1.2, SPARQL 1.2, RocksDB) |
-| Reasoning | Noisy-OR evidence combination + forward-chaining inference |
+| Confidence combination | Noisy-OR (4-line function) |
+| Inference | 3 forward-chaining rules at ingestion time (inverse / transitive / type-inheritance) |
 | Operational store | PostgreSQL 16 |
 | Vector search | pgvector (HNSW index, halfvec) |
 | Document parsing | PyMuPDF (PDF), readability-lxml + BeautifulSoup (HTML), stdlib (CSV/JSON) |
