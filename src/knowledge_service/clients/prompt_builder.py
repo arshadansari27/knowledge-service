@@ -233,12 +233,3 @@ class PromptBuilder:
             predicates=predicates_str,
             text=text[:_MAX_TEXT_CHARS],
         )
-
-    def build_thesis_decomposition_prompt(self, statement: str) -> str:
-        """Prompt to decompose a thesis statement into structured claims."""
-        return f"""Decompose the following statement into constituent claims.
-Return ONLY a JSON object: {{"items": [...]}}
-
-Each item must be a triple with: subject, predicate, object, confidence (0.0-1.0)
-
-Statement: {statement}"""

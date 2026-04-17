@@ -66,11 +66,6 @@ class TestGetChanges:
         data = resp.json()
         assert data["changes"][0]["materiality"] == 0.8
 
-    async def test_includes_thesis_breaks(self, client):
-        resp = await client.get("/api/entity/acme/changes?since=2026-03-25")
-        data = resp.json()
-        assert "thesis_breaks" in data
-
     async def test_empty_changes(self, client):
         client._transport.app.state.stores.provenance.query_by_entity_and_time.return_value = []
         resp = await client.get("/api/entity/acme/changes?since=2026-03-25")

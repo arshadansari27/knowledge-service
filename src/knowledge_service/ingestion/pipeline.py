@@ -36,7 +36,6 @@ class IngestResult:
     delta: dict | None
     contradictions: list[dict]
     confidence: float
-    thesis_breaks: list[dict] = field(default_factory=list)
     inferred_triples: list[dict] = field(default_factory=list)
 
 
@@ -111,17 +110,6 @@ async def combine_evidence(triple_hash: str, provenance_store) -> float:
     if len(confidences) <= 1:
         return confidences[0] if confidences else 0.0
     return noisy_or(confidences)
-
-
-async def check_thesis_impact(triple_hash, contradictions, stores) -> list[dict]:
-    if not contradictions:
-        return []
-    affected_hashes = {triple_hash}
-    for c in contradictions:
-        h = c.get("existing_hash") or c.get("triple_hash")
-        if h:
-            affected_hashes.add(h)
-    return await stores.theses.find_by_hashes(affected_hashes, status="active")
 
 
 async def run_inference(
@@ -432,5 +420,4 @@ async def ingest_triple(
     }
     inferred = await run_inference(normalized, engine, stores, context, drainer=drainer)
 
-    thesis_breaks = await check_thesis_impact(triple_hash, contradictions, stores)
-    return IngestResult(is_new, delta, contradictions, confidence, thesis_breaks, inferred)
+    return IngestResult(is_new, delta, contradictions, confidence, inferred)

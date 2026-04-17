@@ -39,13 +39,11 @@ async def get_counts(request: Request) -> dict:
     async with pg_pool.acquire() as conn:
         entity_count = await conn.fetchval("SELECT COUNT(*) FROM entity_embeddings")
         content_count = await conn.fetchval("SELECT COUNT(*) FROM content")
-        event_count = await conn.fetchval("SELECT COUNT(*) FROM ingestion_events")
 
     return {
         "triples": triple_count,
         "entities": entity_count,
         "content": content_count,
-        "events": event_count,
     }
 
 
@@ -105,31 +103,6 @@ async def get_type_breakdown(request: Request) -> dict:
     return result
 
 
-@router.get("/stats/activity")
-async def get_recent_activity(request: Request) -> list[dict]:
-    pg_pool = request.app.state.pg_pool
-
-    sql = """
-        SELECT id, event_type, source, payload->>'url' AS url, created_at
-        FROM ingestion_events
-        ORDER BY created_at DESC
-        LIMIT 20
-    """
-    async with pg_pool.acquire() as conn:
-        rows = await conn.fetch(sql)
-
-    return [
-        {
-            "id": str(row["id"]),
-            "event_type": row["event_type"],
-            "source": row["source"],
-            "url": row.get("url"),
-            "created_at": row["created_at"].isoformat() if row["created_at"] else None,
-        }
-        for row in rows
-    ]
-
-
 @router.get("/stats/content-items")
 async def get_content_items(request: Request) -> list[dict]:
     pg_pool = request.app.state.pg_pool
@@ -165,7 +138,7 @@ async def browse_triples(
     min_confidence: float = Query(0.0, ge=0.0, le=1.0),
     max_confidence: float = Query(1.0, ge=0.0, le=1.0),
     sort: str = Query("subject", pattern="^(subject|confidence)$"),
-    limit: int = Query(50, ge=1, le=200),
+    limit: int = Query(50, ge=1, le=500),
     offset: int = Query(0, ge=0),
 ) -> dict:
     knowledge_store = request.app.state.knowledge_store
@@ -276,43 +249,3 @@ async def browse_triples(
         )
 
     return {"items": items, "total": total, "limit": limit, "offset": offset}
-
-
-@router.get("/stats/gaps")
-async def get_gaps(request: Request):
-    """Detect knowledge gaps: isolated entities and thin communities."""
-    community_store = getattr(request.app.state, "community_store", None)
-    pg_pool = getattr(request.app.state, "pg_pool", None)
-
-    if not community_store or not pg_pool:
-        return {"error": "Community or embedding store not available"}
-
-    # All entities in the system (direct SQL, not similarity search)
-    async with pg_pool.acquire() as conn:
-        rows = await conn.fetch("SELECT uri FROM entity_embeddings")
-    all_entities = {r["uri"] for r in rows}
-
-    # Entities in communities
-    community_entities = await community_store.get_member_entities()
-
-    isolated = sorted(all_entities - community_entities)
-
-    # Thin communities (<=2 members)
-    all_communities = await community_store.get_all()
-    thin = [
-        {"id": str(c.get("id", "")), "label": c.get("label", ""), "member_count": c["member_count"]}
-        for c in all_communities
-        if c["member_count"] <= 2
-    ]
-
-    total = len(all_entities)
-    in_communities = len(all_entities & community_entities)
-    coverage = in_communities / total if total > 0 else 0.0
-
-    return {
-        "isolated_entities": isolated,
-        "thin_communities": thin,
-        "total_entities": total,
-        "entities_in_communities": in_communities,
-        "community_coverage": round(coverage, 2),
-    }

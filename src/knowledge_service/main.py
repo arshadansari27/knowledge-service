@@ -1,15 +1,15 @@
 """FastAPI application factory and lifespan management for the Knowledge Service."""
 
-import asyncio
 import logging
 from contextlib import asynccontextmanager
 from importlib.metadata import version as pkg_version
 from pathlib import Path
 from typing import AsyncIterator
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
+from fastapi.responses import JSONResponse
 
-from knowledge_service.clients.llm import EmbeddingClient, ExtractionClient, LLMClientError
+from knowledge_service.clients.llm import EmbeddingClient, ExtractionClient
 from knowledge_service.clients.rag import RAGClient
 from knowledge_service.config import settings
 from knowledge_service.ontology.bootstrap import bootstrap_ontology
@@ -20,7 +20,6 @@ from knowledge_service.stores.entities import EntityStore
 from knowledge_service.stores.migrations import run_migrations
 from knowledge_service.stores.provenance import ProvenanceStore
 from knowledge_service.stores.rag import RAGRetriever
-from knowledge_service.stores.theses import ThesisStore
 from knowledge_service.stores.triples import TripleStore
 from knowledge_service.api import (
     health,
@@ -33,66 +32,45 @@ from knowledge_service.api import (
     changes,
     upload as upload_api,
 )
-from knowledge_service.api.theses import router as theses_router
-from knowledge_service.admin.theses import router as admin_theses_router
 
 logger = logging.getLogger(__name__)
 
 
-async def _seed_predicate_embeddings(
-    entity_store: EntityStore,
-    embedding_client,
-    domain_registry: DomainRegistry | None = None,
-) -> None:
-    """Seed the predicate_embeddings table with canonical predicates.
+def _canonical_predicate_entries(
+    domain_registry: DomainRegistry | None,
+) -> list[tuple[str, str]]:
+    """Return canonical (uri, label) pairs to seed predicate_embeddings with.
 
-    Embeds each canonical predicate label and upserts into the table so
-    that predicate resolution has a warm vocabulary from the start.
+    Prefers predicates declared in the loaded ontology; falls back to a
+    hard-coded list matching ontology/domains/base.ttl when the registry is
+    absent (e.g. minimal test setups).
     """
     from knowledge_service.ontology.namespaces import KS  # noqa: PLC0415
 
-    log = logging.getLogger(__name__)
-
     if domain_registry is not None:
-        all_preds = domain_registry.get_predicates()
-        pred_labels = [p.label for p in all_preds]
-        pred_uris = [p.uri for p in all_preds]
-    else:
-        _fallback = [
-            "causes",
-            "increases",
-            "decreases",
-            "inhibits",
-            "activates",
-            "is_a",
-            "part_of",
-            "located_in",
-            "created_by",
-            "depends_on",
-            "related_to",
-            "contains",
-            "precedes",
-            "follows",
-            "has_property",
-            "used_for",
-            "produced_by",
-            "associated_with",
-        ]
-        pred_labels = [p.replace("_", " ") for p in _fallback]
-        pred_uris = [f"{KS}{p}" for p in _fallback]
+        return [(p.uri, p.label) for p in domain_registry.get_predicates()]
 
-    if not pred_labels:
-        return
-
-    try:
-        embeddings = await embedding_client.embed_batch(pred_labels)
-    except (LLMClientError, OSError) as exc:
-        log.warning("Failed to seed predicate embeddings — embedding API unavailable: %s", exc)
-        return
-
-    for uri, label, embedding in zip(pred_uris, pred_labels, embeddings):
-        await entity_store.insert_predicate_embedding(uri=uri, label=label, embedding=embedding)
-    log.info("Seeded %d canonical predicate embeddings", len(pred_labels))
+    _fallback = [
+        "causes",
+        "increases",
+        "decreases",
+        "inhibits",
+        "activates",
+        "is_a",
+        "part_of",
+        "located_in",
+        "created_by",
+        "depends_on",
+        "related_to",
+        "contains",
+        "precedes",
+        "follows",
+        "has_property",
+        "used_for",
+        "produced_by",
+        "associated_with",
+    ]
+    return [(f"{KS}{p}", p.replace("_", " ")) for p in _fallback]
 
 
 @asynccontextmanager
@@ -151,7 +129,6 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         content=ContentStore(pg_pool, exclude_inflight=settings.reader_exclude_inflight),
         entities=entity_store,
         provenance=ProvenanceStore(pg_pool),
-        theses=ThesisStore(pg_pool),
         outbox=OutboxStore(),
         pg_pool=pg_pool,
     )
@@ -195,28 +172,18 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     app.state.extraction_client = extraction_client
     app.state.embedding_client = embedding_client
 
-    # Federation client (optional enrichment)
-    federation_client = None
-    if settings.federation_enabled:
-        from knowledge_service.clients.federation import FederationClient  # noqa: PLC0415
-
-        federation_client = FederationClient(timeout=settings.federation_timeout)
-        app.state.federation_client = federation_client
-
     # Parser registry
     from knowledge_service.parsing import ParserRegistry  # noqa: PLC0415
     from knowledge_service.parsing.text import TextParser  # noqa: PLC0415
     from knowledge_service.parsing.pdf import PdfParser  # noqa: PLC0415
     from knowledge_service.parsing.html import HtmlParser  # noqa: PLC0415
     from knowledge_service.parsing.structured import StructuredParser  # noqa: PLC0415
-    from knowledge_service.parsing.image import ImageParser  # noqa: PLC0415
 
     parser_registry = ParserRegistry()
     parser_registry.register(TextParser())
     parser_registry.register(PdfParser())
     parser_registry.register(HtmlParser())
     parser_registry.register(StructuredParser())
-    parser_registry.register(ImageParser())
     app.state.parser_registry = parser_registry
 
     # Make parser_registry available to content endpoint module
@@ -240,8 +207,15 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         app.state.nlp_status = "unavailable: spaCy not loaded"
         logger.info("spaCy unavailable — NLP pre-pass disabled, LLM-only extraction")
 
-    # Seed predicate embeddings
-    await _seed_predicate_embeddings(entity_store, embedding_client, domain_registry)
+    # Register canonical predicates for lazy seeding. EntityStore will seed on
+    # first resolve_predicate() call (or retry per-call if the embedding backend
+    # is temporarily down). We kick off one best-effort attempt now so the
+    # warm-path stays warm when everything is healthy.
+    entity_store.set_predicate_seed(_canonical_predicate_entries(domain_registry))
+    try:
+        await entity_store.ensure_predicates_seeded()
+    except Exception as exc:
+        logger.warning("Startup predicate seed attempt raised — lazy retry will cover: %s", exc)
 
     # RAG components
     rag_model = settings.llm_rag_model or settings.llm_chat_model
@@ -260,51 +234,13 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         api_key=settings.llm_api_key,
     )
 
-    # Community store
-    from knowledge_service.stores.community import CommunityStore  # noqa: PLC0415
-
-    app.state.community_store = CommunityStore(pg_pool)
-    app.state._last_community_rebuild = 0.0
-
     app.state.rag_retriever = RAGRetriever(
         embedding_client=embedding_client,
         embedding_store=stores.content,
         knowledge_store=triple_store,
-        community_store=app.state.community_store,
         entity_store=entity_store,
         classify_client=classify_client,
     )
-
-    # Optional periodic community rebuild
-    _rebuild_task = None
-    if settings.community_rebuild_interval > 0:
-
-        async def _community_rebuild_loop() -> None:
-            while True:
-                await asyncio.sleep(settings.community_rebuild_interval)
-                try:
-                    from knowledge_service.stores.community import (  # noqa: PLC0415
-                        CommunityDetector,
-                        CommunitySummarizer,
-                    )
-
-                    detector = CommunityDetector(triple_store)
-                    communities = await asyncio.to_thread(detector.detect)
-                    summarizer = CommunitySummarizer(
-                        extraction_client.client,
-                        triple_store,
-                        model=extraction_client.model,
-                    )
-                    summarized = []
-                    for c in communities:
-                        summarized.append(await summarizer.summarize_one(c))
-                    await app.state.community_store.replace_all(summarized)
-                    logger.info("Periodic community rebuild: %d communities", len(summarized))
-                except Exception as exc:
-                    logger.warning("Periodic community rebuild failed: %s", exc)
-
-        _rebuild_task = asyncio.create_task(_community_rebuild_loop())
-        app.state._community_rebuild_task = _rebuild_task
 
     # BACKWARD COMPAT: Keep old state references for any code not yet migrated
     app.state.knowledge_store = triple_store
@@ -315,20 +251,12 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     yield
 
     # --- Shutdown ---
-    if hasattr(app.state, "_community_rebuild_task") and app.state._community_rebuild_task:
-        app.state._community_rebuild_task.cancel()
-        try:
-            await app.state._community_rebuild_task
-        except asyncio.CancelledError:
-            pass
     triple_store.flush()
     await pg_pool.close()
     await classify_client.close()
     await app.state.rag_client.close()
     await embedding_client.close()
     await extraction_client.close()
-    if federation_client is not None:
-        await federation_client.close()
 
 
 def create_app(use_lifespan: bool = True) -> FastAPI:
@@ -358,8 +286,6 @@ def create_app(use_lifespan: bool = True) -> FastAPI:
     app.include_router(contradictions.router, prefix="/api")
     app.include_router(ask.router, prefix="/api")
     app.include_router(changes.router)
-    app.include_router(theses_router)
-    app.include_router(admin_theses_router)
 
     # Admin panel — store credentials on app.state so both middleware and login route use the same
     from knowledge_service.admin.auth import AuthMiddleware, login_router
@@ -369,13 +295,11 @@ def create_app(use_lifespan: bool = True) -> FastAPI:
     app.state.secret_key = settings.secret_key
 
     from knowledge_service.admin.stats import router as stats_router
-    from knowledge_service.admin.communities import router as communities_router
     from knowledge_service.admin.jobs import router as jobs_router
 
     app.include_router(login_router)
     app.include_router(admin_router)
     app.include_router(stats_router, prefix="/api/admin")
-    app.include_router(communities_router, prefix="/api/admin")
     app.include_router(jobs_router, prefix="/api/admin")
 
     app.add_middleware(
@@ -383,6 +307,19 @@ def create_app(use_lifespan: bool = True) -> FastAPI:
         admin_password=settings.admin_password,
         secret_key=settings.secret_key,
     )
+
+    @app.exception_handler(Exception)
+    async def _unhandled_exception_handler(request: Request, exc: Exception) -> JSONResponse:
+        logger.exception(
+            "Unhandled exception on %s %s (query=%s)",
+            request.method,
+            request.url.path,
+            request.url.query or "",
+        )
+        return JSONResponse(
+            status_code=500,
+            content={"detail": "Internal Server Error", "type": type(exc).__name__},
+        )
 
     return app
 
