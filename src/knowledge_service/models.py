@@ -175,7 +175,14 @@ class SearchResult(BaseModel):
     url: str
     title: str
     summary: str | None
-    similarity: float
+    # Real cosine similarity from the vector stage. None when the chunk only
+    # surfaced via BM25 (no vector comparison was made for it).
+    similarity: float | None
+    # Fused rank score used for ordering when hybrid (vector + BM25) is active.
+    # Equal to ``similarity`` when only vector search ran.
+    rrf_score: float | None = None
+    # 0-based rank from the BM25 stage; null for vector-only hits.
+    bm25_rank: int | None = None
     source_type: str
     tags: list[str]
     ingested_at: datetime
