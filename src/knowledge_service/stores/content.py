@@ -31,7 +31,23 @@ Tables:
 from __future__ import annotations
 
 import json
+import re
 from typing import Any
+
+_WORD_RE = re.compile(r"[A-Za-z0-9]+")
+
+
+def _build_or_tsquery(query_text: str) -> str:
+    """Tokenize free-text into an OR-joined tsquery expression.
+
+    `plainto_tsquery` AND-joins tokens, which gives zero recall when any
+    single word is absent — a routine outcome for multi-word natural-language
+    queries in a small corpus. OR-joining lets BM25 surface partial matches;
+    `ts_rank` still orders results by match quality. Non-word characters are
+    dropped so the constructed string is safe for `to_tsquery`.
+    """
+    tokens = _WORD_RE.findall(query_text)
+    return " | ".join(tokens)
 
 
 def reciprocal_rank_fusion(
@@ -387,13 +403,15 @@ class ContentStore:
         """Full-text search using PostgreSQL tsvector/tsquery.
 
         Returns the same dict shape as search() for RRF compatibility.
-        Uses plainto_tsquery for safe natural-language query parsing.
+        Tokens are OR-joined via `to_tsquery` so missing any one word
+        doesn't collapse recall to zero; `ts_rank` orders by match quality.
         """
-        if not query_text or not query_text.strip():
+        tsquery_str = _build_or_tsquery(query_text or "")
+        if not tsquery_str:
             return []
 
-        conditions: list[str] = ["c.tsv @@ plainto_tsquery('english', $1)"]
-        params: list[Any] = [query_text]
+        conditions: list[str] = ["c.tsv @@ to_tsquery('english', $1)"]
+        params: list[Any] = [tsquery_str]
 
         if source_type is not None:
             params.append(source_type)
@@ -436,12 +454,12 @@ class ContentStore:
                 c.id, c.chunk_text, c.chunk_index, c.section_header,
                 m.id AS content_id, m.url, m.title, m.summary,
                 m.source_type, m.tags, m.ingested_at,
-                ts_rank(c.tsv, plainto_tsquery('english', $1)) AS similarity
+                ts_rank(c.tsv, to_tsquery('english', $1)) AS similarity
             FROM content c
             JOIN content_metadata m ON c.content_id = m.id
             {lateral_join}
             {where_clause}
-            ORDER BY ts_rank(c.tsv, plainto_tsquery('english', $1)) DESC
+            ORDER BY ts_rank(c.tsv, to_tsquery('english', $1)) DESC
             LIMIT {limit_placeholder}
         """
 
