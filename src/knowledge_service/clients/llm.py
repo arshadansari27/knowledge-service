@@ -244,19 +244,6 @@ class ExtractionClient(BaseLLMClient):
 
         return items, rejected
 
-    async def decompose_thesis(self, statement: str) -> list[dict] | None:
-        """Decompose a thesis statement into constituent claims."""
-        if self._prompt_builder:
-            prompt = self._prompt_builder.build_thesis_decomposition_prompt(statement)
-        else:
-            prompt = (
-                f"Decompose the following statement into constituent claims.\n"
-                f'Return ONLY a JSON object: {{"items": [...]}}\n\n'
-                f"Each item must be a triple with: subject, predicate, object, "
-                f"confidence (0.0-1.0)\n\nStatement: {statement}"
-            )
-        return await self._call_llm(prompt)
-
 
 # ---------------------------------------------------------------------------
 # Fallback prompt builders (used when no DomainRegistry is available)

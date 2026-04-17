@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 import logging
 
 from fastapi import APIRouter, Request
@@ -25,7 +24,6 @@ async def _process_one_claims_request(body: ClaimsRequest, request: Request) -> 
 
     triples_created = 0
     contradictions_all: list[dict] = []
-    thesis_breaks_all: list[dict] = []
 
     ctx = IngestContext.from_content(
         url=body.source_url,
@@ -48,31 +46,10 @@ async def _process_one_claims_request(body: ClaimsRequest, request: Request) -> 
             if result.is_new:
                 triples_created += 1
             contradictions_all.extend(result.contradictions)
-            thesis_breaks_all.extend(result.thesis_breaks)
-
-    # Log ingestion event (parity with content pipeline)
-    try:
-        async with stores.pg_pool.acquire() as conn:
-            await conn.execute(
-                """INSERT INTO ingestion_events (event_type, payload, source)
-                   VALUES ($1, $2, $3)""",
-                "claims_ingested",
-                json.dumps(
-                    {
-                        "source_url": body.source_url,
-                        "extractor": body.extractor,
-                        "triples_created": triples_created,
-                    }
-                ),
-                body.source_url,
-            )
-    except Exception:
-        logger.exception("Failed to log ingestion event for claims from %s", body.source_url)
 
     return ClaimsResponse(
         triples_created=triples_created,
         contradictions_detected=contradictions_all,
-        thesis_breaks=thesis_breaks_all,
     )
 
 

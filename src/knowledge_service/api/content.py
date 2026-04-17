@@ -205,7 +205,6 @@ async def _run_ingestion_worker(
     entity_store = stores.entities
     engine = getattr(app_state, "inference_engine", None)
     nlp = getattr(app_state, "nlp", None)
-    federation_client = getattr(app_state, "federation_client", None)
 
     await run_ingestion(
         job_id=job_id,
@@ -222,7 +221,6 @@ async def _run_ingestion_worker(
         entity_store=entity_store,
         engine=engine,
         nlp=nlp,
-        federation_client=federation_client,
         app_state=app_state,
     )
 

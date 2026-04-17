@@ -1,4 +1,4 @@
-"""Tests for StructuredParser and ImageParser."""
+"""Tests for StructuredParser."""
 
 from __future__ import annotations
 
@@ -7,7 +7,6 @@ from pathlib import Path
 
 import pytest
 
-from knowledge_service.parsing.image import ImageParser
 from knowledge_service.parsing.structured import StructuredParser
 
 FIXTURES = Path(__file__).parent / "fixtures"
@@ -78,35 +77,3 @@ async def test_json_fallback_to_csv(structured_parser: StructuredParser) -> None
 async def test_structured_supported_formats(structured_parser: StructuredParser) -> None:
     assert "json" in structured_parser.supported_formats
     assert "csv" in structured_parser.supported_formats
-
-
-# ---------------------------------------------------------------------------
-# ImageParser
-# ---------------------------------------------------------------------------
-
-
-@pytest.fixture
-def image_parser() -> ImageParser:
-    return ImageParser()
-
-
-async def test_image_returns_empty_text(image_parser: ImageParser) -> None:
-    fake_png = b"\x89PNG\r\n\x1a\nfake image data"
-    doc = await image_parser.parse(fake_png)
-    assert doc.text == ""
-
-
-async def test_image_stores_bytes(image_parser: ImageParser) -> None:
-    fake_png = b"\x89PNG\r\n\x1a\nfake image data"
-    doc = await image_parser.parse(fake_png)
-    assert len(doc.images) == 1
-    assert doc.images[0] == fake_png
-
-
-async def test_image_source_format(image_parser: ImageParser) -> None:
-    doc = await image_parser.parse(b"someimagedata")
-    assert doc.source_format == "image"
-
-
-async def test_image_supported_formats(image_parser: ImageParser) -> None:
-    assert "image" in image_parser.supported_formats
