@@ -110,6 +110,7 @@ def _make_extraction_client_mock():
     """Build a mock ExtractionClient that returns no extracted items by default."""
     mock = AsyncMock()
     mock.extract.return_value = []
+    mock.extract_with_stats = AsyncMock(return_value=([], 0))
     return mock
 
 
@@ -421,7 +422,7 @@ class TestPostContentExtraction:
         ) as c:
             await c.post("/api/content", json=RAW_TEXT_PAYLOAD)
 
-        mock_xc.extract.assert_called_once()
+        mock_xc.extract_with_stats.assert_called_once()
 
     async def test_extract_not_called_when_knowledge_provided(self):
         mock_xc = _make_extraction_client_mock()
@@ -434,7 +435,7 @@ class TestPostContentExtraction:
         ) as c:
             await c.post("/api/content", json=CLAIM_PAYLOAD)
 
-        mock_xc.extract.assert_not_called()
+        mock_xc.extract_with_stats.assert_not_called()
 
     async def test_extract_not_called_when_no_raw_text(self):
         mock_xc = _make_extraction_client_mock()
@@ -447,7 +448,7 @@ class TestPostContentExtraction:
         ) as c:
             await c.post("/api/content", json=MINIMAL_PAYLOAD)
 
-        mock_xc.extract.assert_not_called()
+        mock_xc.extract_with_stats.assert_not_called()
 
 
 # ---------------------------------------------------------------------------

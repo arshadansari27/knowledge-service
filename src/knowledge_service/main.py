@@ -6,9 +6,10 @@ from importlib.metadata import version as pkg_version
 from pathlib import Path
 from typing import AsyncIterator
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
+from fastapi.responses import JSONResponse
 
-from knowledge_service.clients.llm import EmbeddingClient, ExtractionClient, LLMClientError
+from knowledge_service.clients.llm import EmbeddingClient, ExtractionClient
 from knowledge_service.clients.rag import RAGClient
 from knowledge_service.config import settings
 from knowledge_service.ontology.bootstrap import bootstrap_ontology
@@ -35,60 +36,41 @@ from knowledge_service.api import (
 logger = logging.getLogger(__name__)
 
 
-async def _seed_predicate_embeddings(
-    entity_store: EntityStore,
-    embedding_client,
-    domain_registry: DomainRegistry | None = None,
-) -> None:
-    """Seed the predicate_embeddings table with canonical predicates.
+def _canonical_predicate_entries(
+    domain_registry: DomainRegistry | None,
+) -> list[tuple[str, str]]:
+    """Return canonical (uri, label) pairs to seed predicate_embeddings with.
 
-    Embeds each canonical predicate label and upserts into the table so
-    that predicate resolution has a warm vocabulary from the start.
+    Prefers predicates declared in the loaded ontology; falls back to a
+    hard-coded list matching ontology/domains/base.ttl when the registry is
+    absent (e.g. minimal test setups).
     """
     from knowledge_service.ontology.namespaces import KS  # noqa: PLC0415
 
-    log = logging.getLogger(__name__)
-
     if domain_registry is not None:
-        all_preds = domain_registry.get_predicates()
-        pred_labels = [p.label for p in all_preds]
-        pred_uris = [p.uri for p in all_preds]
-    else:
-        _fallback = [
-            "causes",
-            "increases",
-            "decreases",
-            "inhibits",
-            "activates",
-            "is_a",
-            "part_of",
-            "located_in",
-            "created_by",
-            "depends_on",
-            "related_to",
-            "contains",
-            "precedes",
-            "follows",
-            "has_property",
-            "used_for",
-            "produced_by",
-            "associated_with",
-        ]
-        pred_labels = [p.replace("_", " ") for p in _fallback]
-        pred_uris = [f"{KS}{p}" for p in _fallback]
+        return [(p.uri, p.label) for p in domain_registry.get_predicates()]
 
-    if not pred_labels:
-        return
-
-    try:
-        embeddings = await embedding_client.embed_batch(pred_labels)
-    except (LLMClientError, OSError) as exc:
-        log.warning("Failed to seed predicate embeddings — embedding API unavailable: %s", exc)
-        return
-
-    for uri, label, embedding in zip(pred_uris, pred_labels, embeddings):
-        await entity_store.insert_predicate_embedding(uri=uri, label=label, embedding=embedding)
-    log.info("Seeded %d canonical predicate embeddings", len(pred_labels))
+    _fallback = [
+        "causes",
+        "increases",
+        "decreases",
+        "inhibits",
+        "activates",
+        "is_a",
+        "part_of",
+        "located_in",
+        "created_by",
+        "depends_on",
+        "related_to",
+        "contains",
+        "precedes",
+        "follows",
+        "has_property",
+        "used_for",
+        "produced_by",
+        "associated_with",
+    ]
+    return [(f"{KS}{p}", p.replace("_", " ")) for p in _fallback]
 
 
 @asynccontextmanager
@@ -225,8 +207,15 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         app.state.nlp_status = "unavailable: spaCy not loaded"
         logger.info("spaCy unavailable — NLP pre-pass disabled, LLM-only extraction")
 
-    # Seed predicate embeddings
-    await _seed_predicate_embeddings(entity_store, embedding_client, domain_registry)
+    # Register canonical predicates for lazy seeding. EntityStore will seed on
+    # first resolve_predicate() call (or retry per-call if the embedding backend
+    # is temporarily down). We kick off one best-effort attempt now so the
+    # warm-path stays warm when everything is healthy.
+    entity_store.set_predicate_seed(_canonical_predicate_entries(domain_registry))
+    try:
+        await entity_store.ensure_predicates_seeded()
+    except Exception as exc:
+        logger.warning("Startup predicate seed attempt raised — lazy retry will cover: %s", exc)
 
     # RAG components
     rag_model = settings.llm_rag_model or settings.llm_chat_model
@@ -318,6 +307,19 @@ def create_app(use_lifespan: bool = True) -> FastAPI:
         admin_password=settings.admin_password,
         secret_key=settings.secret_key,
     )
+
+    @app.exception_handler(Exception)
+    async def _unhandled_exception_handler(request: Request, exc: Exception) -> JSONResponse:
+        logger.exception(
+            "Unhandled exception on %s %s (query=%s)",
+            request.method,
+            request.url.path,
+            request.url.query or "",
+        )
+        return JSONResponse(
+            status_code=500,
+            content={"detail": "Internal Server Error", "type": type(exc).__name__},
+        )
 
     return app
 

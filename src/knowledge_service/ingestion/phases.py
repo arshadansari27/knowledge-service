@@ -69,15 +69,16 @@ class ExtractPhase:
         title: str | None = None,
         source_type: str | None = None,
         nlp_hints: list | None = None,
-    ) -> tuple[list[dict], list[str | None], int, int]:
+    ) -> tuple[list[dict], list[str | None], int, int, int]:
         """Extract knowledge from chunks.
 
-        Returns (knowledge_items, chunk_ids_for_items, chunks_failed, chunks_skipped).
+        Returns (knowledge_items, chunk_ids_for_items, chunks_failed, chunks_skipped, items_rejected).
         """
         knowledge: list[dict] = []
         chunk_ids: list[str | None] = []
         chunks_failed = 0
         chunks_skipped = 0
+        items_rejected = 0
 
         # Build a lookup from chunk_index → NlpResult for hint injection
         hint_map: dict[int, Any] = {}
@@ -101,12 +102,13 @@ class ExtractPhase:
                     for e in nlp_result.entities
                 ]
 
-            items = await self._extraction_client.extract(
+            items, rejected = await self._extraction_client.extract_with_stats(
                 chunk["chunk_text"],
                 title=title,
                 source_type=source_type,
                 entity_hints=entity_hints,
             )
+            items_rejected += rejected
             if items is None:
                 chunks_failed += 1
                 continue
@@ -118,7 +120,7 @@ class ExtractPhase:
             if nlp_result and nlp_result.entities and items is not None:
                 self._emit_ner_missed(nlp_result, items, cid, knowledge, chunk_ids)
 
-        return knowledge, chunk_ids, chunks_failed, chunks_skipped
+        return knowledge, chunk_ids, chunks_failed, chunks_skipped, items_rejected
 
     @staticmethod
     def _emit_ner_missed(
