@@ -49,7 +49,6 @@ class AskResponse(BaseModel):
     evidence: list[EvidenceSnippet] = []
     intent: str | None = None
     traversal_depth: int | None = None
-    inferred_triples: int | None = None
 
 
 @router.post("/ask", response_model=AskResponse)
@@ -158,5 +157,4 @@ async def post_ask(body: AskRequest, request: Request) -> AskResponse:
         evidence=evidence,
         intent=intent.intent if intent else None,
         traversal_depth=getattr(context, "traversal_depth", None),
-        inferred_triples=getattr(context, "inferred_triples", None),
     )

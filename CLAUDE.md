@@ -57,11 +57,11 @@ Content arrives via `/api/content`, `/api/content/upload` (file upload), or `/ap
 
 - **Stores dataclass** (`stores/__init__.py`): Single `Stores` dataclass holds all stores + pg_pool. Set as `app.state.stores` in lifespan.
 
-- **Ingestion Pipeline** (`ingestion/pipeline.py`): Replaces the old `process_triple()` god function. Discrete steps: delta detection → retract stale inferences → insert → contradiction detection → penalty → provenance → evidence combination → **inference** → thesis impact check.
+- **Ingestion Pipeline** (`ingestion/pipeline.py`): Discrete per-triple steps: delta detection → retract stale inferences → insert → contradiction detection → penalty → provenance → evidence combination → **inference**.
 
 - **Ingestion Worker** (`ingestion/worker.py`): Five-phase worker: Embed → NLP Pre-pass → Extract → Coreference → Process. Job tracking via `JobTracker` with status labels: `embedding`, `analyzing`, `extracting`, `resolving`, `processing`.
 
-- **Parser Registry** (`parsing/__init__.py`): Pluggable document parsing layer. `ParserRegistry` with format detection (content-type > URL extension > magic bytes > fallback). Built-in parsers: `PdfParser` (PyMuPDF), `HtmlParser` (readability-lxml + BeautifulSoup), `StructuredParser` (JSON/CSV), `ImageParser` (stub), `TextParser` (passthrough). Each parser produces a `ParsedDocument` (text, title, metadata, source_format, images).
+- **Parser Registry** (`parsing/__init__.py`): Pluggable document parsing layer. `ParserRegistry` with format detection (content-type > URL extension > magic bytes > fallback). Built-in parsers: `PdfParser` (PyMuPDF), `HtmlParser` (readability-lxml + BeautifulSoup), `StructuredParser` (JSON/CSV), `TextParser` (passthrough). Image formats are detected but no image parser is registered; `/api/content/upload` returns 422 for image uploads. Each parser produces a `ParsedDocument` (text, title, metadata, source_format, images).
 
 - **NLP Phase** (`nlp/__init__.py`): spaCy-based NER + Wikidata entity linking pre-pass. Runs on each chunk, produces `NlpResult` with `NlpEntity` objects (text, label, start/end char, wikidata_id). Entity hints are forwarded to LLM extraction to improve recognition. Fallback entities (spaCy-only, not confirmed by LLM) are included at `nlp_entity_confidence` (default 0.5). Graceful degradation when spaCy is unavailable.
 

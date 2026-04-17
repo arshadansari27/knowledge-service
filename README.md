@@ -491,8 +491,7 @@ Ask a natural language question against the knowledge base. Retrieves relevant c
   "contradictions": [],
   "evidence": [{"triple_subject": "...", "triple_predicate": "...", "triple_object": "...", "chunk_text": "...", "source_url": "..."}],
   "intent": "graph",
-  "traversal_depth": 3,
-  "inferred_triples": 0
+  "traversal_depth": 3
 }
 ```
 
@@ -773,7 +772,6 @@ src/knowledge_service/
 │   ├── pdf.py               # PdfParser (PyMuPDF)
 │   ├── html.py              # HtmlParser (readability-lxml + BeautifulSoup)
 │   ├── structured.py        # StructuredParser (JSON/CSV)
-│   ├── image.py             # ImageParser (stub for future OCR)
 │   └── text.py              # TextParser (passthrough)
 ├── nlp/
 │   ├── __init__.py          # NlpPhase, NlpResult, NlpEntity
@@ -783,17 +781,14 @@ src/knowledge_service/
 │   ├── worker.py            # 5-phase orchestrator (Embed → NLP → Extract → Coref → Process)
 │   ├── phases.py            # EmbedPhase, ExtractPhase, ProcessPhase
 │   ├── coreference.py       # CoreferencePhase (Wikidata QID merging)
-│   └── federation.py        # FederationPhase (DBpedia/Wikidata entity enrichment)
+│   └── outbox.py            # OutboxStore + OutboxDrainer (pyoxigraph/PG 2PC)
 ├── stores/
 │   ├── __init__.py          # Stores dataclass
 │   ├── triples.py           # pyoxigraph wrapper — RDF-star, named graphs
 │   ├── content.py           # ContentStore — metadata + chunks + embeddings
 │   ├── entities.py          # EntityStore — entity/predicate resolution + aliases
 │   ├── provenance.py        # ProvenanceStore — per-source evidence rows
-│   ├── theses.py            # ThesisStore — thesis/claim collections
-│   ├── rag.py               # RAGRetriever — 4 intent-based retrieval strategies
-│   ├── community.py         # Leiden community detection, storage, summarization
-│   └── graph_migration.py   # One-time migration to named graphs
+│   └── rag.py               # RAGRetriever — 3 intent-based retrieval strategies
 ├── reasoning/
 │   ├── engine.py            # InferenceEngine — forward-chaining rules
 │   └── noisy_or.py          # Noisy-OR evidence combination
