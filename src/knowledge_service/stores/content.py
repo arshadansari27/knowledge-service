@@ -35,29 +35,62 @@ from typing import Any
 
 
 def reciprocal_rank_fusion(
-    *result_lists: list[dict],
+    vector_results: list[dict],
+    bm25_results: list[dict],
     key: str = "id",
     k: int = 60,
     limit: int = 10,
 ) -> list[dict]:
-    """Fuse multiple ranked result lists via Reciprocal Rank Fusion.
+    """Fuse vector + BM25 results via Reciprocal Rank Fusion.
 
-    Each item's score = sum(1 / (k + rank + 1)) across all lists it appears in.
-    Items appearing in multiple lists score higher than single-list items.
-    The fused RRF score replaces the 'similarity' field in the returned dicts.
+    For each chunk, rrf_score = sum(1 / (k + rank + 1)) across the two lists
+    it appears in. Items appearing in both score higher.
+
+    The returned dicts carry BOTH signals:
+      * ``similarity`` — the real cosine similarity from the vector stage.
+        None for chunks that only surfaced via BM25.
+      * ``bm25_rank`` — the 0-based rank from the BM25 stage.
+        None for chunks that only surfaced via vector search.
+      * ``rrf_score`` — the fused rank score used for ordering.
+
+    Prior versions overwrote ``similarity`` with ``rrf_score``, which gave
+    callers a field labelled "similarity" whose value was actually 1/(k+1)
+    ≈ 0.0164 for every hit that only appeared in one list. That was a lie
+    — ``similarity`` now always means cosine.
     """
+    vector_by_key: dict[str, dict] = {str(item[key]): item for item in vector_results}
+    bm25_by_key: dict[str, dict] = {str(item[key]): item for item in bm25_results}
+
     scores: dict[str, float] = {}
-    items: dict[str, dict] = {}
-    for results in result_lists:
-        for rank, item in enumerate(results):
-            item_key = str(item[key])
-            scores[item_key] = scores.get(item_key, 0.0) + 1.0 / (k + rank + 1)
-            items[item_key] = item
+    vector_rank: dict[str, int] = {}
+    bm25_rank: dict[str, int] = {}
+
+    for rank, item in enumerate(vector_results):
+        k_ = str(item[key])
+        scores[k_] = scores.get(k_, 0.0) + 1.0 / (k + rank + 1)
+        vector_rank[k_] = rank
+    for rank, item in enumerate(bm25_results):
+        k_ = str(item[key])
+        scores[k_] = scores.get(k_, 0.0) + 1.0 / (k + rank + 1)
+        bm25_rank[k_] = rank
+
     ranked = sorted(scores.items(), key=lambda x: x[1], reverse=True)[:limit]
-    fused = []
-    for item_key, score in ranked:
-        result = dict(items[item_key])
-        result["similarity"] = score
+
+    fused: list[dict] = []
+    for item_key, rrf_score in ranked:
+        # Prefer the vector row (it carries the cosine similarity); fall back
+        # to the BM25 row when the chunk was only found via full-text.
+        source = vector_by_key.get(item_key) or bm25_by_key[item_key]
+        result = dict(source)
+        # ``similarity`` in vector_results is cosine; in bm25_results it's
+        # ts_rank, which is not a similarity. Null it out so downstream never
+        # confuses the two.
+        if item_key in vector_by_key:
+            result["similarity"] = float(vector_by_key[item_key]["similarity"])
+        else:
+            result["similarity"] = None
+        result["bm25_rank"] = bm25_rank.get(item_key)
+        result["rrf_score"] = rrf_score
         fused.append(result)
     return fused
 
