@@ -1,6 +1,6 @@
 [project]
 name = "knowledge-service"
-version = "0.1.91"
+version = "0.1.92"
 description = "Personal knowledge graph with Bayesian epistemics"
 authors = [{name = "Arshad Ansari", email = "arshadansari27@gmail.com"}]
 license = {text = "MIT"}
