@@ -36,7 +36,7 @@ Single FastAPI process with embedded components. No microservices.
 FastAPI Process
 ├── ParserRegistry     Pluggable document parsing (PDF, HTML, CSV, JSON, images)
 ├── NlpPhase           spaCy NER + Wikidata entity linking pre-pass
-├── CoreferencePhase   Two-tier entity dedup (Wikidata QID + LLM grouping)
+├── CoreferencePhase   Entity dedup by shared Wikidata QID
 ├── KnowledgeStore     pyoxigraph — RDF 1.2, RDF-star, named graphs (5 trust tiers)
 ├── InferenceEngine    Forward-chaining rules (inverse, transitive, type inheritance)
 ├── QueryClassifier    Intent routing (semantic/entity/graph/global)
@@ -782,7 +782,7 @@ src/knowledge_service/
 │   ├── pipeline.py          # Per-triple processing (delta, insert, contradiction, provenance, inference)
 │   ├── worker.py            # 5-phase orchestrator (Embed → NLP → Extract → Coref → Process)
 │   ├── phases.py            # EmbedPhase, ExtractPhase, ProcessPhase
-│   ├── coreference.py       # CoreferencePhase (Wikidata QID + LLM grouping)
+│   ├── coreference.py       # CoreferencePhase (Wikidata QID merging)
 │   └── federation.py        # FederationPhase (DBpedia/Wikidata entity enrichment)
 ├── stores/
 │   ├── __init__.py          # Stores dataclass

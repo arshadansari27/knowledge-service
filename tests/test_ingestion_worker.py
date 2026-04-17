@@ -81,8 +81,6 @@ class TestRunIngestionWithNlp:
         }
         extraction_client.extract = AsyncMock(return_value=[_entity_item])
         extraction_client.extract_with_stats = AsyncMock(return_value=([_entity_item], 0))
-        # _call_llm used by CoreferencePhase tier 2
-        extraction_client._call_llm = AsyncMock(return_value=None)
 
         # Mock spaCy nlp pipeline — returns doc with empty ents and one sentence
         mock_doc = MagicMock()
