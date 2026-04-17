@@ -39,7 +39,7 @@ Contradictions are detected at retrieval and reported in the `/api/ask` response
 
 ### Data Flow
 
-Content arrives via `/api/content`, `/api/content/upload` (file upload), or `/api/claims` → **documents are parsed** (PDF via PyMuPDF, HTML via readability+BeautifulSoup, CSV/JSON via stdlib, or passthrough for plain text) → text is chunked (short = 1 chunk, long ≥4000 chars = N overlapping chunks) → metadata upserted to `content_metadata`, chunks with embeddings stored in `content` → **NLP pre-pass** (spaCy NER + Wikidata entity linking, when available) produces entity hints → knowledge items are extracted via two-phase LLM extraction (entities then relations, enriched by NLP hints) → **coreference resolution** merges entities sharing a Wikidata QID from the NLP pre-pass → items expanded to RDF triples and ingested via the pipeline (`ingestion/pipeline.py`) → triples stored in pyoxigraph with RDF-star annotations (confidence, type, temporal bounds) → provenance rows go to PostgreSQL → Noisy-OR combines multi-source confidence → contradictions detected against existing triples → **inference engine derives new triples** (inverse, transitive, type inheritance) into `ks:graph/inferred` → thesis impact checked.
+Content arrives via `/api/content`, `/api/content/upload` (file upload), or `/api/claims` → **documents are parsed** (PDF via PyMuPDF, HTML via readability+BeautifulSoup, CSV/JSON via stdlib, or passthrough for plain text) → text is chunked (short = 1 chunk, long ≥4000 chars = N overlapping chunks) → metadata upserted to `content_metadata`, chunks with embeddings stored in `content` → **NLP pre-pass** (spaCy NER + Wikidata entity linking, when available) produces entity hints → knowledge items are extracted via two-phase LLM extraction (entities then relations, enriched by NLP hints) → **coreference resolution** merges entities sharing a Wikidata QID from the NLP pre-pass → items expanded to RDF triples and ingested via the pipeline (`ingestion/pipeline.py`) → triples stored in pyoxigraph with RDF-star annotations (confidence, type, temporal bounds) → provenance rows go to PostgreSQL → Noisy-OR combines multi-source confidence → contradictions detected against existing triples → **inference engine derives new triples** (inverse, transitive, type inheritance) into `ks:graph/inferred`.
 
 **Full pipeline:** Parse → Chunk → Embed → NLP Pre-pass → Extract → Coreference → Process
 
@@ -53,11 +53,9 @@ Content arrives via `/api/content`, `/api/content/upload` (file upload), or `/ap
 
 - **ProvenanceStore** (`stores/provenance.py`): PostgreSQL. One row per source per triple, keyed by triple SHA-256 hash. Tracks source_url, source_type, extractor, confidence, timestamps, temporal validity, and **chunk_id** (FK to content table) for chunk-level evidence tracing.
 
-- **ThesisStore** (`stores/theses.py`): PostgreSQL. Named collections of claims with break detection. Theses have status lifecycle (draft → active → archived). Claims are linked by triple hash.
-
 - **Stores dataclass** (`stores/__init__.py`): Single `Stores` dataclass holds all stores + pg_pool. Set as `app.state.stores` in lifespan.
 
-- **Ingestion Pipeline** (`ingestion/pipeline.py`): Replaces the old `process_triple()` god function. Discrete steps: delta detection → retract stale inferences → insert → contradiction detection → penalty → provenance → evidence combination → **inference** → thesis impact check.
+- **Ingestion Pipeline** (`ingestion/pipeline.py`): Per-triple processing. Discrete steps: delta detection → retract stale inferences → insert → contradiction detection → penalty → provenance → evidence combination → **inference**.
 
 - **Ingestion Worker** (`ingestion/worker.py`): Five-phase worker: Embed → NLP Pre-pass → Extract → Coreference → Process. Job tracking via `JobTracker` with status labels: `embedding`, `analyzing`, `extracting`, `resolving`, `processing`.
 
