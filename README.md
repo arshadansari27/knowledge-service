@@ -55,7 +55,6 @@ PostgreSQL
 ├── provenance         Per-source evidence rows with chunk_id FK
 ├── entity_embeddings  Entity URIs with embeddings for resolution
 ├── entity_aliases     Coreference alias → canonical URI mappings
-├── communities        Leiden communities with LLM-generated summaries
 ├── ingestion_jobs     Async job tracking with per-phase progress
 └── triple_outbox      Staged pyoxigraph writes — drained after PG commit
 ```
@@ -752,9 +751,7 @@ src/knowledge_service/
 │   ├── auth.py              # AuthMiddleware, login/logout, rate limiter, session cookies
 │   ├── routes.py            # Admin page routes (dashboard, knowledge, chat, contradictions)
 │   ├── stats.py             # /api/admin/stats/* and /api/admin/knowledge/triples endpoints
-│   ├── communities.py       # /api/admin/rebuild-communities
 │   ├── jobs.py              # /api/admin/jobs
-│   ├── theses.py            # /api/admin/theses/* (activate, archive)
 │   └── templates/           # Jinja2 templates (base, dashboard, knowledge, chat, etc.)
 ├── api/
 │   ├── content.py           # POST /api/content (JSON + URL auto-fetch)
@@ -764,7 +761,6 @@ src/knowledge_service/
 │   ├── knowledge.py         # GET /api/knowledge/query, POST /api/knowledge/sparql
 │   ├── contradictions.py    # GET /api/knowledge/contradictions
 │   ├── ask.py               # POST /api/ask (RAG question answering)
-│   ├── theses.py            # /api/theses CRUD
 │   ├── changes.py           # GET /api/entity/{id}/changes
 │   └── health.py            # GET /health
 ├── parsing/
