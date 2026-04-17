@@ -1,9 +1,22 @@
 import json
 
+import httpx
 import pytest
 
 from knowledge_service.clients.llm import ExtractionClient
 from knowledge_service.models import EntityInput, TripleInput
+
+
+@pytest.fixture(autouse=True)
+def _skip_retry_backoff(monkeypatch):
+    """Monkeypatch asyncio.sleep to a no-op so retry tests don't actually wait."""
+    import asyncio
+
+    async def _nosleep(_seconds):
+        return None
+
+    monkeypatch.setattr(asyncio, "sleep", _nosleep)
+
 
 _BASE = "http://llm-test"
 _KEY = "sk-test"
@@ -69,10 +82,58 @@ class TestExtract:
         await client.close()
 
     async def test_returns_none_on_http_error(self, httpx_mock):
-        httpx_mock.add_response(url=_CHAT_URL, status_code=500)
+        # Extraction retries up to 2 extra times on 5xx, so register 3 failures.
+        for _ in range(3):
+            httpx_mock.add_response(url=_CHAT_URL, status_code=500)
         client = ExtractionClient(base_url=_BASE, model="qwen3:14b", api_key=_KEY)
         result = await client.extract("some text")
         assert result is None
+        assert len(httpx_mock.get_requests()) == 3
+        await client.close()
+
+    async def test_retries_on_5xx_then_succeeds(self, httpx_mock):
+        httpx_mock.add_response(url=_CHAT_URL, status_code=500)
+        httpx_mock.add_response(url=_CHAT_URL, status_code=503)
+        httpx_mock.add_response(
+            url=_CHAT_URL,
+            json=_make_combined_response(
+                entities=[
+                    {
+                        "knowledge_type": "Entity",
+                        "uri": "x",
+                        "rdf_type": "schema:Thing",
+                        "label": "x",
+                        "properties": {},
+                        "confidence": 0.9,
+                    }
+                ],
+                relations=[],
+            ),
+        )
+        client = ExtractionClient(base_url=_BASE, model="qwen3:14b", api_key=_KEY)
+        result = await client.extract("some text")
+        assert result is not None
+        assert len(result) == 1
+        assert len(httpx_mock.get_requests()) == 3
+        await client.close()
+
+    async def test_retries_on_timeout_then_succeeds(self, httpx_mock):
+        httpx_mock.add_exception(httpx.ReadTimeout("slow"))
+        httpx_mock.add_response(
+            url=_CHAT_URL, json=_make_combined_response(entities=[], relations=[])
+        )
+        client = ExtractionClient(base_url=_BASE, model="qwen3:14b", api_key=_KEY)
+        result = await client.extract("text")
+        assert result == []
+        assert len(httpx_mock.get_requests()) == 2
+        await client.close()
+
+    async def test_does_not_retry_on_4xx(self, httpx_mock):
+        httpx_mock.add_response(url=_CHAT_URL, status_code=400)
+        client = ExtractionClient(base_url=_BASE, model="qwen3:14b", api_key=_KEY)
+        result = await client.extract("text")
+        assert result is None
+        assert len(httpx_mock.get_requests()) == 1
         await client.close()
 
     async def test_returns_none_on_bad_json(self, httpx_mock):
@@ -310,11 +371,13 @@ class TestSinglePassExtract:
         await client.close()
 
     async def test_returns_none_when_call_fails(self, httpx_mock):
-        httpx_mock.add_response(url=_CHAT_URL, status_code=500)
+        # Retry budget: 1 initial + 2 retries = 3 attempts
+        for _ in range(3):
+            httpx_mock.add_response(url=_CHAT_URL, status_code=500)
         client = ExtractionClient(base_url=_BASE, model="qwen3:14b", api_key=_KEY)
         result = await client.extract("text")
         assert result is None
-        assert len(httpx_mock.get_requests()) == 1
+        assert len(httpx_mock.get_requests()) == 3
         await client.close()
 
     async def test_dict_entities_coerced_to_list(self, httpx_mock):

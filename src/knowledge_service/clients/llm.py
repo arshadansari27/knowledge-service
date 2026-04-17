@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 
 import httpx
@@ -11,6 +12,13 @@ from knowledge_service.clients.base import BaseLLMClient
 from knowledge_service.ontology.registry import DomainRegistry
 
 logger = logging.getLogger(__name__)
+
+# Extraction-call retry policy. Homelab qwen3 is occasionally overloaded during
+# batch ingestion bursts (daily briefing); a single 5xx/timeout was previously
+# enough to drop a whole chunk's extraction to zero triples. Exponential
+# backoff: 1s, 2s between attempts. Keep small — caller already has a 600s
+# read timeout, and every retry multiplies worst-case latency.
+_EXTRACT_MAX_RETRIES = 2
 
 
 class LLMClientError(RuntimeError):
@@ -82,6 +90,57 @@ class ExtractionClient(BaseLLMClient):
 
             self._prompt_builder = PromptBuilder(registry)
 
+    async def _post_chat(self, prompt: str) -> str | None:
+        """POST the prompt to /v1/chat/completions with retry on transient errors.
+
+        Retries on HTTP 5xx and timeouts (`_EXTRACT_MAX_RETRIES` extra attempts,
+        exponential backoff 1s, 2s, ...). 4xx responses and non-HTTP errors are
+        not retried — they represent deterministic failures.
+
+        Returns the raw assistant message content on success, or None if every
+        attempt failed.
+        """
+        last_status: int | None = None
+        last_timeout: httpx.TimeoutException | None = None
+
+        for attempt in range(_EXTRACT_MAX_RETRIES + 1):
+            try:
+                response = await self._client.post(
+                    "/v1/chat/completions",
+                    json={
+                        "model": self._model,
+                        "messages": [{"role": "user", "content": prompt}],
+                    },
+                )
+                response.raise_for_status()
+                return response.json()["choices"][0]["message"]["content"]
+            except httpx.HTTPStatusError as exc:
+                last_status = exc.response.status_code
+                if last_status < 500 or attempt >= _EXTRACT_MAX_RETRIES:
+                    break
+                logger.warning(
+                    "ExtractionClient: LLM API returned %s, retrying (attempt %d/%d)",
+                    last_status,
+                    attempt + 1,
+                    _EXTRACT_MAX_RETRIES,
+                )
+            except httpx.TimeoutException as exc:
+                last_timeout = exc
+                if attempt >= _EXTRACT_MAX_RETRIES:
+                    break
+                logger.warning(
+                    "ExtractionClient: LLM API timed out, retrying (attempt %d/%d)",
+                    attempt + 1,
+                    _EXTRACT_MAX_RETRIES,
+                )
+            await asyncio.sleep(2**attempt)
+
+        if last_status is not None:
+            logger.warning("ExtractionClient: LLM API returned %s", last_status)
+        elif last_timeout is not None:
+            logger.warning("ExtractionClient: LLM API request timed out: %s", last_timeout)
+        return None
+
     async def _call_llm(self, prompt: str) -> list[dict] | None:
         """Send a prompt to the LLM and return parsed item dicts.
 
@@ -89,23 +148,10 @@ class ExtractionClient(BaseLLMClient):
         from an empty list which means "LLM responded but found nothing").
         Raises no exceptions.
         """
-        try:
-            response = await self._client.post(
-                "/v1/chat/completions",
-                json={
-                    "model": self._model,
-                    "messages": [{"role": "user", "content": prompt}],
-                },
-            )
-            response.raise_for_status()
-        except httpx.HTTPStatusError as exc:
-            logger.warning("ExtractionClient: LLM API returned %s", exc.response.status_code)
-            return None
-        except httpx.TimeoutException as exc:
-            logger.warning("ExtractionClient: LLM API request timed out: %s", exc)
+        raw = await self._post_chat(prompt)
+        if raw is None:
             return None
 
-        raw = response.json()["choices"][0]["message"]["content"]
         from knowledge_service._utils import _extract_json  # noqa: PLC0415
 
         parsed = _extract_json(raw)
@@ -126,23 +172,10 @@ class ExtractionClient(BaseLLMClient):
         - {"items": [...]}  (legacy format)
         Returns None on failure.
         """
-        try:
-            response = await self._client.post(
-                "/v1/chat/completions",
-                json={
-                    "model": self._model,
-                    "messages": [{"role": "user", "content": prompt}],
-                },
-            )
-            response.raise_for_status()
-        except httpx.HTTPStatusError as exc:
-            logger.warning("ExtractionClient: LLM API returned %s", exc.response.status_code)
-            return None
-        except httpx.TimeoutException as exc:
-            logger.warning("ExtractionClient: LLM API request timed out: %s", exc)
+        raw_text = await self._post_chat(prompt)
+        if raw_text is None:
             return None
 
-        raw_text = response.json()["choices"][0]["message"]["content"]
         from knowledge_service._utils import _extract_json  # noqa: PLC0415
 
         parsed = _extract_json(raw_text)
