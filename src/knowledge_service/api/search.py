@@ -55,6 +55,7 @@ async def get_search(
                 summary=row.get("summary"),
                 similarity=float(sim) if sim is not None else None,
                 rrf_score=float(rrf) if rrf is not None else None,
+                bm25_rank=row.get("bm25_rank"),
                 source_type=row["source_type"],
                 tags=list(row["tags"]) if row["tags"] else [],
                 ingested_at=row["ingested_at"],

@@ -353,3 +353,37 @@ class TestSearchContentIdFilter:
         store = app.state.stores.content
         call_kwargs = store.search.call_args
         assert call_kwargs.kwargs.get("content_id") is None
+
+
+# ---------------------------------------------------------------------------
+# Tests: bm25_rank plumbing
+# ---------------------------------------------------------------------------
+
+
+class TestSearchBm25Rank:
+    async def test_bm25_rank_from_row_is_returned(self):
+        """A chunk surfaced via BM25 stage should expose its rank in the response."""
+        rows = [{**_SAMPLE_ROW, "bm25_rank": 2, "rrf_score": 0.031}]
+        app = _make_app(search_rows=rows)
+        transport = ASGITransport(app=app)
+        async with AsyncClient(
+            transport=transport,
+            base_url="http://test",
+            cookies={"ks_session": make_test_session_cookie()},
+        ) as c:
+            resp = await c.get("/api/search", params={"q": "test"})
+        data = resp.json()
+        assert data[0]["bm25_rank"] == 2
+
+    async def test_missing_bm25_rank_is_null(self):
+        """Vector-only hits carry no bm25_rank and serialise to null."""
+        app = _make_app(search_rows=[_SAMPLE_ROW])
+        transport = ASGITransport(app=app)
+        async with AsyncClient(
+            transport=transport,
+            base_url="http://test",
+            cookies={"ks_session": make_test_session_cookie()},
+        ) as c:
+            resp = await c.get("/api/search", params={"q": "test"})
+        data = resp.json()
+        assert data[0]["bm25_rank"] is None
