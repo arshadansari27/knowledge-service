@@ -292,7 +292,7 @@ class TestIntentDispatch:
         es.search.assert_called_once()
 
     async def test_graph_intent_returns_traversal_metadata(self):
-        """Graph intent should populate traversal_depth and inferred_triples on context."""
+        """Graph intent should populate traversal_depth on context."""
         ec = _make_embedding_client()
         ec.embed_batch.return_value = [[0.1] * 768]
         es = _make_embedding_store()
@@ -304,8 +304,6 @@ class TestIntentDispatch:
         intent = QueryIntent(intent="graph", entities=["dopamine"])
         context = await retriever.retrieve("what affects dopamine?", intent=intent)
         assert context.traversal_depth is not None
-        # inferred_triples is None — ProbLog inference was removed
-        assert context.inferred_triples is None
 
 
 _PREDICATE_ROW = {

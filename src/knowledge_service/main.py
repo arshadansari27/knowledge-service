@@ -109,10 +109,6 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         if updated != "UPDATE 0":
             logger.info("Marked orphaned ingestion jobs as failed: %s", updated)
 
-    from knowledge_service.stores.graph_migration import migrate_to_named_graphs  # noqa: PLC0415
-
-    await migrate_to_named_graphs(triple_store.store, pg_pool)
-
     # LLM clients
     embedding_client = EmbeddingClient(
         base_url=settings.llm_base_url,

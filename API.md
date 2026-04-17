@@ -22,10 +22,6 @@
 | POST | `/api/knowledge/sparql` | Raw SPARQL query |
 | GET | `/api/knowledge/contradictions` | Detect contradictions |
 | POST | `/api/ask` | RAG-powered question answering |
-| POST | `/api/theses` | Create an investment thesis |
-| GET | `/api/theses` | List theses |
-| GET | `/api/theses/{id}` | Get thesis details |
-| PATCH | `/api/theses/{id}` | Update a thesis |
 | GET | `/api/entity/{id}/changes` | Track entity changes since a date |
 
 ---

@@ -55,7 +55,6 @@ class RetrievalContext:
     contradictions: list[dict] = field(default_factory=list)
     entities_found: list[str] = field(default_factory=list)
     traversal_depth: int | None = None
-    inferred_triples: int | None = None
 
 
 _MAX_TRAVERSAL_EDGES = 200

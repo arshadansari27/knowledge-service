@@ -313,7 +313,6 @@ class TestAskTraversalMetadata:
         response = await client.post("/api/ask", json={"question": "test"})
         data = response.json()
         assert "traversal_depth" in data
-        assert "inferred_triples" in data
 
     async def test_use_reasoning_parameter_accepted(self, client):
         response = await client.post("/api/ask", json={"question": "test", "use_reasoning": False})
