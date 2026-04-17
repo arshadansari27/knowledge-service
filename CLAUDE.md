@@ -31,7 +31,11 @@ docker compose up -d
 
 ## Architecture
 
-Single-process FastAPI service combining an RDF knowledge graph with Noisy-OR probabilistic reasoning. No microservices.
+Single-process FastAPI service. No microservices.
+
+The user-visible feature is **hybrid BM25 + vector RAG** over ingested documents: chunks with pgvector embeddings in `content`, fused with a Postgres full-text tsvector via Reciprocal Rank Fusion. A small **RDF knowledge graph layer** sits behind it: an LLM extracts entity/relation triples per chunk (pyoxigraph named graphs, Postgres provenance), multi-source confidences combine via **Noisy-OR** (a 4-line function), and a **3-rule forward-chaining inference engine** (inverse / transitive / type-inheritance) derives extra triples at ingestion time.
+
+Contradictions are detected at retrieval and reported in the `/api/ask` response; per-graph trust labels (`verified` / `federated` / `extracted`) are tagged onto retrieved triples for the LLM prompt. Neither contradictions nor trust tiers filter or re-rank results today — they are surfaced, not enforced.
 
 ### Data Flow
 
@@ -41,7 +45,7 @@ Content arrives via `/api/content`, `/api/content/upload` (file upload), or `/ap
 
 ### Key Components
 
-- **TripleStore** (`stores/triples.py`): pyoxigraph wrapper with **named graph support**. Triples are stored in 5 trust-tiered named graphs: `ks:graph/ontology` (schema), `ks:graph/asserted` (human-provided), `ks:graph/extracted` (LLM-derived), `ks:graph/inferred` (computed), `ks:graph/federated` (external sources). All triples are content-addressed via SHA-256 hash. RDF-star annotations attach confidence, knowledge type, and temporal validity. Single `get_triples(subject, predicate, object_, graphs)` method replaces 3 separate query methods. Confidence updates use the Python API to find reification blank nodes.
+- **TripleStore** (`stores/triples.py`): pyoxigraph wrapper with **named graph support**. Triples are stored in 5 named graphs by provenance class: `ks:graph/ontology` (schema), `ks:graph/asserted` (human-provided), `ks:graph/extracted` (LLM-derived), `ks:graph/inferred` (computed), `ks:graph/federated` (external sources). The graph a triple lives in is surfaced to readers as a `trust_tier` label but retrieval does not filter by tier — it's informational. All triples are content-addressed via SHA-256 hash. RDF-star annotations attach confidence, knowledge type, and temporal validity. Single `get_triples(subject, predicate, object_, graphs)` method replaces 3 separate query methods. Confidence updates use the Python API to find reification blank nodes.
 
 - **ContentStore** (`stores/content.py`): PostgreSQL + pgvector. Manages `content_metadata` (document metadata) and `content` (chunks with embeddings). Uses `halfvec(768)` for nomic-embed-text embeddings. Hybrid search via vector + BM25 with Reciprocal Rank Fusion.
 
@@ -63,7 +67,7 @@ Content arrives via `/api/content`, `/api/content/upload` (file upload), or `/ap
 
 - **Coreference Phase** (`ingestion/coreference.py`): Deterministic entity deduplication. Entities sharing a Wikidata QID (from NLP pre-pass) are merged into a single `EntityGroup`. Results stored in `entity_aliases` table. `canonicalize()` rewrites knowledge item labels before processing.
 
-- **Noisy-OR** (`reasoning/noisy_or.py`): 4-line evidence combination: `P = 1 - product(1 - ci)`. Replaces the 332-line ProbLog-based ReasoningEngine.
+- **Noisy-OR** (`reasoning/noisy_or.py`): 4-line evidence combination: `P = 1 - product(1 - ci)`. Replaces the earlier 332-line ProbLog-based ReasoningEngine — this is the entirety of the "probabilistic" part, don't read more into it.
 
 - **Inference Engine** (`reasoning/engine.py`): Forward-chaining inference at ingestion time. Three ontology-declared rule types: `InverseRule` (materializes `ks:inversePredicate` pairs), `TransitiveRule` (closes `ks:transitivePredicate` chains), `TypeInheritanceRule` (propagates `has_property` through `is_a`). All three rules guard against literal objects via `is_uri()` checks — literals cannot be used as SPARQL subjects. BFS execution with depth cap of 3 and cycle detection via hash dedup. Confidence = product of source confidences. Derived triples go to `ks:graph/inferred` with `ks:derivedFrom` and `ks:inferenceMethod` RDF-star annotations. Retraction cascades when source triples change. Initialized once in app lifespan, stored on `app.state.inference_engine`.
 
@@ -71,7 +75,7 @@ Content arrives via `/api/content`, `/api/content/upload` (file upload), or `/ap
 
 - **PromptBuilder** (`clients/prompt_builder.py`): Builds domain-aware extraction prompts from templates + DomainRegistry. Supports file-based overrides with inline fallbacks.
 
-- **RAGRetriever** (`stores/rag.py`): Hybrid retrieval — combines chunk-level semantic search (pgvector) with knowledge graph triples for RAG context. Triples include **trust tier** labels (verified/extracted). `/api/ask` returns **evidence snippets** with exact source chunk text.
+- **RAGRetriever** (`stores/rag.py`): Hybrid retrieval — combines chunk-level hybrid search (vector + BM25 via RRF) with knowledge graph triples for RAG context. Retrieved triples are tagged with a `trust_tier` label (verified/federated/extracted) derived from their source graph — the prompt discloses this to the LLM, but ranking and filtering are tier-agnostic. Contradictions found during retrieval are passed through to the `/api/ask` response as-is; they don't penalise or exclude triples at read time. `/api/ask` returns **evidence snippets** with exact source chunk text.
 
 ### Ontology
 
