@@ -42,12 +42,16 @@ def build_rag_prompt(question: str, context: RetrievalContext) -> str:
         for row in context.content_results:
             title = row.get("title", "Untitled")
             source_type = row.get("source_type", "unknown")
-            similarity = row.get("similarity", 0.0)
+            # similarity is None for BM25-only hits after the hybrid-search
+            # honesty fix (no cosine was computed). Show "n/a" instead of
+            # crashing the format spec on NoneType.
+            similarity = row.get("similarity")
+            sim_str = f"{similarity:.2f}" if isinstance(similarity, (int, float)) else "n/a"
             text = row.get("chunk_text") or row.get("summary") or "No content"
             section = (
                 f" [Section: {row.get('section_header')}]" if row.get("section_header") else ""
             )
-            line = f'- "{title}" ({source_type}, similarity: {similarity:.2f}){section}: {text}'
+            line = f'- "{title}" ({source_type}, similarity: {sim_str}){section}: {text}'
             if running_len + len(line) > _MAX_PROMPT_CHARS:
                 sections.append("(... additional sources truncated for length ...)")
                 break

@@ -142,6 +142,29 @@ class TestBuildPrompt:
         prompt = build_rag_prompt("q", _sample_context())
         assert "[Section:" not in prompt
 
+    def test_null_similarity_renders_as_na(self):
+        """BM25-only hits carry similarity=None; must not crash the format spec."""
+        ctx = RetrievalContext(
+            content_results=[
+                {
+                    "title": "BM25-only hit",
+                    "source_type": "article",
+                    "similarity": None,
+                    "chunk_text": "Some text",
+                }
+            ]
+        )
+        prompt = build_rag_prompt("q", ctx)
+        assert "similarity: n/a" in prompt
+        assert "Some text" in prompt
+
+    def test_missing_similarity_renders_as_na(self):
+        ctx = RetrievalContext(
+            content_results=[{"title": "No sim key", "source_type": "article", "chunk_text": "t"}]
+        )
+        prompt = build_rag_prompt("q", ctx)
+        assert "similarity: n/a" in prompt
+
 
 class TestRAGClientAnswer:
     async def test_returns_rag_answer(self, httpx_mock):
