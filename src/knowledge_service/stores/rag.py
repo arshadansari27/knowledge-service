@@ -18,17 +18,16 @@ _ENTITY_MATCH_THRESHOLD = 0.80
 _PREDICATE_MATCH_THRESHOLD = 0.80
 _PREDICATE_TRIPLE_LIMIT = 10
 
-_VALID_INTENTS = {"semantic", "entity", "graph", "global"}
+_VALID_INTENTS = {"semantic", "entity", "graph"}
 
 _CLASSIFICATION_PROMPT = """Classify this question into one category:
 - "semantic": searching for documents about a topic (e.g., "find articles about stress management")
 - "entity": asking about a specific thing (e.g., "what is dopamine?", "tell me about PostgreSQL")
 - "graph": asking about relationships between things (e.g., "how is cortisol connected to inflammation?", "what causes dopamine release?")
-- "global": asking about themes, summaries, or overviews across the entire knowledge base (e.g., "what are the main topics?", "summarize what I know about health", "what areas have I collected knowledge on?")
 
 Also extract any named entities mentioned in the question.
 
-Return JSON: {{"intent": "semantic|entity|graph|global", "entities": ["entity1", "entity2"]}}
+Return JSON: {{"intent": "semantic|entity|graph", "entities": ["entity1", "entity2"]}}
 
 Question: {question}"""
 
@@ -37,7 +36,7 @@ Question: {question}"""
 class QueryIntent:
     """Classified question intent with extracted entity names."""
 
-    intent: str  # "semantic", "entity", "graph", or "global"
+    intent: str  # "semantic", "entity", or "graph"
     entities: list[str] = field(default_factory=list)
 
 
@@ -107,14 +106,12 @@ class RAGRetriever:
         embedding_client,
         embedding_store,
         knowledge_store,
-        community_store=None,
         entity_store=None,
         classify_client=None,
     ) -> None:
         self._embedding_client = embedding_client
         self._embedding_store = embedding_store  # ContentStore (search, get_chunks_by_ids)
         self._knowledge_store = knowledge_store  # TripleStore
-        self._community_store = community_store
         # entity_store has search_entities/search_predicates; fall back to embedding_store
         # for backward compat (old EmbeddingStore had all methods)
         self._entity_store = entity_store or embedding_store
@@ -190,8 +187,6 @@ class RAGRetriever:
                 max_sources,
                 min_confidence,
             )
-        elif intent.intent == "global":
-            return await self._retrieve_global(question, embedding, max_sources, min_confidence)
         else:
             return await self._retrieve_semantic(question, embedding, max_sources, min_confidence)
 
@@ -285,75 +280,6 @@ class RAGRetriever:
             contradictions=contradictions,
             entities_found=entities_found,
             traversal_depth=traversal_depth,
-        )
-
-    # --- Strategy: global ---
-
-    async def _retrieve_global(
-        self, question, embedding, max_sources, min_confidence
-    ) -> RetrievalContext:
-        """Global strategy: use community summaries for corpus-level questions."""
-        if not self._community_store:
-            return await self._retrieve_semantic(question, embedding, max_sources, min_confidence)
-
-        communities = await self._community_store.get_all()
-        if not communities:
-            return await self._retrieve_semantic(question, embedding, max_sources, min_confidence)
-
-        # Build knowledge triples from community summaries
-        question_words = set(question.lower().split())
-        triples = []
-        level0_keyword_matched = False
-
-        for c in communities:
-            # Level 1 (coarse): always include
-            # Level 0 (fine): include if keyword match
-            if c["level"] == 1:
-                include = True
-            else:
-                summary_words = set((c.get("summary") or "").lower().split())
-                matched = bool(question_words & summary_words)
-                if matched:
-                    level0_keyword_matched = True
-                include = matched
-
-            if include and c.get("summary"):
-                triples.append(
-                    {
-                        "subject": f"community_{c.get('id', 'unknown')}",
-                        "predicate": "has_summary",
-                        "object": c["summary"],
-                        "confidence": 1.0,
-                        "knowledge_type": "Community",
-                        "trust_tier": "computed",
-                    }
-                )
-
-        # If no level-0 matched by keyword, add top 5 by member count
-        if not level0_keyword_matched:
-            level0 = [c for c in communities if c["level"] == 0 and c.get("summary")]
-            for c in level0[:5]:
-                triples.append(
-                    {
-                        "subject": f"community_{c.get('id', 'unknown')}",
-                        "predicate": "has_summary",
-                        "object": c["summary"],
-                        "confidence": 1.0,
-                        "knowledge_type": "Community",
-                        "trust_tier": "computed",
-                    }
-                )
-
-        # Light content search for grounding
-        content_results = await self._embedding_store.search(
-            query_embedding=embedding, limit=3, query_text=question
-        )
-
-        return RetrievalContext(
-            content_results=content_results,
-            knowledge_triples=triples,
-            contradictions=[],
-            entities_found=[],
         )
 
     # --- Shared helpers ---

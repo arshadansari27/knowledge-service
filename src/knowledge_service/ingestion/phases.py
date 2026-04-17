@@ -69,15 +69,16 @@ class ExtractPhase:
         title: str | None = None,
         source_type: str | None = None,
         nlp_hints: list | None = None,
-    ) -> tuple[list[dict], list[str | None], int, int]:
+    ) -> tuple[list[dict], list[str | None], int, int, int]:
         """Extract knowledge from chunks.
 
-        Returns (knowledge_items, chunk_ids_for_items, chunks_failed, chunks_skipped).
+        Returns (knowledge_items, chunk_ids_for_items, chunks_failed, chunks_skipped, items_rejected).
         """
         knowledge: list[dict] = []
         chunk_ids: list[str | None] = []
         chunks_failed = 0
         chunks_skipped = 0
+        items_rejected = 0
 
         # Build a lookup from chunk_index → NlpResult for hint injection
         hint_map: dict[int, Any] = {}
@@ -85,27 +86,11 @@ class ExtractPhase:
             for hint in nlp_hints:
                 hint_map[hint.chunk_index] = hint
 
-        # Filter chunks if NLP results are available
-        skip_set: set[int] = set()
-        if nlp_hints:
-            from knowledge_service.ingestion.chunk_filter import filter_chunks  # noqa: PLC0415
-
-            _, skip_indices = filter_chunks(chunk_records, nlp_hints)
-            skip_set = set(skip_indices)
-
         for chunk in chunk_records:
             chunk_index = chunk["chunk_index"]
             cid = chunk_id_map.get(chunk_index)
             nlp_result = hint_map.get(chunk_index)
 
-            # --- Skip path: NER fallback only ---
-            if chunk_index in skip_set:
-                chunks_skipped += 1
-                if nlp_result and nlp_result.entities:
-                    self._emit_ner_fallback(nlp_result, cid, knowledge, chunk_ids)
-                continue
-
-            # --- Extract path: LLM call ---
             entity_hints: list[dict] | None = None
             if nlp_result and nlp_result.entities:
                 entity_hints = [
@@ -117,12 +102,13 @@ class ExtractPhase:
                     for e in nlp_result.entities
                 ]
 
-            items = await self._extraction_client.extract(
+            items, rejected = await self._extraction_client.extract_with_stats(
                 chunk["chunk_text"],
                 title=title,
                 source_type=source_type,
                 entity_hints=entity_hints,
             )
+            items_rejected += rejected
             if items is None:
                 chunks_failed += 1
                 continue
@@ -134,25 +120,7 @@ class ExtractPhase:
             if nlp_result and nlp_result.entities and items is not None:
                 self._emit_ner_missed(nlp_result, items, cid, knowledge, chunk_ids)
 
-        return knowledge, chunk_ids, chunks_failed, chunks_skipped
-
-    @staticmethod
-    def _emit_ner_fallback(
-        nlp_result: Any, cid: str | None, knowledge: list, chunk_ids: list
-    ) -> None:
-        """Emit all NER entities as fallback EntityInput items."""
-        from knowledge_service.config import settings  # noqa: PLC0415
-        from knowledge_service.models import EntityInput  # noqa: PLC0415
-
-        for ent in nlp_result.entities:
-            fallback = EntityInput(
-                uri=ent.text,
-                rdf_type=f"schema:{ent.label}" if ent.label else "schema:Thing",
-                label=ent.text,
-                confidence=settings.nlp_entity_confidence,
-            )
-            knowledge.append(fallback)
-            chunk_ids.append(cid)
+        return knowledge, chunk_ids, chunks_failed, chunks_skipped, items_rejected
 
     @staticmethod
     def _emit_ner_missed(

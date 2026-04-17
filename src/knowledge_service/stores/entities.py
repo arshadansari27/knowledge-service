@@ -29,6 +29,44 @@ class EntityStore:
         self._embedding_client = embedding_client
         self._entity_cache: LRUCache[str, str] = LRUCache(maxsize=_CACHE_SIZE)
         self._predicate_cache: LRUCache[str, str] = LRUCache(maxsize=_CACHE_SIZE)
+        # Lazy predicate-seed state: None=never tried, True=done, False=failed-retry-on-next-use
+        self._predicate_seed_status: bool | None = None
+        self._predicate_seed_spec: list[tuple[str, str]] | None = None
+
+    def set_predicate_seed(self, entries: list[tuple[str, str]]) -> None:
+        """Register the canonical (uri, label) pairs to seed on first predicate resolution.
+
+        Called at startup. Seeding itself is deferred to the first resolve_predicate()
+        call (or can be triggered explicitly via ensure_predicates_seeded()). If the
+        embedding backend is down at startup we don't block — the next lookup retries.
+        """
+        self._predicate_seed_spec = list(entries)
+        self._predicate_seed_status = None
+
+    async def ensure_predicates_seeded(self) -> bool:
+        """Seed canonical predicate embeddings if not already done.
+
+        Returns True on success or if already seeded, False on failure (caller may retry).
+        Safe to call concurrently — races are harmless because insert_predicate_embedding
+        is an upsert.
+        """
+        if self._predicate_seed_status is True:
+            return True
+        if not self._predicate_seed_spec:
+            return True
+        uris = [u for u, _ in self._predicate_seed_spec]
+        labels = [label for _, label in self._predicate_seed_spec]
+        try:
+            embeddings = await self._embedding_client.embed_batch(labels)
+        except Exception as exc:
+            self._predicate_seed_status = False
+            logger.warning("Predicate seed deferred — embedding backend unavailable: %s", exc)
+            return False
+        for uri, label, embedding in zip(uris, labels, embeddings):
+            await self.insert_predicate_embedding(uri=uri, label=label, embedding=embedding)
+        self._predicate_seed_status = True
+        logger.info("Seeded %d canonical predicate embeddings (lazy)", len(labels))
+        return True
 
     # ------------------------------------------------------------------
     # Helpers
@@ -96,6 +134,10 @@ class EntityStore:
         cache_key = label.lower()
         if cache_key in self._predicate_cache:
             return self._predicate_cache[cache_key]
+
+        # Ensure canonical vocabulary is present before similarity lookup.
+        # First-call-after-startup pays the seeding cost; subsequent calls are no-ops.
+        await self.ensure_predicates_seeded()
 
         embedding = await self._embedding_client.embed(label)
 

@@ -135,6 +135,7 @@ class TestIngestionWorker:
         embedding_client.embed_batch.return_value = [[0.1] * 768]
         extraction_client = AsyncMock()
         extraction_client.extract.return_value = None  # LLM failure
+        extraction_client.extract_with_stats = AsyncMock(return_value=(None, 0))
 
         chunks = [
             {
@@ -177,6 +178,7 @@ class TestIngestionWorker:
         embedding_client.embed_batch.return_value = [[0.1] * 768]
         extraction_client = AsyncMock()
         extraction_client.extract = AsyncMock()
+        extraction_client.extract_with_stats = AsyncMock(return_value=([], 0))
 
         chunks = [
             {
@@ -209,7 +211,7 @@ class TestIngestionWorker:
             f"Expected job to be marked failed; got: {executed}"
         )
         # Extraction must not have been attempted — failure was in embed
-        extraction_client.extract.assert_not_called()
+        extraction_client.extract_with_stats.assert_not_called()
 
 
 # ---------------------------------------------------------------------------

@@ -2,7 +2,6 @@
 
 import json
 import logging
-import time
 from typing import Any
 
 from knowledge_service.ingestion.phases import EmbedPhase, ExtractPhase, ProcessPhase
@@ -17,6 +16,7 @@ _ALLOWED_JOB_COLUMNS = frozenset(
         "chunks_extracted",
         "chunks_failed",
         "chunks_skipped",
+        "items_rejected",
         "triples_created",
         "entities_resolved",
         "entities_linked",
@@ -52,18 +52,20 @@ class JobTracker:
         entities_resolved: int,
         chunks_failed: int,
         chunks_skipped: int = 0,
+        items_rejected: int = 0,
     ) -> None:
         async with self._pool.acquire() as conn:
             await conn.execute(
                 """UPDATE ingestion_jobs
                    SET status = 'completed', triples_created = $1,
                        entities_resolved = $2, chunks_failed = $3,
-                       chunks_skipped = $4
-                   WHERE id = $5::uuid""",
+                       chunks_skipped = $4, items_rejected = $5
+                   WHERE id = $6::uuid""",
                 triples_created,
                 entities_resolved,
                 chunks_failed,
                 chunks_skipped,
+                items_rejected,
                 self._job_id,
             )
 
@@ -83,23 +85,6 @@ class JobTracker:
             )
 
 
-def _should_rebuild_communities(
-    triples_created: int,
-    total_triples: int,
-    min_triples: int,
-    last_rebuild: float,
-    cooldown: int,
-) -> bool:
-    """Check if community detection should be triggered."""
-    if triples_created <= 0:
-        return False
-    if total_triples < min_triples:
-        return False
-    if time.time() - last_rebuild < cooldown:
-        return False
-    return True
-
-
 async def run_ingestion(
     job_id: str,
     content_id: str,
@@ -115,7 +100,6 @@ async def run_ingestion(
     entity_store: Any | None = None,
     engine: Any | None = None,
     nlp: Any | None = None,
-    federation_client: Any | None = None,
     app_state: Any | None = None,
 ) -> None:
     """Orchestrate the multi-phase ingestion pipeline.
@@ -165,9 +149,16 @@ async def run_ingestion(
 
         chunks_failed = 0
         chunks_skipped = 0
+        items_rejected = 0
         if not knowledge and raw_text and extraction_client:
             extract = ExtractPhase(extraction_client)
-            knowledge_items, chunk_ids_for_items, chunks_failed, chunks_skipped = await extract.run(
+            (
+                knowledge_items,
+                chunk_ids_for_items,
+                chunks_failed,
+                chunks_skipped,
+                items_rejected,
+            ) = await extract.run(
                 chunk_records,
                 chunk_id_map,
                 title=title,
@@ -187,6 +178,7 @@ async def run_ingestion(
             chunks_extracted=chunks_extracted,
             chunks_failed=chunks_failed,
             chunks_skipped=chunks_skipped,
+            items_rejected=items_rejected,
         )
         graph = KS_GRAPH_ASSERTED if extractor == "api" else KS_GRAPH_EXTRACTED
 
@@ -217,94 +209,29 @@ async def run_ingestion(
             graph,
         )
 
-        await tracker.complete(triples_created, entities_resolved, chunks_failed, chunks_skipped)
+        await tracker.complete(
+            triples_created,
+            entities_resolved,
+            chunks_failed,
+            chunks_skipped,
+            items_rejected,
+        )
 
-        if chunks_failed > 0 and triples_created == 0:
+        if triples_created == 0:
             total_chunks = len(chunk_records)
             logger.warning(
-                "Ingestion job %s: all %d/%d chunks failed extraction, 0 triples created "
-                "(title=%s, url=%s)",
+                "Ingestion job %s yielded 0 triples — chunks total=%d embedded=%d "
+                "extracted=%d failed=%d skipped=%d items_rejected=%d (title=%s, url=%s)",
                 job_id,
-                chunks_failed,
                 total_chunks,
+                len(chunk_id_map),
+                chunks_extracted,
+                chunks_failed,
+                chunks_skipped,
+                items_rejected,
                 title,
                 source_url,
             )
-
-        # Background federation enrichment (best-effort, after job marked complete)
-        if federation_client is not None and triples_created > 0:
-            try:
-                from knowledge_service.ingestion.federation import (  # noqa: PLC0415
-                    FederationPhase,
-                )
-
-                fed_phase = FederationPhase(
-                    federation_client=federation_client,
-                    triple_store=stores.triples,
-                    max_lookups=10,
-                    delay=1.0,
-                )
-                # Collect entity labels from knowledge items
-                fed_entities = []
-                for item in knowledge_items:
-                    if hasattr(item, "label") and hasattr(item, "uri"):
-                        fed_entities.append({"label": item.label, "uri": item.uri})
-                    elif isinstance(item, dict):
-                        label = item.get("label") or item.get("subject", "")
-                        uri = item.get("uri") or item.get("subject", "")
-                        if label and uri:
-                            fed_entities.append({"label": label, "uri": uri})
-                if fed_entities:
-                    fed_result = await fed_phase.run(fed_entities)
-                    logger.info(
-                        "Federation enrichment for job %s: %d enriched, %d skipped",
-                        job_id,
-                        fed_result.entities_enriched,
-                        fed_result.entities_skipped,
-                    )
-            except Exception:
-                logger.warning("Federation enrichment failed for job %s", job_id, exc_info=True)
-
-        # Auto-trigger community detection if conditions met
-        if triples_created > 0 and app_state is not None:
-            try:
-                from knowledge_service.config import settings as _settings  # noqa: PLC0415
-
-                total = stores.triples.count_triples()
-                last_rebuild = getattr(app_state, "_last_community_rebuild", 0.0)
-
-                if _should_rebuild_communities(
-                    triples_created=triples_created,
-                    total_triples=total,
-                    min_triples=_settings.community_min_triples,
-                    last_rebuild=last_rebuild,
-                    cooldown=_settings.community_cooldown,
-                ):
-                    import asyncio  # noqa: PLC0415
-
-                    from knowledge_service.stores.community import (  # noqa: PLC0415
-                        CommunityDetector,
-                        CommunitySummarizer,
-                    )
-
-                    detector = CommunityDetector(stores.triples)
-                    communities = await asyncio.to_thread(detector.detect)
-                    if communities and extraction_client:
-                        summarizer = CommunitySummarizer(
-                            extraction_client._client,
-                            stores.triples,
-                            model=extraction_client._model,
-                        )
-                        summarized = []
-                        for c in communities:
-                            summarized.append(await summarizer.summarize_one(c))
-                        community_store = getattr(app_state, "community_store", None)
-                        if community_store:
-                            await community_store.replace_all(summarized)
-                            app_state._last_community_rebuild = time.time()
-                            logger.info("Auto community rebuild: %d communities", len(summarized))
-            except Exception:
-                logger.warning("Auto community rebuild failed", exc_info=True)
 
     except Exception as exc:
         logger.exception("Ingestion failed for job %s in phase %s", job_id, current_phase)
