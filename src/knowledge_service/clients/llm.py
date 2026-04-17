@@ -141,29 +141,6 @@ class ExtractionClient(BaseLLMClient):
             logger.warning("ExtractionClient: LLM API request timed out: %s", last_timeout)
         return None
 
-    async def _call_llm(self, prompt: str) -> list[dict] | None:
-        """Send a prompt to the LLM and return parsed item dicts.
-
-        Returns None on HTTP errors, timeouts, or JSON parse failures (distinguishable
-        from an empty list which means "LLM responded but found nothing").
-        Raises no exceptions.
-        """
-        raw = await self._post_chat(prompt)
-        if raw is None:
-            return None
-
-        from knowledge_service._utils import _extract_json  # noqa: PLC0415
-
-        parsed = _extract_json(raw)
-        if parsed is None:
-            logger.warning(
-                "ExtractionClient: could not parse JSON from response (first 200 chars: %s)",
-                raw[:200],
-            )
-            return None
-
-        return parsed.get("items", [])
-
     async def _call_llm_combined(self, prompt: str) -> list[dict] | None:
         """Send a combined prompt and return merged entity + relation dicts.
 
@@ -195,13 +172,6 @@ class ExtractionClient(BaseLLMClient):
             return entities + relations
 
         return parsed.get("items", [])
-
-    async def call_raw(self, prompt: str) -> list[dict] | None:
-        """Public interface for sending a raw prompt to the LLM.
-
-        Returns parsed item dicts, None on failure. Used by CoreferencePhase.
-        """
-        return await self._call_llm(prompt)
 
     async def extract(
         self,

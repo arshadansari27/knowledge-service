@@ -182,15 +182,15 @@ async def run_ingestion(
         )
         graph = KS_GRAPH_ASSERTED if extractor == "api" else KS_GRAPH_EXTRACTED
 
-        # Phase 4: Coreference (optional — requires NLP results + extracted items)
-        if nlp_results and knowledge_items and extraction_client:
+        # Phase 4: Coreference (optional — requires NLP results)
+        if nlp_results and knowledge_items:
             current_phase = "resolving"
             await tracker.update_status("resolving")
             from knowledge_service.ingestion.coreference import (  # noqa: PLC0415
                 CoreferencePhase,
             )
 
-            coref = CoreferencePhase(extraction_client, stores.pg_pool)
+            coref = CoreferencePhase(stores.pg_pool)
             coref_result = await coref.run(knowledge_items, nlp_results)
             knowledge_items = coref_result.canonicalize(knowledge_items)
             await tracker.update_status("resolving", entities_coref=len(coref_result.groups))

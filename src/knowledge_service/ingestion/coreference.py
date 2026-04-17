@@ -1,4 +1,4 @@
-"""Coreference resolution phase: tier-1 Wikidata QID merging + tier-2 LLM grouping."""
+"""Coreference resolution phase: deterministic Wikidata-QID merging."""
 
 from __future__ import annotations
 
@@ -12,13 +12,6 @@ from knowledge_service.ontology.uri import slugify, to_entity_uri
 logger = logging.getLogger(__name__)
 
 
-def _get_field(item, field: str, default=None):
-    """Get a field from a dict or Pydantic model."""
-    if isinstance(item, dict):
-        return item.get(field, default)
-    return getattr(item, field, default)
-
-
 def _to_dict(item) -> dict:
     """Convert a Pydantic model or dict to a plain dict."""
     if isinstance(item, dict):
@@ -26,19 +19,6 @@ def _to_dict(item) -> dict:
     if hasattr(item, "model_dump"):
         return item.model_dump()
     return dict(item)
-
-
-_COREFERENCE_PROMPT_TEMPLATE = """\
-Given these entity mentions extracted from a document, group those
-that refer to the same real-world entity or concept. Return ONLY a JSON object:
-{{"items": [...]}}
-
-Each item: {{"canonical": "snake_case_label", "aliases": ["alias1", "alias2"]}}
-
-Only group entities you are confident refer to the same thing.
-If an entity doesn't group with anything, omit it.
-
-Entities: {entity_list}"""
 
 
 @dataclass
@@ -53,7 +33,6 @@ class EntityGroup:
 @dataclass
 class CoreferenceResult:
     groups: list[EntityGroup] = field(default_factory=list)
-    unmapped: list[str] = field(default_factory=list)
 
     def canonicalize(self, items: list[dict]) -> list[dict]:
         """Rewrite entity labels in knowledge items to canonical forms.
@@ -65,7 +44,6 @@ class CoreferenceResult:
         for group in self.groups:
             for alias in group.aliases:
                 alias_map[alias.lower()] = group.canonical_label
-            # Also map the canonical label to itself (idempotent)
             alias_map[group.canonical_label.lower()] = group.canonical_label
 
         rewritten = []
@@ -77,7 +55,6 @@ class CoreferenceResult:
             obj = d.get("object")
             if obj and isinstance(obj, str):
                 d["object"] = alias_map.get(obj.lower(), obj)
-            # Also rewrite label/uri for EntityInput items
             label = d.get("label")
             if label and isinstance(label, str):
                 d["label"] = alias_map.get(label.lower(), label)
@@ -89,103 +66,51 @@ class CoreferenceResult:
 
 
 class CoreferencePhase:
-    """Two-tier coreference resolution for knowledge items.
+    """Deterministic coreference resolution via shared Wikidata QID.
 
-    Tier 1: Entities sharing a Wikidata QID (from NlpResults) are merged
-            deterministically — no LLM call needed.
-    Tier 2: Remaining unlinked entities are sent to the LLM in a single call
-            for grouping by semantic similarity.
+    Entities surfaced by the NLP pre-pass that share a Wikidata QID are merged
+    into a single EntityGroup — no LLM call needed. Prior versions ran a
+    second LLM-grouping pass over the remaining unlinked entities; that path
+    was dropped because it no-op'd silently on LLM failure, depended on spaCy
+    being healthy, and produced low-precision groupings.
     """
 
-    def __init__(self, extraction_client: Any, pg_pool: Any) -> None:
-        self._extraction_client = extraction_client
+    def __init__(self, pg_pool: Any) -> None:
         self._pg_pool = pg_pool
 
     async def run(
         self,
-        knowledge_items: list[dict],
+        knowledge_items: list[dict],  # noqa: ARG002 — shape retained for worker stability
         nlp_results: list[NlpResult],
     ) -> CoreferenceResult:
-        """Run coreference resolution and return a CoreferenceResult."""
+        """Group entities that share a Wikidata QID and persist aliases."""
         result = CoreferenceResult()
 
-        # --- Tier 1: Group by Wikidata QID ---
         qid_to_labels: dict[str, list[str]] = {}
-        qid_to_rdf_type: dict[str, str | None] = {}
-
         for nlp_result in nlp_results:
             for entity in nlp_result.entities:
-                if entity.wikidata_id:
-                    qid_to_labels.setdefault(entity.wikidata_id, [])
-                    label = slugify(entity.text)
-                    if label not in qid_to_labels[entity.wikidata_id]:
-                        qid_to_labels[entity.wikidata_id].append(label)
+                if not entity.wikidata_id:
+                    continue
+                qid_to_labels.setdefault(entity.wikidata_id, [])
+                label = slugify(entity.text)
+                if label not in qid_to_labels[entity.wikidata_id]:
+                    qid_to_labels[entity.wikidata_id].append(label)
 
-        # Collect all linked labels to determine what is "linked"
-        linked_labels: set[str] = set()
         for qid, labels in qid_to_labels.items():
             if not labels:
                 continue
             canonical_label = labels[0]
             aliases = labels[1:]
-            group = EntityGroup(
-                canonical_label=canonical_label,
-                canonical_uri=to_entity_uri(canonical_label),
-                aliases=aliases,
-                wikidata_id=qid,
-                rdf_type=qid_to_rdf_type.get(qid),
+            result.groups.append(
+                EntityGroup(
+                    canonical_label=canonical_label,
+                    canonical_uri=to_entity_uri(canonical_label),
+                    aliases=aliases,
+                    wikidata_id=qid,
+                )
             )
-            result.groups.append(group)
-            linked_labels.add(canonical_label)
-            linked_labels.update(aliases)
 
-        # --- Collect all entity labels from knowledge items ---
-        all_item_labels: set[str] = set()
-        for item in knowledge_items:
-            subject = (
-                _get_field(item, "subject") or _get_field(item, "label") or _get_field(item, "uri")
-            )
-            obj = _get_field(item, "object")
-            if subject and isinstance(subject, str):
-                all_item_labels.add(slugify(subject))
-            if obj and isinstance(obj, str) and _get_field(item, "object_type") == "entity":
-                all_item_labels.add(slugify(obj))
-
-        # --- Tier 2: LLM coreference for unlinked entities ---
-        unlinked = sorted(all_item_labels - linked_labels)
-
-        if unlinked:
-            entity_list = ", ".join(unlinked)
-            prompt = _COREFERENCE_PROMPT_TEMPLATE.format(entity_list=entity_list)
-
-            llm_items = await self._extraction_client.call_raw(prompt)
-
-            if llm_items:
-                llm_canonical_labels: set[str] = set()
-                for llm_item in llm_items:
-                    canonical = llm_item.get("canonical", "").strip()
-                    aliases = [a.strip() for a in llm_item.get("aliases", []) if a.strip()]
-                    if not canonical:
-                        continue
-                    canonical_slug = slugify(canonical)
-                    alias_slugs = [slugify(a) for a in aliases]
-                    group = EntityGroup(
-                        canonical_label=canonical_slug,
-                        canonical_uri=to_entity_uri(canonical_slug),
-                        aliases=alias_slugs,
-                    )
-                    result.groups.append(group)
-                    llm_canonical_labels.add(canonical_slug)
-                    llm_canonical_labels.update(alias_slugs)
-
-                # Unmapped = unlinked entities not covered by LLM grouping
-                result.unmapped = sorted(set(unlinked) - llm_canonical_labels)
-            else:
-                result.unmapped = unlinked
-
-        # --- Persist aliases to entity_aliases table ---
         await self._store_aliases(result.groups)
-
         return result
 
     async def _store_aliases(self, groups: list[EntityGroup]) -> None:
@@ -195,11 +120,9 @@ class CoreferencePhase:
 
         rows: list[tuple[str, str, str]] = []
         for group in groups:
-            source_tag = "spacy_linking" if group.wikidata_id else "llm_coreference"
             for alias in group.aliases:
-                rows.append((alias, group.canonical_uri, source_tag))
-            # Also store canonical → canonical_uri mapping
-            rows.append((group.canonical_label, group.canonical_uri, source_tag))
+                rows.append((alias, group.canonical_uri, "spacy_linking"))
+            rows.append((group.canonical_label, group.canonical_uri, "spacy_linking"))
 
         if not rows:
             return
