@@ -199,7 +199,24 @@ class PromptBuilder:
         domains: list[str] | None = None,
     ) -> str:
         """Build single-pass prompt for combined entity + relation extraction."""
-        template = _DEFAULT_COMBINED_TEMPLATE
+        active_domains = domains or (
+            self._registry.get_domains_for_entity_types([]) if self._registry else ["base"]
+        )
+
+        # Check for domain-specific override first (skip "base" — that's the default)
+        template = None
+        for domain in active_domains:
+            if domain == "base":
+                continue
+            override = self._registry.get_prompt(f"{domain}_combined") if self._registry else None
+            if override:
+                template = override
+                break
+        if template is None:
+            template = self._registry.get_prompt("base_combined") if self._registry else None
+        if template is None:
+            template = _DEFAULT_COMBINED_TEMPLATE
+
         context = ""
         if title:
             context += f"Title: {title}\n"
@@ -210,9 +227,6 @@ class PromptBuilder:
             for hint in entity_hints:
                 context += f"- {hint['text']} ({hint['label']})\n"
 
-        active_domains = domains or (
-            self._registry.get_domains_for_entity_types([]) if self._registry else ["base"]
-        )
         predicates_list = self._registry.get_predicates(active_domains) if self._registry else []
         predicates_str = (
             ", ".join(p.label for p in predicates_list)
