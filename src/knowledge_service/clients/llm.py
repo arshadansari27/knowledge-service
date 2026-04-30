@@ -261,51 +261,6 @@ class ExtractionClient(BaseLLMClient):
 _MAX_TEXT_CHARS = 4000
 
 
-def _build_entity_extraction_prompt_fallback(
-    text: str,
-    title: str | None,
-    source_type: str | None,
-    entity_hints: list[dict] | None = None,
-) -> str:
-    """Build the phase-1 prompt that extracts Entity and Event items only."""
-    context = ""
-    if title:
-        context += f"Title: {title}\n"
-    if source_type:
-        context += f"Source type: {source_type}\n"
-    if entity_hints:
-        context += "\nNLP-detected entities (confirm, correct, or add to these):\n"
-        for hint in entity_hints:
-            context += f"- {hint['text']} ({hint['label']})\n"
-    return f"""{context}Extract entities and events from the text below.
-Return ONLY a JSON object: {{"items": [...]}}
-
-Each item must have a knowledge_type field. Supported types and required fields:
-- Entity: uri, rdf_type (e.g. "schema:Person", "schema:Thing"), label, properties (dict), confidence
-- Event: subject, occurred_at (YYYY-MM-DD), confidence, properties (dict)
-
-Entity naming rules:
-- Use canonical, well-known names: "dopamine" not "the neurotransmitter dopamine"
-- Use singular form: "neuron" not "neurons"
-- Use lowercase snake_case: "cold_exposure" not "Cold Exposure"
-- Be specific: "vitamin_d3" not "vitamin_d" when the text specifies D3
-- The uri and label should both use the snake_case form
-
-Extract every distinct entity and event mentioned. If nothing found, return {{"items": []}}
-
-Example:
-Text: "Regular cold water immersion has been shown to increase dopamine levels by up to 250%."
-Output: {{"items": [
-  {{"knowledge_type": "Entity", "uri": "cold_water_immersion", "rdf_type": "schema:Thing", "label": "cold_water_immersion", "properties": {{}}, "confidence": 0.95}},
-  {{"knowledge_type": "Entity", "uri": "dopamine", "rdf_type": "schema:Thing", "label": "dopamine", "properties": {{}}, "confidence": 0.95}}
-]}}
-
-Text:
----
-{text[:_MAX_TEXT_CHARS]}
----"""
-
-
 CANONICAL_PREDICATES: tuple[str, ...] = (
     "causes",
     "increases",
@@ -333,61 +288,6 @@ prompt and ``main.py``'s predicate-embedding seed.
 """
 
 _FALLBACK_PREDICATES = ", ".join(CANONICAL_PREDICATES)
-
-
-def _build_relation_extraction_prompt_fallback(
-    text: str,
-    title: str | None,
-    source_type: str | None,
-    entities: list[str],
-) -> str:
-    """Build the phase-2 prompt that extracts relations constrained to known entities."""
-    context = ""
-    if title:
-        context += f"Title: {title}\n"
-    if source_type:
-        context += f"Source type: {source_type}\n"
-    entity_list = ", ".join(entities)
-    return f"""{context}Extract relationships and claims from the text below.
-Return ONLY a JSON object: {{"items": [...]}}
-
-Known entities: [{entity_list}]
-Prefer these entities as subjects and objects. If the text clearly mentions an entity not in this list, you may use it — follow the entity naming rules below.
-
-Each item must have a knowledge_type field. Supported types and required fields:
-- Claim: subject, predicate, object, object_type, confidence (0.0-0.89)
-- Fact: subject, predicate, object, object_type, confidence (0.9-1.0) for verified facts
-- Relationship: subject, predicate, object, object_type, confidence
-
-Preferred predicates (use these when applicable):
-{_FALLBACK_PREDICATES}
-Only invent a new predicate if none of the above fit.
-
-Entity naming rules (for consistency with the entity list above):
-- Use canonical, well-known names: "dopamine" not "the neurotransmitter dopamine"
-- Use singular form: "neuron" not "neurons"
-- Use lowercase snake_case: "cold_exposure" not "Cold Exposure"
-- Be specific: "vitamin_d3" not "vitamin_d" when the text specifies D3
-
-For object values, include object_type ("entity" or "literal"):
-- "entity": the object is a thing/concept from the entity list above
-- "literal": the object is a measurement, description, or date (e.g. "250%", "2024-01-15")
-
-Use Claim for uncertain assertions, Fact for high-confidence verifiable statements.
-Extract 3-8 items. If nothing found, return {{"items": []}}
-
-Example:
-Text: "Regular cold water immersion has been shown to increase dopamine levels by up to 250%."
-Known entities: [cold_water_immersion, dopamine]
-Output: {{"items": [
-  {{"knowledge_type": "Claim", "subject": "cold_water_immersion", "predicate": "increases", "object": "dopamine", "object_type": "entity", "confidence": 0.75}},
-  {{"knowledge_type": "Claim", "subject": "cold_water_immersion", "predicate": "has_property", "object": "250% dopamine increase", "object_type": "literal", "confidence": 0.7}}
-]}}
-
-Text:
----
-{text[:_MAX_TEXT_CHARS]}
----"""
 
 
 def _build_combined_extraction_prompt_fallback(
