@@ -495,7 +495,7 @@ Ask a natural language question against the knowledge base. Retrieves relevant c
 | `answer` | string | LLM-generated natural language response |
 | `confidence` | float \| null | Highest confidence among supporting knowledge triples. `null` if no triples found. |
 | `sources` | array | Deduplicated content sources used in retrieval |
-| `knowledge_types_used` | string[] | Which of the 7 knowledge types contributed to the answer |
+| `knowledge_types_used` | string[] | Which `knowledge_type` labels (e.g. `Claim`, `Fact`, `Event`, `Entity`) contributed to the answer |
 | `contradictions` | array | Conflicting claims with subject, predicate, object, and confidence |
 
 **In-flight content is excluded.** The hybrid retriever backing this endpoint
@@ -522,7 +522,17 @@ curl -X POST http://localhost:8000/api/ask \
 
 ## Knowledge Types Reference
 
-Knowledge items are sent in the `knowledge` array of `/api/content` and `/api/claims`. Each item has a `knowledge_type` discriminator field.
+Knowledge items are sent in the `knowledge` array of `/api/content` and
+`/api/claims`. Each item must match one of three Pydantic input shapes —
+`TripleInput` (`subject` / `predicate` / `object`), `EventInput` (`subject` /
+`occurred_at`), or `EntityInput` (`uri` / `rdf_type` / `label`). Pydantic
+resolves the union by shape; the `knowledge_type` field is a free-form label
+that is preserved through to provenance and surfaced to readers but does not
+drive validation.
+
+The labels below (`Claim` / `Fact` / `Relationship` / `Event` / `Entity`) are
+conventions for the LLM extraction prompts and the admin browser; they all
+collapse onto one of the three Pydantic shapes.
 
 ### Claim
 
@@ -602,35 +612,29 @@ A typed entity with ontology class and label.
 }
 ```
 
-### Conclusion
+### Time-bounded triples
 
-A derived statement with a reasoning chain.
-
-```json
-{
-  "knowledge_type": "Conclusion",
-  "concludes": "Caffeine disrupts deep sleep phases",
-  "derived_from": ["hash1", "hash2"],
-  "inference_method": "bayesian_combination",
-  "confidence": 0.78
-}
-```
-
-### TemporalState
-
-A time-bounded property value. Both `valid_from` and `valid_until` are required, and `valid_until` must be >= `valid_from`.
+Use `TripleInput` with `valid_from` and `valid_until` to express
+time-bounded facts (e.g. who was CEO of a company between two dates):
 
 ```json
 {
-  "knowledge_type": "TemporalState",
+  "knowledge_type": "TemporalFact",
   "subject": "ks:tesla",
-  "property": "ks:ceo",
-  "value": "Elon Musk",
+  "predicate": "ks:ceo",
+  "object": "Elon Musk",
   "valid_from": "2008-10-01",
   "valid_until": "2025-12-31",
   "confidence": 1.0
 }
 ```
+
+> Earlier versions of this doc described `Conclusion` and `TemporalState`
+> shapes with custom field names (`concludes` / `derived_from`,
+> `property` / `value`). Those shapes have no Pydantic model; the LLM
+> extraction prompts no longer emit them. Use `TripleInput` with a
+> descriptive `knowledge_type` label and the `valid_from` / `valid_until`
+> bounds instead.
 
 ---
 
