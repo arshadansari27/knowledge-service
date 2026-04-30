@@ -65,19 +65,28 @@ For deployment details, see [docs/deployment.md](docs/deployment.md).
 
 ---
 
-## The 7 Knowledge Types
+## Knowledge Types
 
-Every piece of knowledge is classified as one of these seven types:
+The schema accepts three Pydantic input shapes
+(`TripleInput` / `EventInput` / `EntityInput`). The `knowledge_type` field
+is a free-form label that is preserved on each triple's RDF-star annotation
+and shown in the admin browser, but it does not drive validation — Pydantic
+resolves the union by shape.
 
-| Type | Truth Model | Example |
-|------|-------------|---------|
-| **Claim** | Probabilistic (0.0–1.0) | "Intermittent fasting reduces inflammation" — 0.7 from a YouTube video |
-| **Fact** | High-confidence (≥0.9) | "Project AEGIS uses PostgreSQL 16" — from codebase scan |
-| **Event** | Timestamped, deterministic | Salary payment received 2026-03-01 |
-| **Entity** | Typed, ontology-linked | "AEGIS is a schema:SoftwareApplication" |
-| **Relationship** | Typed link between entities | "AEGIS depends-on PostgreSQL" |
-| **Conclusion** | Derived, reasoning chain preserved | "Cold exposure likely increases dopamine" — Noisy-OR combination of 3 sources |
-| **TemporalState** | Time-bounded property (valid_until required) | Bitcoin price $X between date A and date B |
+Conventional labels:
+
+| Label | Shape | Truth model | Example |
+|-------|-------|-------------|---------|
+| **Claim** | `TripleInput` | Probabilistic (0.0–1.0) | "Intermittent fasting reduces inflammation" — 0.7 from a YouTube video |
+| **Fact** | `TripleInput` | High-confidence (≥0.9) | "Project AEGIS uses PostgreSQL 16" — from codebase scan |
+| **Relationship** | `TripleInput` | Typed link between entities | "AEGIS depends-on PostgreSQL" |
+| **Event** | `EventInput` | Timestamped occurrence | Salary payment received 2026-03-01 |
+| **Entity** | `EntityInput` | Typed, ontology-linked | "AEGIS is a schema:SoftwareApplication" |
+
+Time-bounded facts use `TripleInput` with `valid_from` and `valid_until`.
+Earlier versions of this doc described separate `Conclusion` and
+`TemporalState` shapes with custom field names — those shapes had no
+Pydantic model and the extraction prompts no longer emit them.
 
 ---
 
@@ -268,10 +277,10 @@ Accepts a **single object** or a **JSON array** for batch processing. When an ar
 ]
 ```
 
-All 7 knowledge types are accepted. Examples for each:
+All three input shapes are accepted. Examples:
 
 ```json
-// Event
+// EventInput
 {
   "knowledge_type": "Event",
   "subject": "http://knowledge.local/data/payment/2026-03-01",
@@ -279,26 +288,17 @@ All 7 knowledge types are accepted. Examples for each:
   "properties": { "amount": "4500", "currency": "GBP" }
 }
 
-// TemporalState (valid_until is mandatory)
+// TripleInput with temporal bounds (time-bounded fact)
 {
-  "knowledge_type": "TemporalState",
+  "knowledge_type": "TemporalFact",
   "subject": "http://dbpedia.org/resource/Bitcoin",
-  "property": "http://schema.org/price",
-  "value": "65000",
+  "predicate": "http://schema.org/price",
+  "object": "65000",
   "valid_from": "2024-03-01",
   "valid_until": "2024-03-31"
 }
 
-// Conclusion
-{
-  "knowledge_type": "Conclusion",
-  "concludes": "Cold exposure likely increases dopamine based on 3 independent sources",
-  "derived_from": ["<triple_hash_1>", "<triple_hash_2>", "<triple_hash_3>"],
-  "inference_method": "bayesian_combination",
-  "confidence": 0.88
-}
-
-// Relationship
+// TripleInput (Relationship)
 {
   "knowledge_type": "Relationship",
   "subject": "http://knowledge.local/data/aegis",
@@ -742,7 +742,7 @@ Pull requests run lint + test only (no version bump or Docker push).
 src/knowledge_service/
 ├── main.py                  # FastAPI app factory + lifespan
 ├── config.py                # Settings (pydantic-settings, .env)
-├── models.py                # Pydantic models for all 7 knowledge types + API contracts
+├── models.py                # Pydantic input shapes (TripleInput / EventInput / EntityInput) + API contracts
 ├── _utils.py                # Shared RDF helpers + JSON extraction from LLM output
 ├── chunking.py              # Markdown-aware text splitting with section headers
 ├── admin/
@@ -825,7 +825,7 @@ Deployed to production (~640 tests).
 
 | Capability | What |
 |------------|------|
-| Knowledge model | 7 knowledge types (Claim / Fact / Event / Entity / Relationship / Conclusion / TemporalState), RDF-star confidence, temporal validity |
+| Knowledge model | 3 Pydantic input shapes (`TripleInput` / `EventInput` / `EntityInput`); `knowledge_type` is a free-form label preserved on each triple's RDF-star annotation; temporal validity via `valid_from` / `valid_until` |
 | RDF store | pyoxigraph, 5 named graphs by provenance class (ontology / asserted / extracted / inferred / federated) |
 | Ingestion | Parse (PDF / HTML / CSV / JSON / text) → chunk → embed → spaCy NER + Wikidata linking → LLM extraction → QID-based coreference → ingest |
 | Hybrid retrieval | BM25 (OR-tokenised `to_tsquery`) + pgvector, fused via Reciprocal Rank Fusion |
