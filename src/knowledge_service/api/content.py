@@ -86,18 +86,9 @@ async def _accept_content_request(body: ContentRequest, stores) -> dict:
     content_store = stores.content
     pg_pool = stores.pg_pool
 
-    # Step 1: Upsert content metadata
-    content_id = await content_store.upsert_metadata(
-        url=body.url,
-        title=body.title,
-        summary=body.summary or "",
-        raw_text=body.raw_text or "",
-        source_type=body.source_type,
-        tags=body.tags,
-        metadata=body.metadata,
-    )
-
-    # Step 1b: URL auto-fetch when no text provided
+    # Step 1: URL auto-fetch when no text provided. Done BEFORE the metadata
+    # upsert so we never persist an empty-text row that disagrees with what
+    # the worker actually ingests.
     if not body.raw_text and not body.summary and _parser_registry and body.url.startswith("http"):
         if not _is_url_safe(body.url):
             return {"error": "URL points to a private or internal network", "status_code": 422}
@@ -121,21 +112,22 @@ async def _accept_content_request(body: ContentRequest, stores) -> dict:
                 if parsed.title and not body.title:
                     updates["title"] = parsed.title
                 body = body.model_copy(update=updates)
-                # Update metadata with fetched content
-                await content_store.upsert_metadata(
-                    url=body.url,
-                    title=body.title,
-                    summary=body.summary or "",
-                    raw_text=body.raw_text or "",
-                    source_type=body.source_type,
-                    tags=body.tags,
-                    metadata=body.metadata,
-                )
         except Exception as exc:
             logger.warning("URL auto-fetch failed for %s: %s", body.url, exc)
             return {"error": f"Failed to fetch URL: {exc}", "status_code": 422}
 
-    # Step 2: Chunk the text
+    # Step 2: Upsert content metadata (once, with the final body).
+    content_id = await content_store.upsert_metadata(
+        url=body.url,
+        title=body.title,
+        summary=body.summary or "",
+        raw_text=body.raw_text or "",
+        source_type=body.source_type,
+        tags=body.tags,
+        metadata=body.metadata,
+    )
+
+    # Step 3: Chunk the text
     text = body.raw_text or body.summary or body.title
     raw_chunks = split_into_chunks(text, chunk_size=_CHUNK_SIZE, chunk_overlap=_CHUNK_OVERLAP)
 
@@ -151,7 +143,7 @@ async def _accept_content_request(body: ContentRequest, stores) -> dict:
             }
         )
 
-    # Step 3: Cap chunks
+    # Step 4: Cap chunks
     chunks_capped_from = None
     if len(chunk_records) > _MAX_CHUNKS:
         chunks_capped_from = len(chunk_records)
@@ -160,7 +152,7 @@ async def _accept_content_request(body: ContentRequest, stores) -> dict:
         )
         chunk_records = chunk_records[:_MAX_CHUNKS]
 
-    # Step 4+5: Atomically create job if no active one exists. If an active
+    # Step 5+6: Atomically create job if no active one exists. If an active
     # job is already running for this content_id, we surface *that* job's id
     # to the caller instead of 409 Conflict. This makes POST /api/content
     # idempotent under upstream retry-spam (observed 25× 409s in prod over

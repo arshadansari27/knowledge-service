@@ -40,8 +40,10 @@ class IngestResult:
 
 
 def compute_hash(triple: dict) -> str:
-    s = NamedNode(triple["subject"])
-    p = NamedNode(triple["predicate"])
+    from knowledge_service.ontology.uri import to_entity_uri, to_predicate_uri  # noqa: PLC0415
+
+    s = NamedNode(to_entity_uri(triple["subject"]))
+    p = NamedNode(to_predicate_uri(triple["predicate"]))
     o_val = triple["object"]
     o = NamedNode(o_val) if is_uri(o_val) else Literal(o_val)
     return hashlib.sha256(str(Triple(s, p, o)).encode()).hexdigest()

@@ -134,7 +134,7 @@ class TripleStore:
         obj_sparql = _sparql_object(object_)
         ask_sparql = f"""
             ASK {{
-                GRAPH ?g {{
+                GRAPH <{graph_uri}> {{
                     << <{subject}> <{predicate}> {obj_sparql} >>
                         <{KS_CONFIDENCE.value}> ?conf .
                 }}
