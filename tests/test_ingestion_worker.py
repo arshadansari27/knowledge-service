@@ -1,5 +1,6 @@
 # tests/test_ingestion_worker.py
 from contextlib import asynccontextmanager
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
 from knowledge_service.ingestion.phases import ExtractPhase
@@ -53,8 +54,13 @@ def _make_mock_pool():
 class TestRunIngestionWithNlp:
     """Test that run_ingestion integrates NLP pre-pass and coreference."""
 
-    async def test_run_ingestion_accepts_nlp_pipeline(self):
-        """Verify run_ingestion works with a mock nlp pipeline without crashing."""
+    async def test_run_ingestion_accepts_nlp_pipeline(self, monkeypatch):
+        """Verify run_ingestion works with a mock nlp pipeline without crashing.
+
+        ProcessPhase's per-triple ingestion is exercised by other tests; here
+        we patch ``ingest_triple`` to a no-op so this test stays focused on the
+        NLP/coreference wiring above ProcessPhase.
+        """
         pool, conn = _make_mock_pool()
 
         # Mock stores
@@ -64,6 +70,11 @@ class TestRunIngestionWithNlp:
         stores.content.delete_chunks = AsyncMock()
         stores.content.insert_chunks = AsyncMock(return_value=[(0, "chunk-uuid-0")])
         stores.content.replace_chunks = AsyncMock(return_value=[(0, "chunk-uuid-0")])
+
+        async def _noop_ingest_triple(*args, **kwargs):
+            return SimpleNamespace(is_new=True, contradictions=[])
+
+        monkeypatch.setattr("knowledge_service.ingestion.phases.ingest_triple", _noop_ingest_triple)
 
         # Mock embedding client
         embedding_client = AsyncMock()

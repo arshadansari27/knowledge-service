@@ -242,8 +242,12 @@ class TestFallbackPrompts:
         from knowledge_service.clients.llm import _build_relation_extraction_prompt_fallback
 
         prompt = _build_relation_extraction_prompt_fallback("text", None, None, ["a", "b"])
-        for t in ("Claim", "Fact", "Relationship", "TemporalState", "Conclusion"):
+        for t in ("Claim", "Fact", "Relationship"):
             assert t in prompt
+        # TemporalState / Conclusion were dropped from prompts because they had
+        # no Pydantic models on the receiving end and were silently rejected.
+        for t in ("TemporalState", "Conclusion"):
+            assert t not in prompt
 
     def test_relation_prompt_includes_predicates(self):
         from knowledge_service.clients.llm import _build_relation_extraction_prompt_fallback

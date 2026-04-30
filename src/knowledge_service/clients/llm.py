@@ -29,7 +29,13 @@ class EmbeddingClient(BaseLLMClient):
     """HTTP client wrapping the OpenAI-compatible embeddings API."""
 
     def __init__(self, base_url: str, model: str, api_key: str) -> None:
-        super().__init__(base_url, model, api_key, read_timeout=30.0)
+        # 120 s read budget. The shared Ollama instance hosting
+        # ``nomic-embed-text`` runs alongside other models on a busy node;
+        # 32-chunk batch requests routinely exceed 30 s during ingestion
+        # bursts. Prod metrics 2026-04 showed ~225 ingestion jobs failing per
+        # 14 d in the embedding phase from read timeouts at the previous
+        # 30 s budget.
+        super().__init__(base_url, model, api_key, read_timeout=120.0)
 
     async def embed(self, text: str) -> list[float]:
         """Generate embedding vector for a single text."""
@@ -300,11 +306,33 @@ Text:
 ---"""
 
 
-_FALLBACK_PREDICATES = (
-    "causes, increases, decreases, inhibits, activates, is_a, part_of, located_in, "
-    "created_by, depends_on, related_to, contains, precedes, follows, has_property, "
-    "used_for, produced_by, associated_with"
+CANONICAL_PREDICATES: tuple[str, ...] = (
+    "causes",
+    "increases",
+    "decreases",
+    "inhibits",
+    "activates",
+    "is_a",
+    "part_of",
+    "located_in",
+    "created_by",
+    "depends_on",
+    "related_to",
+    "contains",
+    "precedes",
+    "follows",
+    "has_property",
+    "used_for",
+    "produced_by",
+    "associated_with",
 )
+"""Canonical predicate names matching ontology/domains/base.ttl.
+
+Single source of truth shared between the LLM relation-extraction fallback
+prompt and ``main.py``'s predicate-embedding seed.
+"""
+
+_FALLBACK_PREDICATES = ", ".join(CANONICAL_PREDICATES)
 
 
 def _build_relation_extraction_prompt_fallback(
@@ -330,8 +358,6 @@ Each item must have a knowledge_type field. Supported types and required fields:
 - Claim: subject, predicate, object, object_type, confidence (0.0-0.89)
 - Fact: subject, predicate, object, object_type, confidence (0.9-1.0) for verified facts
 - Relationship: subject, predicate, object, object_type, confidence
-- TemporalState: subject, property, value, valid_from (YYYY-MM-DD), valid_until (YYYY-MM-DD), confidence
-- Conclusion: concludes (text), derived_from (list of identifiers), inference_method, confidence
 
 Preferred predicates (use these when applicable):
 {_FALLBACK_PREDICATES}
@@ -402,8 +428,6 @@ Each relation item must have a knowledge_type field:
 - Claim: subject, predicate, object, object_type, confidence (0.0-0.89)
 - Fact: subject, predicate, object, object_type, confidence (0.9-1.0) for verified facts
 - Relationship: subject, predicate, object, object_type, confidence
-- TemporalState: subject, property, value, valid_from (YYYY-MM-DD), valid_until (YYYY-MM-DD), confidence
-- Conclusion: concludes (text), derived_from (list of identifiers), inference_method, confidence
 
 Preferred predicates (use these when applicable):
 {_FALLBACK_PREDICATES}

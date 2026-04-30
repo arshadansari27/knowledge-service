@@ -69,7 +69,7 @@ class TestCoreferenceResultCanonicalize:
         result = CoreferenceResult(groups=[group])
         items = [{"subject": "modi", "predicate": "is_pm_of", "object": "india"}]
         rewritten = result.canonicalize(items)
-        assert rewritten[0]["subject"] == "narendra_modi"
+        assert rewritten[0].subject == "narendra_modi"
 
     def test_canonicalize_rewrites_object(self):
         group = EntityGroup(
@@ -80,7 +80,7 @@ class TestCoreferenceResultCanonicalize:
         result = CoreferenceResult(groups=[group])
         items = [{"subject": "modi", "predicate": "leads", "object": "bharat"}]
         rewritten = result.canonicalize(items)
-        assert rewritten[0]["object"] == "india"
+        assert rewritten[0].object == "india"
 
     def test_canonicalize_case_insensitive(self):
         group = EntityGroup(
@@ -91,13 +91,54 @@ class TestCoreferenceResultCanonicalize:
         result = CoreferenceResult(groups=[group])
         items = [{"subject": "Modi", "predicate": "p", "object": "o"}]
         rewritten = result.canonicalize(items)
-        assert rewritten[0]["subject"] == "narendra_modi"
+        assert rewritten[0].subject == "narendra_modi"
 
     def test_canonicalize_leaves_unmatched_unchanged(self):
         result = CoreferenceResult(groups=[])
         items = [{"subject": "x", "predicate": "p", "object": "y"}]
         rewritten = result.canonicalize(items)
-        assert rewritten[0]["subject"] == "x"
+        assert rewritten[0].subject == "x"
+
+    def test_canonicalize_preserves_entity_input(self):
+        """Entity items (uri/rdf_type/label) survive coref intact."""
+        group = EntityGroup(
+            canonical_label="dopamine",
+            canonical_uri=to_entity_uri("dopamine"),
+            aliases=["da"],
+        )
+        result = CoreferenceResult(groups=[group])
+        items = [
+            {
+                "knowledge_type": "Entity",
+                "uri": "da",
+                "rdf_type": "schema:Thing",
+                "label": "da",
+                "properties": {},
+                "confidence": 0.9,
+            }
+        ]
+        rewritten = result.canonicalize(items)
+        assert hasattr(rewritten[0], "to_triples")
+        assert rewritten[0].uri == "dopamine"
+        assert rewritten[0].label == "dopamine"
+
+    def test_canonicalize_preserves_event_input(self):
+        """Event items (subject/occurred_at) survive coref intact."""
+        from datetime import date
+
+        result = CoreferenceResult(groups=[])
+        items = [
+            {
+                "knowledge_type": "Event",
+                "subject": "launch",
+                "occurred_at": date(2026, 4, 30),
+                "properties": {},
+                "confidence": 0.9,
+            }
+        ]
+        rewritten = result.canonicalize(items)
+        assert hasattr(rewritten[0], "to_triples")
+        assert rewritten[0].subject == "launch"
 
 
 class TestCoreferencePhaseWikidataTier:
@@ -262,4 +303,4 @@ class TestCoreferencePhaseRunIntegration:
         rewritten = result.canonicalize(knowledge_items)
 
         # "narendra_modi" is an alias of canonical "modi" (first QID-linked label)
-        assert rewritten[0]["subject"] == "modi"
+        assert rewritten[0].subject == "modi"
