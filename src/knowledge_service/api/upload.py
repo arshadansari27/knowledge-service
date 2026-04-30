@@ -133,7 +133,7 @@ async def upload_content(
         _run_ingestion_worker,
         result["job_id"],
         result["content_id"],
-        body,
+        result["body"],
         result["chunk_records"],
         request.app.state,
     )

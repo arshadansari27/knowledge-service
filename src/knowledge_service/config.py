@@ -30,7 +30,7 @@ class Settings(BaseSettings):
     # Reader-side status filtering
     reader_exclude_inflight: bool = True  # env: READER_EXCLUDE_INFLIGHT
 
-    model_config = {"env_file": ".env"}
+    model_config = {"env_file": ".env", "extra": "ignore"}
 
 
 settings = Settings()
