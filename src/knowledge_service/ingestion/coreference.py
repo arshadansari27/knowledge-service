@@ -6,10 +6,16 @@ import logging
 from dataclasses import dataclass, field
 from typing import Any
 
+from pydantic import TypeAdapter, ValidationError
+
+from knowledge_service.models import KnowledgeInput
 from knowledge_service.nlp import NlpResult
 from knowledge_service.ontology.uri import slugify, to_entity_uri
 
 logger = logging.getLogger(__name__)
+
+
+_KNOWLEDGE_ADAPTER: TypeAdapter[KnowledgeInput] = TypeAdapter(KnowledgeInput)
 
 
 def _to_dict(item) -> dict:
@@ -34,11 +40,15 @@ class EntityGroup:
 class CoreferenceResult:
     groups: list[EntityGroup] = field(default_factory=list)
 
-    def canonicalize(self, items: list[dict]) -> list[dict]:
+    def canonicalize(self, items: list) -> list:
         """Rewrite entity labels in knowledge items to canonical forms.
 
         Builds alias_map from all groups (case-insensitive), then rewrites
-        'subject' and 'object' fields in each item dict.
+        'subject' and 'object' fields in each item. Re-validates the rewritten
+        item back into a Pydantic ``KnowledgeInput`` so downstream
+        ``ProcessPhase`` can call ``to_triples()`` on Triple/Event/Entity
+        items uniformly. Items that fail re-validation pass through as dicts
+        and a warning is logged.
         """
         alias_map: dict[str, str] = {}
         for group in self.groups:
@@ -46,7 +56,7 @@ class CoreferenceResult:
                 alias_map[alias.lower()] = group.canonical_label
             alias_map[group.canonical_label.lower()] = group.canonical_label
 
-        rewritten = []
+        rewritten: list = []
         for item in items:
             d = _to_dict(item)
             subject = d.get("subject")
@@ -61,7 +71,15 @@ class CoreferenceResult:
             uri = d.get("uri")
             if uri and isinstance(uri, str):
                 d["uri"] = alias_map.get(uri.lower(), uri)
-            rewritten.append(d)
+            try:
+                rewritten.append(_KNOWLEDGE_ADAPTER.validate_python(d))
+            except ValidationError as exc:
+                logger.warning(
+                    "Coref canonicalize: re-validation failed (keys=%s): %s",
+                    sorted(d.keys()),
+                    exc.errors()[:2],
+                )
+                rewritten.append(d)
         return rewritten
 
 

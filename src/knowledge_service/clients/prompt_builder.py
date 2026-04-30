@@ -52,8 +52,6 @@ Each item must have a knowledge_type field. Supported types and required fields:
 - Claim: subject, predicate, object, object_type, confidence (0.0-0.89)
 - Fact: subject, predicate, object, object_type, confidence (0.9-1.0) for verified facts
 - Relationship: subject, predicate, object, object_type, confidence
-- TemporalState: subject, property, value, valid_from (YYYY-MM-DD), valid_until (YYYY-MM-DD), confidence
-- Conclusion: concludes (text), derived_from (list of identifiers), inference_method, confidence
 
 Preferred predicates (use these when applicable):
 {predicates}
@@ -108,8 +106,6 @@ Each relation item must have a knowledge_type field:
 - Claim: subject, predicate, object, object_type, confidence (0.0-0.89)
 - Fact: subject, predicate, object, object_type, confidence (0.9-1.0) for verified facts
 - Relationship: subject, predicate, object, object_type, confidence
-- TemporalState: subject, property, value, valid_from (YYYY-MM-DD), valid_until (YYYY-MM-DD), confidence
-- Conclusion: concludes (text), derived_from (list of identifiers), inference_method, confidence
 
 Preferred predicates (use these when applicable):
 {predicates}

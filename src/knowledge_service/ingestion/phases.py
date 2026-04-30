@@ -202,7 +202,12 @@ class ProcessPhase:
             elif isinstance(item, dict) and "subject" in item and "predicate" in item:
                 triples = [item]
             else:
-                logger.warning("Skipping unrecognized knowledge item: %s", type(item))
+                keys = sorted(item.keys()) if isinstance(item, dict) else None
+                logger.warning(
+                    "Skipping unrecognized knowledge item: type=%s keys=%s",
+                    type(item).__name__,
+                    keys,
+                )
                 continue
 
             for triple in triples:

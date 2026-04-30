@@ -9,7 +9,11 @@ from typing import AsyncIterator
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 
-from knowledge_service.clients.llm import EmbeddingClient, ExtractionClient
+from knowledge_service.clients.llm import (
+    CANONICAL_PREDICATES,
+    EmbeddingClient,
+    ExtractionClient,
+)
 from knowledge_service.clients.rag import RAGClient
 from knowledge_service.config import settings
 from knowledge_service.ontology.bootstrap import bootstrap_ontology
@@ -50,27 +54,7 @@ def _canonical_predicate_entries(
     if domain_registry is not None:
         return [(p.uri, p.label) for p in domain_registry.get_predicates()]
 
-    _fallback = [
-        "causes",
-        "increases",
-        "decreases",
-        "inhibits",
-        "activates",
-        "is_a",
-        "part_of",
-        "located_in",
-        "created_by",
-        "depends_on",
-        "related_to",
-        "contains",
-        "precedes",
-        "follows",
-        "has_property",
-        "used_for",
-        "produced_by",
-        "associated_with",
-    ]
-    return [(f"{KS}{p}", p.replace("_", " ")) for p in _fallback]
+    return [(f"{KS}{p}", p.replace("_", " ")) for p in CANONICAL_PREDICATES]
 
 
 @asynccontextmanager
@@ -99,16 +83,6 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     pg_pool = await asyncpg.create_pool(settings.database_url)
     await run_migrations(pg_pool)
 
-    # Mark orphaned ingestion jobs as failed (lost on restart)
-    async with pg_pool.acquire() as conn:
-        updated = await conn.execute(
-            """UPDATE ingestion_jobs SET status = 'failed',
-                      error = '{"type": "ServiceRestart", "message": "interrupted by service restart", "phase": "unknown"}'
-               WHERE status NOT IN ('completed', 'failed')"""
-        )
-        if updated != "UPDATE 0":
-            logger.info("Marked orphaned ingestion jobs as failed: %s", updated)
-
     # LLM clients
     embedding_client = EmbeddingClient(
         base_url=settings.llm_base_url,
@@ -131,12 +105,24 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     app.state.stores = stores
     app.state.outbox_drainer = OutboxDrainer(pg_pool, triple_store)
 
+    # Replay any outbox rows committed by a prior run before we declare any
+    # mid-flight jobs failed — drain first, then janitor cleans up what's left.
     drained = await app.state.outbox_drainer.drain_pending()
     if drained:
         logger.info(
             "Startup drain: applied %d pending outbox rows from prior run",
             len(drained),
         )
+
+    # Mark orphaned ingestion jobs as failed (lost on restart)
+    async with pg_pool.acquire() as conn:
+        updated = await conn.execute(
+            """UPDATE ingestion_jobs SET status = 'failed',
+                      error = '{"type": "ServiceRestart", "message": "interrupted by service restart", "phase": "unknown"}'
+               WHERE status NOT IN ('completed', 'failed')"""
+        )
+        if updated != "UPDATE 0":
+            logger.info("Marked orphaned ingestion jobs as failed: %s", updated)
 
     # DomainRegistry
     prompts_dir = ontology_dir / "prompts"
@@ -238,11 +224,10 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         classify_client=classify_client,
     )
 
-    # BACKWARD COMPAT: Keep old state references for any code not yet migrated
+    # State references read by admin/* and api/health.py.
     app.state.knowledge_store = triple_store
     app.state.embedding_store = stores.content
     app.state.pg_pool = pg_pool
-    app.state.entity_resolver = None  # Removed — entity resolution is in EntityStore now
 
     yield
 
