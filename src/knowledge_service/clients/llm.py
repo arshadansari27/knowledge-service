@@ -172,8 +172,16 @@ class ExtractionClient(BaseLLMClient):
             relations = parsed.get("relations", [])
             # qwen3 occasionally returns a dict instead of a list — coerce to list
             if not isinstance(entities, list):
+                logger.warning(
+                    "ExtractionClient: model returned non-list 'entities' (%s); coercing",
+                    type(entities).__name__,
+                )
                 entities = list(entities.values()) if isinstance(entities, dict) else []
             if not isinstance(relations, list):
+                logger.warning(
+                    "ExtractionClient: model returned non-list 'relations' (%s); coercing",
+                    type(relations).__name__,
+                )
                 relations = list(relations.values()) if isinstance(relations, dict) else []
             return entities + relations
 

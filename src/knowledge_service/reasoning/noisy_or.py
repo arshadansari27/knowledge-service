@@ -6,4 +6,5 @@ from math import prod
 def noisy_or(confidences: list[float]) -> float:
     if not confidences:
         return 0.0
-    return 1.0 - prod(1.0 - c for c in confidences)
+    clamped = [max(0.0, min(1.0, c)) for c in confidences]
+    return 1.0 - prod(1.0 - c for c in clamped)
