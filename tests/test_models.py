@@ -348,3 +348,47 @@ class TestFuzzyDateCoercion:
         }
         result = _ADAPTER.validate_python(payload)
         assert result.occurred_at == date(2025, 6, 1)
+
+    def test_event_iso_datetime_string_strips_time(self):
+        # qwen3 occasionally emits ISO datetime with time/timezone — strip
+        # the time portion rather than drop the event.
+        for ts in ("2025-06-01T10:00:00Z", "2025-06-01T10:00:00+05:30", "2025-06-01 10:00:00"):
+            payload = {
+                "knowledge_type": "Event",
+                "subject": "x",
+                "occurred_at": ts,
+                "confidence": 0.9,
+            }
+            result = _ADAPTER.validate_python(payload)
+            assert result.occurred_at == date(2025, 6, 1), f"failed for ts={ts!r}"
+
+
+class TestNullKnowledgeType:
+    """Pattern A follow-up — qwen3 sometimes emits ``knowledge_type: null``.
+    Without coercion every such item is silently rejected by the str field."""
+
+    def test_null_knowledge_type_routes_by_shape(self):
+        payload = {
+            "knowledge_type": None,
+            "uri": "x",
+            "rdf_type": "schema:Thing",
+            "label": "x",
+            "confidence": 0.9,
+        }
+        result = _ADAPTER.validate_python(payload)
+        assert isinstance(result, EntityInput)
+
+
+class TestPropertyListCoercion:
+    """Pattern C follow-up — list values may contain non-string scalars."""
+
+    def test_list_values_with_numbers_are_stringified(self):
+        e = EntityInput(
+            uri="acme",
+            rdf_type="schema:Corporation",
+            label="acme",
+            properties={"founded": [2020, 2021]},
+        )
+        triples = e.to_triples()
+        founded_objects = sorted(t["object"] for t in triples if "founded" in t["predicate"])
+        assert founded_objects == ["2020", "2021"]

@@ -14,6 +14,35 @@ from knowledge_service.ontology.uri import KS, RDF_TYPE, RDFS_LABEL, to_entity_u
 PropertyValue = str | list[str]
 
 
+def _normalise_knowledge_type(value: Any, default: str) -> str:
+    """Coerce qwen3's occasional ``"knowledge_type": null`` to the default
+    so the routed member's own validator doesn't reject the whole item."""
+    if value is None:
+        return default
+    return value
+
+
+def _coerce_property_values(value: Any) -> Any:
+    """Stringify numeric/bool scalars inside ``properties`` so qwen3's
+    occasional ``{"founded": [2020, 2021]}`` doesn't sink the whole item.
+    Nested structures (dicts, lists of lists) are passed through unchanged
+    so Pydantic's later validation can reject them with a real error."""
+    if not isinstance(value, dict):
+        return value
+    coerced: dict[str, Any] = {}
+    for key, item in value.items():
+        if isinstance(item, (int, float, bool)) and not isinstance(item, str):
+            coerced[key] = str(item)
+        elif isinstance(item, list):
+            coerced[key] = [
+                str(v) if isinstance(v, (int, float, bool)) and not isinstance(v, str) else v
+                for v in item
+            ]
+        else:
+            coerced[key] = item
+    return coerced
+
+
 class TripleInput(BaseModel):
     """Universal knowledge unit. Replaces Claim, Fact, Relationship, TemporalState."""
 
@@ -24,6 +53,11 @@ class TripleInput(BaseModel):
     knowledge_type: str = "claim"
     valid_from: date | None = None
     valid_until: date | None = None
+
+    @field_validator("knowledge_type", mode="before")
+    @classmethod
+    def _coerce_null_knowledge_type(cls, value: Any) -> Any:
+        return _normalise_knowledge_type(value, "claim")
 
     def to_triples(self) -> list[dict]:
         return [
@@ -54,17 +88,40 @@ class EventInput(BaseModel):
     confidence: float = Field(ge=0.0, le=1.0, default=1.0)
     knowledge_type: str = "event"
 
+    @field_validator("knowledge_type", mode="before")
+    @classmethod
+    def _coerce_null_knowledge_type(cls, value: Any) -> Any:
+        return _normalise_knowledge_type(value, "event")
+
+    @field_validator("properties", mode="before")
+    @classmethod
+    def _coerce_property_scalars(cls, value: Any) -> Any:
+        return _coerce_property_values(value)
+
     @field_validator("occurred_at", mode="before")
     @classmethod
     def _coerce_unparseable_date(cls, value: Any) -> Any:
         if value is None or isinstance(value, date):
             return value
-        if isinstance(value, str):
+        if not isinstance(value, str):
+            return value
+        # Try strict ISO date first, then ISO datetime, then a last-ditch
+        # 10-char prefix grab for "YYYY-MM-DDTHH:MM:SS+TZ" or
+        # "YYYY-MM-DD HH:MM:SS" shapes the LLM sometimes emits.
+        try:
+            return date.fromisoformat(value)
+        except ValueError:
+            pass
+        try:
+            return datetime.fromisoformat(value.replace("Z", "+00:00")).date()
+        except ValueError:
+            pass
+        if len(value) >= 10:
             try:
-                return date.fromisoformat(value)
+                return date.fromisoformat(value[:10])
             except ValueError:
-                return None
-        return value
+                pass
+        return None
 
     def to_triples(self) -> list[dict]:
         if self.occurred_at is None:
@@ -107,6 +164,16 @@ class EntityInput(BaseModel):
     properties: dict[str, PropertyValue] = Field(default_factory=dict)
     confidence: float = Field(ge=0.0, le=1.0, default=0.95)
     knowledge_type: str = "entity"
+
+    @field_validator("knowledge_type", mode="before")
+    @classmethod
+    def _coerce_null_knowledge_type(cls, value: Any) -> Any:
+        return _normalise_knowledge_type(value, "entity")
+
+    @field_validator("properties", mode="before")
+    @classmethod
+    def _coerce_property_scalars(cls, value: Any) -> Any:
+        return _coerce_property_values(value)
 
     @model_validator(mode="before")
     @classmethod
