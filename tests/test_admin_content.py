@@ -144,8 +144,9 @@ async def test_content_with_no_triples(_patch_retraction):
 
 
 async def test_provenance_scoped_by_source_url(_patch_retraction):
-    """Regression: the DELETE FROM provenance must use the content's source_url,
-    not the content_id — provenance is keyed by source_url, content_id is FK."""
+    """Regression: both DELETEs must use source_url. Provenance is keyed by
+    source_url; content_metadata is deleted by url (not id) so the same
+    helper works for both content-id and source-url entry points."""
     conn = _make_conn(
         fetchrow={"url": "https://example.com/scoped"},
         fetch=[],
@@ -155,12 +156,58 @@ async def test_provenance_scoped_by_source_url(_patch_retraction):
     async with AsyncClient(transport=transport, base_url="http://test") as client:
         await client.delete("/api/admin/knowledge/content/c1")
     executed_queries = [call.args for call in conn.execute.await_args_list]
-    # First execute should be DELETE FROM provenance WHERE source_url = url
-    assert any(
-        "DELETE FROM provenance" in q[0] and q[1] == "https://example.com/scoped"
-        for q in executed_queries
-    ), f"expected DELETE FROM provenance scoped by source_url, got {executed_queries}"
-    # Second execute should be DELETE FROM content_metadata WHERE id = content_id
-    assert any("DELETE FROM content_metadata" in q[0] and q[1] == "c1" for q in executed_queries), (
-        f"expected DELETE FROM content_metadata scoped by id, got {executed_queries}"
+    url = "https://example.com/scoped"
+    assert any("DELETE FROM provenance" in q[0] and q[1] == url for q in executed_queries), (
+        f"expected DELETE FROM provenance scoped by source_url, got {executed_queries}"
     )
+    assert any("DELETE FROM content_metadata" in q[0] and q[1] == url for q in executed_queries), (
+        f"expected DELETE FROM content_metadata scoped by url, got {executed_queries}"
+    )
+
+
+# --- DELETE /api/admin/knowledge/source?source_url=... ---
+
+
+async def test_source_endpoint_404_when_no_provenance(_patch_retraction):
+    conn = _make_conn(fetchval=0)  # COUNT(*) = 0
+    app = _make_app(conn)
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        resp = await client.delete(
+            "/api/admin/knowledge/source", params={"source_url": "https://test.local/missing"}
+        )
+    assert resp.status_code == 404
+    conn.execute.assert_not_called()
+
+
+async def test_source_endpoint_happy_path(_patch_retraction):
+    removed, retracted = _patch_retraction
+    # First fetchval is the existence COUNT(*); subsequent are per-triple other-source counts.
+    conn = _make_conn(
+        fetch=[{"triple_hash": "h1", "subject": "s1", "predicate": "p1", "object": "o1"}],
+        fetchval=[1, 0],  # exists=1, then other-sources=0
+    )
+    app = _make_app(conn)
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        resp = await client.delete(
+            "/api/admin/knowledge/source",
+            params={"source_url": "https://test.local/pr74-validation/alias-1"},
+        )
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["url"] == "https://test.local/pr74-validation/alias-1"
+    assert body["deleted_provenance_rows"] == 1
+    assert body["deleted_triples"] == 1
+    assert "content_id" not in body  # source endpoint doesn't echo a content_id
+    assert removed == [("s1", "p1", "o1")]
+    assert retracted == ["h1"]
+
+
+async def test_source_endpoint_requires_source_url_query():
+    conn = _make_conn()
+    app = _make_app(conn)
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        resp = await client.delete("/api/admin/knowledge/source")
+    assert resp.status_code == 422  # FastAPI: missing required query param
