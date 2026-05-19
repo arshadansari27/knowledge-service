@@ -1,11 +1,14 @@
 from __future__ import annotations
 
+import logging
 from datetime import date, datetime
 from typing import Annotated, Any
 
 from pydantic import BaseModel, Discriminator, Field, Tag, field_validator, model_validator
 
 from knowledge_service.ontology.uri import KS, RDF_TYPE, RDFS_LABEL, to_entity_uri, to_predicate_uri
+
+logger = logging.getLogger(__name__)
 
 
 # --- Knowledge types ---
@@ -22,25 +25,45 @@ def _normalise_knowledge_type(value: Any, default: str) -> str:
     return value
 
 
+def _unwrap_value_type_dict(value: Any) -> Any:
+    """qwen3:14b sometimes wraps literals as ``{"value": "...", "type": "..."}``.
+    Unwrap that shape to the bare value. Other dict shapes pass through so
+    Pydantic can still reject genuine schema drift loudly."""
+    if isinstance(value, dict) and set(value.keys()) == {"value", "type"}:
+        return value["value"]
+    return value
+
+
 def _coerce_property_values(value: Any) -> Any:
     """Stringify numeric/bool scalars inside ``properties`` so qwen3's
     occasional ``{"founded": [2020, 2021]}`` doesn't sink the whole item.
-    Nested structures (dicts, lists of lists) are passed through unchanged
-    so Pydantic's later validation can reject them with a real error."""
+    Also unwraps ``{value, type}`` dicts. Nested structures we don't
+    recognise pass through unchanged so Pydantic's later validation can
+    reject them with a real error."""
     if not isinstance(value, dict):
         return value
     coerced: dict[str, Any] = {}
     for key, item in value.items():
-        if isinstance(item, (int, float, bool)) and not isinstance(item, str):
-            coerced[key] = str(item)
-        elif isinstance(item, list):
+        unwrapped = _unwrap_value_type_dict(item)
+        if isinstance(unwrapped, (int, float, bool)) and not isinstance(unwrapped, str):
+            coerced[key] = str(unwrapped)
+        elif isinstance(unwrapped, list):
             coerced[key] = [
-                str(v) if isinstance(v, (int, float, bool)) and not isinstance(v, str) else v
-                for v in item
+                str(v)
+                if isinstance(v, (int, float, bool)) and not isinstance(v, str)
+                else _unwrap_value_type_dict(v)
+                for v in unwrapped
             ]
         else:
-            coerced[key] = item
+            coerced[key] = unwrapped
     return coerced
+
+
+_TRIPLE_ALIASES: tuple[tuple[str, tuple[str, ...]], ...] = (
+    ("subject", ("from", "source", "head")),
+    ("object", ("to", "target", "tail")),
+    ("predicate", ("relation", "type")),
+)
 
 
 class TripleInput(BaseModel):
@@ -53,6 +76,32 @@ class TripleInput(BaseModel):
     knowledge_type: str = "claim"
     valid_from: date | None = None
     valid_until: date | None = None
+
+    @model_validator(mode="before")
+    @classmethod
+    def _alias_and_unwrap(cls, data: Any) -> Any:
+        """qwen3:14b emits triples in many non-canonical shapes — alias the
+        common ones back to subject/predicate/object. Also unwraps an object
+        encoded as ``{"value": ..., "type": ...}``. The canonical key wins
+        whenever it has a non-empty value; aliases only fill in missing or
+        empty slots."""
+        if not isinstance(data, dict):
+            return data
+        data = dict(data)
+        for canonical, aliases in _TRIPLE_ALIASES:
+            if data.get(canonical):
+                continue
+            for alias in aliases:
+                aliased = data.get(alias)
+                if aliased:
+                    data[canonical] = aliased
+                    break
+        obj = data.get("object")
+        if isinstance(obj, dict):
+            data["object"] = _unwrap_value_type_dict(obj)
+        elif isinstance(obj, (int, float, bool)) and not isinstance(obj, str):
+            data["object"] = str(obj)
+        return data
 
     @field_validator("knowledge_type", mode="before")
     @classmethod
@@ -178,17 +227,27 @@ class EntityInput(BaseModel):
     @model_validator(mode="before")
     @classmethod
     def _lift_misplaced_fields(cls, data: Any) -> Any:
-        """qwen3:14b occasionally nests ``rdf_type`` and ``label`` inside
-        ``properties``. When the top-level field is missing, lift the value
-        out of ``properties`` so validation succeeds."""
+        """qwen3:14b occasionally nests ``rdf_type``, ``label``, or
+        ``confidence`` inside ``properties``. Lift them when missing at the
+        top level. Also defaults ``rdf_type`` to ``schema:Thing`` when the
+        LLM omits it entirely — matches the spaCy-fallback default in
+        phases.py and is preferable to dropping the whole entity."""
         if not isinstance(data, dict):
             return data
         properties = data.get("properties")
-        if not isinstance(properties, dict):
-            return data
-        for field_name in ("rdf_type", "label"):
-            if field_name in properties and not data.get(field_name):
-                data[field_name] = properties.pop(field_name)
+        if isinstance(properties, dict):
+            for field_name in ("rdf_type", "label", "confidence"):
+                if field_name in properties and not data.get(field_name):
+                    data[field_name] = properties.pop(field_name)
+        if not data.get("rdf_type"):
+            data["rdf_type"] = "schema:Thing"
+            # Debug-level so prod log-volume tooling can chart how often the
+            # LLM forgets to type its entities. A WARNING would spam — the
+            # default is a successful recovery, not an error.
+            logger.debug(
+                "EntityInput: defaulted missing rdf_type to schema:Thing (uri=%s)",
+                data.get("uri"),
+            )
         return data
 
     def to_triples(self) -> list[dict]:

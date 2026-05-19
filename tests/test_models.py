@@ -392,3 +392,264 @@ class TestPropertyListCoercion:
         triples = e.to_triples()
         founded_objects = sorted(t["object"] for t in triples if "founded" in t["predicate"])
         assert founded_objects == ["2020", "2021"]
+
+
+# --- Follow-up regression tests (post-PR #73) ---
+# Categorising all 1,875 rejections in the 8-day prod log showed PR #73 only
+# recovered ~16.6% of them. The remaining patterns are below — each verbatim
+# from production. Group naming matches the follow-up-PR description.
+
+
+class TestTripleAliases:
+    """~1,060 rejections — qwen3 emits triples in non-canonical shapes. We
+    alias the common keys back to ``subject`` / ``predicate`` / ``object``."""
+
+    def test_from_relation_to_aliases(self):
+        # Verbatim sample from prod logs.
+        payload = {"from": "dec_vaxstation_2000", "to": "xwm", "relation": "uses"}
+        result = _ADAPTER.validate_python(payload)
+        assert isinstance(result, TripleInput)
+        assert result.subject == "dec_vaxstation_2000"
+        assert result.object == "xwm"
+        assert result.predicate == "uses"
+
+    def test_source_target_relation_aliases(self):
+        payload = {
+            "source": "transmittance_lut",
+            "target": "frame_buffer_object",
+            "relation": "uses",
+        }
+        result = _ADAPTER.validate_python(payload)
+        assert isinstance(result, TripleInput)
+        assert result.subject == "transmittance_lut"
+        assert result.object == "frame_buffer_object"
+        assert result.predicate == "uses"
+
+    def test_source_target_type_aliases(self):
+        # "type" is the alias when the LLM uses {source, target, type}.
+        payload = {"source": "gerry_wheeler", "target": "byte_magazine", "type": "published_in"}
+        result = _ADAPTER.validate_python(payload)
+        assert isinstance(result, TripleInput)
+        assert result.predicate == "published_in"
+
+    def test_head_relation_tail_aliases(self):
+        payload = {"head": "snowflake_postgres", "relation": "developed_by", "tail": "crunchy_data"}
+        result = _ADAPTER.validate_python(payload)
+        assert isinstance(result, TripleInput)
+        assert result.subject == "snowflake_postgres"
+        assert result.object == "crunchy_data"
+
+    def test_subject_predicate_aliases_dont_override_canonical(self):
+        # If both alias and canonical are present, canonical wins.
+        payload = {
+            "subject": "real_s",
+            "from": "alias_s",
+            "predicate": "real_p",
+            "object": "real_o",
+        }
+        result = _ADAPTER.validate_python(payload)
+        assert result.subject == "real_s"
+
+    def test_alias_with_confidence(self):
+        payload = {"from": "ibm", "to": "lenovo", "relation": "acquired_by", "confidence": 0.95}
+        result = _ADAPTER.validate_python(payload)
+        assert result.subject == "ibm"
+        assert result.confidence == 0.95
+
+
+class TestObjectFailsLoudOnUnknownDict:
+    """Symmetric to test_property_dict_without_value_key_still_rejected —
+    pin the contract that genuinely-unknown nested-dict shapes still fail
+    loudly so future schema drift surfaces in logs rather than dropping
+    silently."""
+
+    def test_object_dict_without_value_key_still_rejected(self):
+        payload = {
+            "subject": "x",
+            "predicate": "p",
+            "object": {"foo": "bar", "baz": "qux"},
+        }
+        with pytest.raises(ValidationError):
+            _ADAPTER.validate_python(payload)
+
+    def test_object_value_type_dict_with_null_value_still_rejects(self):
+        # Unwrap yields None; TripleInput.object: str rejects loudly.
+        payload = {
+            "subject": "x",
+            "predicate": "p",
+            "object": {"value": None, "type": "literal"},
+        }
+        with pytest.raises(ValidationError):
+            _ADAPTER.validate_python(payload)
+
+
+class TestObjectUnwrap:
+    """~55 rejections — qwen3 emits the object as a {value, type} dict like
+    ``{"object": {"type": "literal", "value": "65.2"}}``."""
+
+    def test_object_value_type_dict_is_unwrapped(self):
+        payload = {
+            "subject": "matryoshka_embeddings",
+            "predicate": "scores",
+            "object": {"type": "literal", "value": "65.2"},
+            "confidence": 0.9,
+        }
+        result = _ADAPTER.validate_python(payload)
+        assert isinstance(result, TripleInput)
+        assert result.object == "65.2"
+
+    def test_object_value_type_entity_is_unwrapped(self):
+        payload = {
+            "knowledge_type": "Fact",
+            "subject": "meta",
+            "predicate": "receives",
+            "object": {"type": "entity", "value": "tax_break"},
+            "confidence": 0.95,
+        }
+        result = _ADAPTER.validate_python(payload)
+        assert result.object == "tax_break"
+
+
+class TestPropertiesNestedDictUnwrap:
+    """~30 rejections — qwen3 nests property values as {value, type} dicts."""
+
+    def test_entity_property_with_value_type_dict_is_unwrapped(self):
+        payload = {
+            "knowledge_type": "Entity",
+            "uri": "pywikibot",
+            "rdf_type": "schema:SoftwareApplication",
+            "label": "pywikibot",
+            "properties": {
+                "description": {
+                    "value": "A Python library for Wikipedia bot development",
+                    "type": "literal",
+                }
+            },
+            "confidence": 0.95,
+        }
+        result = _ADAPTER.validate_python(payload)
+        assert isinstance(result, EntityInput)
+        assert result.properties["description"] == "A Python library for Wikipedia bot development"
+
+    def test_event_property_with_value_type_dict_is_unwrapped(self):
+        payload = {
+            "knowledge_type": "Event",
+            "subject": "x",
+            "occurred_at": "2024-01-01",
+            "properties": {"title": {"value": "Hello World", "type": "literal"}},
+            "confidence": 0.9,
+        }
+        result = _ADAPTER.validate_python(payload)
+        assert result.properties["title"] == "Hello World"
+
+    def test_property_dict_without_value_key_still_rejected(self):
+        # Only the canonical {value, type} shape is unwrapped — random dicts
+        # should still fail loudly so we don't hide real schema drift.
+        payload = {
+            "knowledge_type": "Entity",
+            "uri": "x",
+            "rdf_type": "schema:Thing",
+            "label": "x",
+            "properties": {"weird": {"foo": "bar", "baz": "qux"}},
+        }
+        with pytest.raises(ValidationError):
+            _ADAPTER.validate_python(payload)
+
+
+class TestObjectScalarStringify:
+    """7 prod rejections — object emitted as bool/int directly."""
+
+    def test_bool_object_stringified(self):
+        payload = {
+            "knowledge_type": "Fact",
+            "subject": "mullvad_vpn",
+            "predicate": "offers_multiple_exit_ips",
+            "object": True,
+            "confidence": 0.9,
+        }
+        result = _ADAPTER.validate_python(payload)
+        assert result.object == "True"
+
+    def test_int_object_stringified(self):
+        payload = {
+            "subject": "x",
+            "predicate": "count",
+            "object": 42,
+        }
+        result = _ADAPTER.validate_python(payload)
+        assert result.object == "42"
+
+
+class TestEntityRdfTypeDefault:
+    """518 rejections — entities arrive without ``rdf_type``. Default to
+    ``schema:Thing`` rather than dropping them; this matches the existing
+    spaCy-fallback default in phases.py."""
+
+    def test_entity_without_rdf_type_defaults_to_thing(self):
+        # Verbatim sample from prod logs.
+        payload = {
+            "knowledge_type": "Entity",
+            "uri": "exim",
+            "label": "exim",
+            "properties": {"description": "An email server software."},
+            "confidence": 0.95,
+        }
+        result = _ADAPTER.validate_python(payload)
+        assert isinstance(result, EntityInput)
+        assert result.rdf_type == "schema:Thing"
+
+    def test_entity_with_rdf_type_keeps_it(self):
+        payload = {
+            "knowledge_type": "Entity",
+            "uri": "x",
+            "label": "x",
+            "rdf_type": "schema:Person",
+        }
+        result = _ADAPTER.validate_python(payload)
+        assert result.rdf_type == "schema:Person"
+
+    def test_entity_with_just_uri_label_kt_validates(self):
+        # Shape: {knowledge_type, label, uri} — 50 prod hits. No rdf_type,
+        # no properties — should default and pass.
+        payload = {"uri": "use_nix_atc", "label": "use_nix_atc", "knowledge_type": "entity"}
+        result = _ADAPTER.validate_python(payload)
+        assert result.rdf_type == "schema:Thing"
+
+    def test_rdf_type_default_emits_debug_log(self, caplog):
+        # Operators need a way to chart how often the LLM omits rdf_type.
+        import logging
+
+        with caplog.at_level(logging.DEBUG, logger="knowledge_service.models"):
+            _ADAPTER.validate_python({"knowledge_type": "Entity", "uri": "x", "label": "x"})
+        debug_lines = [r.getMessage() for r in caplog.records if "defaulted" in r.getMessage()]
+        assert debug_lines, "expected DEBUG line when rdf_type defaulted"
+
+
+class TestEntityMisplacedConfidence:
+    """26 rejections — qwen3 nests ``confidence`` inside properties when the
+    top-level field is missing. Lift it (and drop from properties)."""
+
+    def test_misplaced_confidence_is_lifted(self):
+        payload = {
+            "knowledge_type": "Entity",
+            "uri": "caltech",
+            "rdf_type": "schema:Organization",
+            "label": "caltech",
+            "properties": {"confidence": 0.95},
+        }
+        result = _ADAPTER.validate_python(payload)
+        assert isinstance(result, EntityInput)
+        assert result.confidence == 0.95
+        assert "confidence" not in result.properties
+
+    def test_top_level_confidence_wins_over_misplaced(self):
+        payload = {
+            "knowledge_type": "Entity",
+            "uri": "x",
+            "rdf_type": "schema:Thing",
+            "label": "x",
+            "confidence": 0.7,
+            "properties": {"confidence": 0.95},
+        }
+        result = _ADAPTER.validate_python(payload)
+        assert result.confidence == 0.7
