@@ -344,6 +344,71 @@ class TestSinglePassExtract:
         await client.close()
 
 
+class TestRejectionLogging:
+    """Pattern B follow-up — rejection logs must surface the real reason.
+
+    With the union discriminator in place, errors are scoped to the routed
+    member instead of being a sprawling per-member dump. The truncation that
+    used to slice errors to ``[:3]`` is gone — the full error list reaches the
+    log so an Entity rejection no longer looks like a TripleInput failure.
+    """
+
+    async def test_per_item_rejection_log_includes_routed_member_tag(self, httpx_mock, caplog):
+        # An Entity payload missing rdf_type is now routed to the entity
+        # member by the discriminator — the rejection log should reflect that,
+        # not bury it under TripleInput's missing-subject error.
+        httpx_mock.add_response(
+            url=_CHAT_URL,
+            json=_make_combined_response(
+                entities=[{"knowledge_type": "Entity", "uri": "x", "confidence": 0.9}],
+                relations=[],
+            ),
+        )
+        client = ExtractionClient(base_url=_BASE, model="qwen3:14b", api_key=_KEY)
+        import logging
+
+        with caplog.at_level(logging.WARNING, logger="knowledge_service.clients.llm"):
+            await client.extract("text")
+        await client.close()
+        rejection_lines = [
+            r.getMessage() for r in caplog.records if "rejected item" in r.getMessage()
+        ]
+        assert rejection_lines, "expected at least one rejection log line"
+        combined = "\n".join(rejection_lines).lower()
+        # Should mention entity (the routed member); should NOT pretend it was a
+        # triple validation failure.
+        assert "entity" in combined
+        assert "subject" not in combined or "predicate" not in combined, (
+            f"log still buries entity error under triple-field misses: {combined}"
+        )
+
+    async def test_per_chunk_summary_logged_when_items_rejected(self, httpx_mock, caplog):
+        # Two invalid Entity items in the same chunk → one summary line at the
+        # end naming the per-shape counts.
+        httpx_mock.add_response(
+            url=_CHAT_URL,
+            json=_make_combined_response(
+                entities=[
+                    {"knowledge_type": "Entity", "uri": "x", "confidence": 0.9},
+                    {"knowledge_type": "Entity", "uri": "y", "confidence": 0.9},
+                ],
+                relations=[],
+            ),
+        )
+        client = ExtractionClient(base_url=_BASE, model="qwen3:14b", api_key=_KEY)
+        import logging
+
+        with caplog.at_level(logging.WARNING, logger="knowledge_service.clients.llm"):
+            await client.extract("text")
+        await client.close()
+        summaries = [
+            r.getMessage() for r in caplog.records if "rejection summary" in r.getMessage().lower()
+        ]
+        assert summaries, "expected per-chunk rejection summary log line"
+        summary = summaries[0].lower()
+        assert "entity=2" in summary or "entity: 2" in summary
+
+
 class TestNoAuth:
     async def test_no_auth_header_when_key_empty(self, httpx_mock):
         httpx_mock.add_response(

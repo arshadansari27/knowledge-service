@@ -242,24 +242,46 @@ class ExtractionClient(BaseLLMClient):
 
         items: list = []
         rejected = 0
+        rejected_by_shape: dict[str, int] = {}
         for item_dict in raw:
             try:
                 items.append(adapter.validate_python(item_dict))
             except ValidationError as exc:
                 rejected += 1
+                shape = _routed_member_tag(exc, item_dict)
+                rejected_by_shape[shape] = rejected_by_shape.get(shape, 0) + 1
                 logger.warning(
-                    "ExtractionClient: rejected item (schema): %s -- error: %s",
+                    "ExtractionClient: rejected item (schema, routed=%s): %s -- errors: %s",
+                    shape,
                     item_dict,
-                    exc.errors()[:3],
+                    exc.errors(),
                 )
 
-        if raw and not items:
+        if rejected:
+            shape_summary = ", ".join(f"{k}={v}" for k, v in sorted(rejected_by_shape.items()))
             logger.warning(
-                "ExtractionClient: LLM returned %d items, all rejected as schema-invalid",
+                "ExtractionClient: rejection summary for chunk -- %d/%d items rejected (%s)",
+                rejected,
                 len(raw),
+                shape_summary,
             )
 
         return items, rejected
+
+
+def _routed_member_tag(exc: ValidationError, item: dict) -> str:
+    """Best-effort: report which union member the discriminator routed to.
+
+    Pydantic encodes the routed tag as the first segment of each error ``loc``
+    (e.g. ``('entity', 'rdf_type')``). Fall back to the item's ``knowledge_type``
+    field, or ``unknown``.
+    """
+    for err in exc.errors():
+        loc = err.get("loc") or ()
+        if loc and isinstance(loc[0], str):
+            return loc[0]
+    tag = item.get("knowledge_type") if isinstance(item, dict) else None
+    return tag.lower() if isinstance(tag, str) else "unknown"
 
 
 # ---------------------------------------------------------------------------

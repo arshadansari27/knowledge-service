@@ -1,12 +1,46 @@
 from __future__ import annotations
 
 from datetime import date, datetime
-from pydantic import BaseModel, Field
+from typing import Annotated, Any
+
+from pydantic import BaseModel, Discriminator, Field, Tag, field_validator, model_validator
 
 from knowledge_service.ontology.uri import KS, RDF_TYPE, RDFS_LABEL, to_entity_uri, to_predicate_uri
 
 
 # --- Knowledge types ---
+
+
+PropertyValue = str | list[str]
+
+
+def _normalise_knowledge_type(value: Any, default: str) -> str:
+    """Coerce qwen3's occasional ``"knowledge_type": null`` to the default
+    so the routed member's own validator doesn't reject the whole item."""
+    if value is None:
+        return default
+    return value
+
+
+def _coerce_property_values(value: Any) -> Any:
+    """Stringify numeric/bool scalars inside ``properties`` so qwen3's
+    occasional ``{"founded": [2020, 2021]}`` doesn't sink the whole item.
+    Nested structures (dicts, lists of lists) are passed through unchanged
+    so Pydantic's later validation can reject them with a real error."""
+    if not isinstance(value, dict):
+        return value
+    coerced: dict[str, Any] = {}
+    for key, item in value.items():
+        if isinstance(item, (int, float, bool)) and not isinstance(item, str):
+            coerced[key] = str(item)
+        elif isinstance(item, list):
+            coerced[key] = [
+                str(v) if isinstance(v, (int, float, bool)) and not isinstance(v, str) else v
+                for v in item
+            ]
+        else:
+            coerced[key] = item
+    return coerced
 
 
 class TripleInput(BaseModel):
@@ -19,6 +53,11 @@ class TripleInput(BaseModel):
     knowledge_type: str = "claim"
     valid_from: date | None = None
     valid_until: date | None = None
+
+    @field_validator("knowledge_type", mode="before")
+    @classmethod
+    def _coerce_null_knowledge_type(cls, value: Any) -> Any:
+        return _normalise_knowledge_type(value, "claim")
 
     def to_triples(self) -> list[dict]:
         return [
@@ -35,14 +74,58 @@ class TripleInput(BaseModel):
 
 
 class EventInput(BaseModel):
-    """Timestamped occurrence. Expands to N triples."""
+    """Timestamped occurrence. Expands to N triples.
+
+    ``occurred_at`` accepts either a date or a string. Strings that don't parse
+    as ISO dates (e.g. qwen3's "some_25_years_ago") are coerced to ``None``;
+    ``to_triples()`` returns an empty list in that case — an event without a
+    timestamp is not worth emitting.
+    """
 
     subject: str
-    occurred_at: date
-    properties: dict[str, str] = {}
+    occurred_at: date | None = None
+    properties: dict[str, PropertyValue] = Field(default_factory=dict)
     confidence: float = Field(ge=0.0, le=1.0, default=1.0)
+    knowledge_type: str = "event"
+
+    @field_validator("knowledge_type", mode="before")
+    @classmethod
+    def _coerce_null_knowledge_type(cls, value: Any) -> Any:
+        return _normalise_knowledge_type(value, "event")
+
+    @field_validator("properties", mode="before")
+    @classmethod
+    def _coerce_property_scalars(cls, value: Any) -> Any:
+        return _coerce_property_values(value)
+
+    @field_validator("occurred_at", mode="before")
+    @classmethod
+    def _coerce_unparseable_date(cls, value: Any) -> Any:
+        if value is None or isinstance(value, date):
+            return value
+        if not isinstance(value, str):
+            return value
+        # Try strict ISO date first, then ISO datetime, then a last-ditch
+        # 10-char prefix grab for "YYYY-MM-DDTHH:MM:SS+TZ" or
+        # "YYYY-MM-DD HH:MM:SS" shapes the LLM sometimes emits.
+        try:
+            return date.fromisoformat(value)
+        except ValueError:
+            pass
+        try:
+            return datetime.fromisoformat(value.replace("Z", "+00:00")).date()
+        except ValueError:
+            pass
+        if len(value) >= 10:
+            try:
+                return date.fromisoformat(value[:10])
+            except ValueError:
+                pass
+        return None
 
     def to_triples(self) -> list[dict]:
+        if self.occurred_at is None:
+            return []
         uri = to_entity_uri(self.subject)
         triples = [
             {
@@ -56,17 +139,19 @@ class EventInput(BaseModel):
             }
         ]
         for key, value in self.properties.items():
-            triples.append(
-                {
-                    "subject": uri,
-                    "predicate": to_predicate_uri(key),
-                    "object": value,
-                    "confidence": self.confidence,
-                    "knowledge_type": "event",
-                    "valid_from": None,
-                    "valid_until": None,
-                }
-            )
+            predicate = to_predicate_uri(key)
+            for object_ in _expand_property_value(value):
+                triples.append(
+                    {
+                        "subject": uri,
+                        "predicate": predicate,
+                        "object": object_,
+                        "confidence": self.confidence,
+                        "knowledge_type": "event",
+                        "valid_from": None,
+                        "valid_until": None,
+                    }
+                )
         return triples
 
 
@@ -76,8 +161,35 @@ class EntityInput(BaseModel):
     uri: str
     rdf_type: str
     label: str
-    properties: dict[str, str] = {}
+    properties: dict[str, PropertyValue] = Field(default_factory=dict)
     confidence: float = Field(ge=0.0, le=1.0, default=0.95)
+    knowledge_type: str = "entity"
+
+    @field_validator("knowledge_type", mode="before")
+    @classmethod
+    def _coerce_null_knowledge_type(cls, value: Any) -> Any:
+        return _normalise_knowledge_type(value, "entity")
+
+    @field_validator("properties", mode="before")
+    @classmethod
+    def _coerce_property_scalars(cls, value: Any) -> Any:
+        return _coerce_property_values(value)
+
+    @model_validator(mode="before")
+    @classmethod
+    def _lift_misplaced_fields(cls, data: Any) -> Any:
+        """qwen3:14b occasionally nests ``rdf_type`` and ``label`` inside
+        ``properties``. When the top-level field is missing, lift the value
+        out of ``properties`` so validation succeeds."""
+        if not isinstance(data, dict):
+            return data
+        properties = data.get("properties")
+        if not isinstance(properties, dict):
+            return data
+        for field_name in ("rdf_type", "label"):
+            if field_name in properties and not data.get(field_name):
+                data[field_name] = properties.pop(field_name)
+        return data
 
     def to_triples(self) -> list[dict]:
         entity_uri = to_entity_uri(self.uri)
@@ -102,22 +214,69 @@ class EntityInput(BaseModel):
             },
         ]
         for key, value in self.properties.items():
-            triples.append(
-                {
-                    "subject": entity_uri,
-                    "predicate": to_predicate_uri(key),
-                    "object": value,
-                    "confidence": self.confidence,
-                    "knowledge_type": "entity",
-                    "valid_from": None,
-                    "valid_until": None,
-                }
-            )
+            predicate = to_predicate_uri(key)
+            for object_ in _expand_property_value(value):
+                triples.append(
+                    {
+                        "subject": entity_uri,
+                        "predicate": predicate,
+                        "object": object_,
+                        "confidence": self.confidence,
+                        "knowledge_type": "entity",
+                        "valid_from": None,
+                        "valid_until": None,
+                    }
+                )
         return triples
 
 
-# Union type — no Pydantic discriminator
-KnowledgeInput = TripleInput | EventInput | EntityInput
+def _expand_property_value(value: PropertyValue) -> list[str]:
+    if isinstance(value, list):
+        return [str(v) for v in value if v is not None]
+    return [value]
+
+
+def _route_knowledge_input(value: Any) -> str | None:
+    """Discriminator callable: pick a union member by ``knowledge_type``.
+
+    Routes ``Entity`` / ``Event`` (case-insensitive) to their own members; every
+    other label (``Claim``, ``Fact``, ``Relationship``, ``TemporalFact``,
+    ``TemporalState``, …) routes to TripleInput. Without this, Pydantic
+    reports per-member errors for the whole union and TripleInput's three
+    missing-field errors drown out the real reason for rejection.
+
+    When ``knowledge_type`` is missing or empty we fall back to shape
+    detection so untagged payloads accepted by the pre-discriminator union
+    keep working (the public API on ``/api/claims`` does not require the tag).
+    """
+    if isinstance(value, dict):
+        tag = value.get("knowledge_type")
+        if not isinstance(tag, str) or not tag.strip():
+            if "occurred_at" in value:
+                return "event"
+            if "rdf_type" in value or (
+                "uri" in value and "label" in value and "predicate" not in value
+            ):
+                return "entity"
+            return "triple"
+    else:
+        tag = getattr(value, "knowledge_type", None)
+        if not isinstance(tag, str):
+            return "triple"
+    normalised = tag.strip().lower()
+    if normalised == "entity":
+        return "entity"
+    if normalised == "event":
+        return "event"
+    return "triple"
+
+
+KnowledgeInput = Annotated[
+    Annotated[TripleInput, Tag("triple")]
+    | Annotated[EventInput, Tag("event")]
+    | Annotated[EntityInput, Tag("entity")],
+    Discriminator(_route_knowledge_input),
+]
 
 
 # --- Request/Response models ---

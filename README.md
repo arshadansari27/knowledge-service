@@ -308,6 +308,15 @@ All three input shapes are accepted. Examples:
 }
 ```
 
+Notes on `Entity` and `Event` payloads:
+
+- `properties` values may be a string or a list of strings. List values
+  expand into one triple per item, all sharing the same predicate.
+- For `Entity`, if the model nests `rdf_type` or `label` inside `properties`,
+  the field is lifted to the top level during validation.
+- For `Event`, an unparseable `occurred_at` string is coerced to `null` and
+  the event is dropped (no triples emitted) rather than rejected outright.
+
 ---
 
 ### Semantic Search
