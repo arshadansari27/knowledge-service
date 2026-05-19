@@ -1,12 +1,17 @@
 from __future__ import annotations
 
 from datetime import date, datetime
-from pydantic import BaseModel, Field
+from typing import Annotated, Any
+
+from pydantic import BaseModel, Discriminator, Field, Tag, field_validator, model_validator
 
 from knowledge_service.ontology.uri import KS, RDF_TYPE, RDFS_LABEL, to_entity_uri, to_predicate_uri
 
 
 # --- Knowledge types ---
+
+
+PropertyValue = str | list[str]
 
 
 class TripleInput(BaseModel):
@@ -35,14 +40,35 @@ class TripleInput(BaseModel):
 
 
 class EventInput(BaseModel):
-    """Timestamped occurrence. Expands to N triples."""
+    """Timestamped occurrence. Expands to N triples.
+
+    ``occurred_at`` accepts either a date or a string. Strings that don't parse
+    as ISO dates (e.g. qwen3's "some_25_years_ago") are coerced to ``None``;
+    ``to_triples()`` returns an empty list in that case — an event without a
+    timestamp is not worth emitting.
+    """
 
     subject: str
-    occurred_at: date
-    properties: dict[str, str] = {}
+    occurred_at: date | None = None
+    properties: dict[str, PropertyValue] = Field(default_factory=dict)
     confidence: float = Field(ge=0.0, le=1.0, default=1.0)
+    knowledge_type: str = "event"
+
+    @field_validator("occurred_at", mode="before")
+    @classmethod
+    def _coerce_unparseable_date(cls, value: Any) -> Any:
+        if value is None or isinstance(value, date):
+            return value
+        if isinstance(value, str):
+            try:
+                return date.fromisoformat(value)
+            except ValueError:
+                return None
+        return value
 
     def to_triples(self) -> list[dict]:
+        if self.occurred_at is None:
+            return []
         uri = to_entity_uri(self.subject)
         triples = [
             {
@@ -56,17 +82,19 @@ class EventInput(BaseModel):
             }
         ]
         for key, value in self.properties.items():
-            triples.append(
-                {
-                    "subject": uri,
-                    "predicate": to_predicate_uri(key),
-                    "object": value,
-                    "confidence": self.confidence,
-                    "knowledge_type": "event",
-                    "valid_from": None,
-                    "valid_until": None,
-                }
-            )
+            predicate = to_predicate_uri(key)
+            for object_ in _expand_property_value(value):
+                triples.append(
+                    {
+                        "subject": uri,
+                        "predicate": predicate,
+                        "object": object_,
+                        "confidence": self.confidence,
+                        "knowledge_type": "event",
+                        "valid_from": None,
+                        "valid_until": None,
+                    }
+                )
         return triples
 
 
@@ -76,8 +104,25 @@ class EntityInput(BaseModel):
     uri: str
     rdf_type: str
     label: str
-    properties: dict[str, str] = {}
+    properties: dict[str, PropertyValue] = Field(default_factory=dict)
     confidence: float = Field(ge=0.0, le=1.0, default=0.95)
+    knowledge_type: str = "entity"
+
+    @model_validator(mode="before")
+    @classmethod
+    def _lift_misplaced_fields(cls, data: Any) -> Any:
+        """qwen3:14b occasionally nests ``rdf_type`` and ``label`` inside
+        ``properties``. When the top-level field is missing, lift the value
+        out of ``properties`` so validation succeeds."""
+        if not isinstance(data, dict):
+            return data
+        properties = data.get("properties")
+        if not isinstance(properties, dict):
+            return data
+        for field_name in ("rdf_type", "label"):
+            if field_name in properties and not data.get(field_name):
+                data[field_name] = properties.pop(field_name)
+        return data
 
     def to_triples(self) -> list[dict]:
         entity_uri = to_entity_uri(self.uri)
@@ -102,22 +147,69 @@ class EntityInput(BaseModel):
             },
         ]
         for key, value in self.properties.items():
-            triples.append(
-                {
-                    "subject": entity_uri,
-                    "predicate": to_predicate_uri(key),
-                    "object": value,
-                    "confidence": self.confidence,
-                    "knowledge_type": "entity",
-                    "valid_from": None,
-                    "valid_until": None,
-                }
-            )
+            predicate = to_predicate_uri(key)
+            for object_ in _expand_property_value(value):
+                triples.append(
+                    {
+                        "subject": entity_uri,
+                        "predicate": predicate,
+                        "object": object_,
+                        "confidence": self.confidence,
+                        "knowledge_type": "entity",
+                        "valid_from": None,
+                        "valid_until": None,
+                    }
+                )
         return triples
 
 
-# Union type — no Pydantic discriminator
-KnowledgeInput = TripleInput | EventInput | EntityInput
+def _expand_property_value(value: PropertyValue) -> list[str]:
+    if isinstance(value, list):
+        return [str(v) for v in value if v is not None]
+    return [value]
+
+
+def _route_knowledge_input(value: Any) -> str | None:
+    """Discriminator callable: pick a union member by ``knowledge_type``.
+
+    Routes ``Entity`` / ``Event`` (case-insensitive) to their own members; every
+    other label (``Claim``, ``Fact``, ``Relationship``, ``TemporalFact``,
+    ``TemporalState``, …) routes to TripleInput. Without this, Pydantic
+    reports per-member errors for the whole union and TripleInput's three
+    missing-field errors drown out the real reason for rejection.
+
+    When ``knowledge_type`` is missing or empty we fall back to shape
+    detection so untagged payloads accepted by the pre-discriminator union
+    keep working (the public API on ``/api/claims`` does not require the tag).
+    """
+    if isinstance(value, dict):
+        tag = value.get("knowledge_type")
+        if not isinstance(tag, str) or not tag.strip():
+            if "occurred_at" in value:
+                return "event"
+            if "rdf_type" in value or (
+                "uri" in value and "label" in value and "predicate" not in value
+            ):
+                return "entity"
+            return "triple"
+    else:
+        tag = getattr(value, "knowledge_type", None)
+        if not isinstance(tag, str):
+            return "triple"
+    normalised = tag.strip().lower()
+    if normalised == "entity":
+        return "entity"
+    if normalised == "event":
+        return "event"
+    return "triple"
+
+
+KnowledgeInput = Annotated[
+    Annotated[TripleInput, Tag("triple")]
+    | Annotated[EventInput, Tag("event")]
+    | Annotated[EntityInput, Tag("entity")],
+    Discriminator(_route_knowledge_input),
+]
 
 
 # --- Request/Response models ---
