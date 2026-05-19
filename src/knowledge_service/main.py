@@ -275,13 +275,15 @@ def create_app(use_lifespan: bool = True) -> FastAPI:
     app.state.admin_password = settings.admin_password
     app.state.secret_key = settings.secret_key
 
-    from knowledge_service.admin.stats import router as stats_router
+    from knowledge_service.admin.content import router as content_admin_router
     from knowledge_service.admin.jobs import router as jobs_router
+    from knowledge_service.admin.stats import router as stats_router
 
     app.include_router(login_router)
     app.include_router(admin_router)
     app.include_router(stats_router, prefix="/api/admin")
     app.include_router(jobs_router, prefix="/api/admin")
+    app.include_router(content_admin_router, prefix="/api/admin")
 
     app.add_middleware(
         AuthMiddleware,
