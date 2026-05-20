@@ -4,27 +4,54 @@
 [![Docker](https://img.shields.io/docker/v/arshadansari27/knowledge-service?label=docker&sort=semver)](https://hub.docker.com/r/arshadansari27/knowledge-service)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
-A personal knowledge service that ingests content you encounter and exposes it through **hybrid BM25 + vector RAG** with a small **RDF knowledge-graph layer** behind it. Documents are parsed, chunked, and embedded; an LLM extracts entity/relation triples per chunk; triples carry per-source confidence and are combined via Noisy-OR when multiple sources agree; a lightweight 3-rule inference pass (inverse / transitive / type-inheritance) materialises extra conclusions at ingestion time. Queryable via SPARQL and semantic search, with source chunks and provenance returned as evidence.
+A personal knowledge service that reads what you give it and turns it into a small, queryable RDF graph with source-traceable provenance. Documents, news, claims, or notes go in; out the other side: structured triples with per-source confidence, contradictions surfaced when sources disagree, and a hybrid RAG endpoint that cites the chunks it grounded each answer in.
 
-Built by [Hikmah Technologies](https://hikmahtechnologies.com) | [@hikmahtech](https://x.com/hikmahtech) | [@arshadansari27](https://x.com/arshadansari27)
-
-The primary consumer is AEGIS, where AI agents gain awareness of your accumulated knowledge. The service also stands alone as a reusable knowledge API.
+Built by [Hikmah Technologies](https://hikmahtechnologies.com) | [@hikmahtech](https://x.com/hikmahtech) | [@arshadansari27](https://x.com/arshadansari27). The primary consumer is AEGIS, where AI agents gain awareness of your accumulated knowledge; the service also stands alone as a reusable knowledge API.
 
 > **The ontology is the product. Sources are just input channels.**
 
 ---
 
-## What Makes This Different
+## Why it exists
 
-Every "second brain" tool treats all content as equal — a bookmark, a note, a highlight are all flat objects with tags. No confidence. No provenance. No temporal validity. No contradiction detection. No inference.
+Every "second brain" tool treats all content as equal — a bookmark, a note, a highlight are all flat objects with tags. No confidence. No provenance. No temporal validity. No contradiction detection. No inference. This system separates **content** (what you consumed) from **knowledge** (what you derived from it), and models knowledge with:
 
-This system separates **content** (what you consumed) from **knowledge** (what you derived from it), and models knowledge with:
+- **Uncertainty** — triples carry a confidence score; when multiple sources assert the same fact, their confidences combine via Noisy-OR (`1 − Π(1 − cᵢ)`).
+- **Provenance** — every triple traces back to its source, extraction method, timestamp, and the specific chunk it was derived from.
+- **Temporality** — knowledge has `valid_from` / `valid_until`, not just `created_at`.
+- **Ontological structure** — concepts link to established vocabularies (Schema.org, Dublin Core, SKOS) so "PostgreSQL" in your codebase and "PostgreSQL" in an article resolve to the same entity.
+- **Inference** — inverse, transitive, and type-inheritance rules derive extra triples at ingestion time, with source triples preserved for retraction.
 
-- **Uncertainty** — triples carry a confidence score; when multiple sources assert the same fact, their confidences combine via Noisy-OR (`1 - Π(1 - cᵢ)`)
-- **Provenance** — every triple traces back to its source, extraction method, timestamp, and the specific chunk it was derived from
-- **Temporality** — knowledge has `valid_from` / `valid_until`, not just `created_at`
-- **Ontological structure** — concepts link to established vocabularies (Schema.org, Dublin Core, SKOS) so "PostgreSQL" in your codebase and "PostgreSQL" in an article are the same entity
-- **Inference** — inverse/transitive/type-inheritance rules derive extra triples at ingestion time, with source triples preserved for retraction
+For the design rationale behind the non-obvious choices — Noisy-OR replacing 332 lines of ProbLog, the pyoxigraph ↔ Postgres outbox, named graphs as trust labels rather than filters — see **[`docs/architecture.md`](docs/architecture.md)**.
+
+---
+
+## Five-minute demo
+
+The repo ships with a small public-domain corpus (eight short documents covering the November 2023 OpenAI board weekend) and a script that ingests it, runs the read-side APIs, and prints what came out.
+
+```bash
+export ADMIN_PASSWORD=changeme
+docker compose up -d
+uv run python scripts/demo.py --api-key changeme
+```
+
+Expect to see, in order: ingestion progress per document; a summary of how many triples landed in each named graph (`ontology` / `asserted` / `extracted` / `inferred` / `federated`); the contradictions the engine surfaced (e.g. OpenAI's CEO predicate resolving to four different people over five days); and three RAG answers with source citations and evidence snippets.
+
+The corpus lives in [`examples/openai-nov-2023/`](examples/openai-nov-2023/) and is paraphrased synthesis of publicly reported events — not journalism, not from any single outlet, MIT-licensed alongside the rest of the repo. Point the script at your own directory of `.md` files with the same frontmatter format to swap in a different corpus.
+
+---
+
+## Design highlights
+
+If you only have time to read one section of the architecture doc, read the [Noisy-OR story](docs/architecture.md#noisy-or-vs-problog-332-lines-to-4) — it's the clearest "right primitive at the right altitude" lesson the codebase carries.
+
+- **[Named graphs as trust labels, not filters](docs/architecture.md#named-graphs-as-trust-labels-not-filters)** — five named graphs separate triples by provenance class. The graph a triple lives in is surfaced to readers as a `trust_tier` label, but retrieval is tier-agnostic. Filtering on tier is a choice the caller makes, not the system.
+- **[Noisy-OR vs ProbLog: 332 lines to 4](docs/architecture.md#noisy-or-vs-problog-332-lines-to-4)** — multi-source confidence combination, in its entirety, is one stdlib import and four lines. The story of how it got there from a 332-line probabilistic-logic engine is the headline architectural lesson of this project.
+- **[The outbox: two stores, one truth](docs/architecture.md#the-outbox-two-stores-one-truth)** — triples live in pyoxigraph, provenance lives in PostgreSQL, and a single transaction can't cover both. A transactional outbox plus a startup-time drainer keeps the two consistent across process crashes. Every operation is idempotent by construction.
+- **[Reader-side status filter](docs/architecture.md#reader-side-status-filter-the-half-picture-problem)** — `/api/search` and `/api/ask` only return content whose latest ingestion job has reached a terminal status. Without this, in-flight content matches by chunk before its KG triples have committed — the half-picture problem.
+- **[Forward-chaining inference](docs/architecture.md#forward-chaining-inference-three-rules-bfs-retraction-cascade)** — three rules (inverse, transitive, type-inheritance), BFS with a depth cap and cycle detection, retraction cascade when source triples change. Every rule guards against literal objects, a generalisation of a real production bug.
+- **[Two-phase extraction + Wikidata-QID coreference](docs/architecture.md#two-phase-llm-extraction-entities-first-then-relations)** — entities are extracted first so their URIs are available to the relation pass. Same-QID entities across documents merge deterministically before triples reach the store.
 
 ---
 
@@ -852,7 +879,10 @@ Deployed to production (~640 tests).
 
 | Document | Description |
 |----------|-------------|
+| [Architecture notes](docs/architecture.md) | Design rationale for Noisy-OR, the outbox, named-graph trust tiers, inference, and the parts deliberately left out |
+| [API reference](API.md) | Full endpoint reference with example payloads (interactive docs at `/docs` when running) |
 | [Deployment](docs/deployment.md) | Production AEGIS stack deployment |
+| [Demo corpus](examples/openai-nov-2023/) | Bundled public-domain corpus used by `scripts/demo.py` |
 
 ---
 
