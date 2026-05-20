@@ -179,45 +179,30 @@ committed — the "half-picture" problem.
 ## Project Lessons (auto-managed by cmemory)
 - cmemory's readStdin() in shared.ts only resolved on stdin 'end' event, but Claude Code hooks may not immediately close the stdin pipe. Fix: try JSON.parse() eagerly on each 'data' chunk so the promise resolves as soon as complete JSON arrives, without waiting for 'end'.
 
-## Followups (next phases)
+## Project state
 
-Phase 1 (polish & packaging — README, sample corpus, architecture doc) is in flight on branch `worktree-phase-1-credibility-polish`. Phases below were defined in conversation on 2026-05-20 and should be picked up after Phase 1 lands.
+Polish work is **paused indefinitely** as of 2026-05-20. The user has explicitly deferred further investment until they're using knowledge-service themselves day-to-day; usage will dictate whether more development makes sense and what shape it should take.
 
-**Framing for all phases.** The project is being positioned as a *credibility/career artifact + maybe-future-business*, with the hard constraint that nothing must break the Aegis deployment (`aegis_knowledge` on meem, shared `aegis_postgres`, LiteLLM proxy → Ollama). Do not introduce a sqlite/embedded backend — Aegis runs on Postgres and that's the reference deployment. Local-first ergonomics for new users come from a `docker compose up` one-liner with PG bundled, not from a second storage backend.
+### What's in scope right now
 
-### Phase 2 — One technical wedge that makes the demo land
+- **Bug fixes and reliability work** when surfaced by real use. The known active issues (production data quality, qwen3 capacity) are in cmemory — call `search_lessons` with relevant queries before assuming a fix is novel.
+- **Operational tasks** the user asks for: re-ingesting failed jobs, deploys, config changes.
 
-Pick **one**. Don't bundle. Energy matters more than scope.
+### What's NOT in scope without explicit re-discussion
 
-- **(A) Numerical contradiction detection.** Today `/api/knowledge/contradictions` fires on same-predicate-different-object (string equality) and on opposite-predicate pairs (via `ks:oppositePredicate`). It does NOT fire on same-predicate same-subject with numerically different objects (e.g. `guidance £200M → £180M`, same predicate, different magnitudes). Add a numeric-delta check: parse object literals as numbers when possible, fire a contradiction if the delta exceeds a configurable threshold (absolute or relative). Probably lives in `src/knowledge_service/api/contradictions.py` and a new helper in `_utils.py`. Tests in `tests/test_contradictions.py`. Demo impact: makes the contradiction story visceral on real-world financial/guidance data. Risk: low — additive, doesn't change existing behaviour.
-
-- **(B) Extraction precision pass.** Address the 83%-of-rejections lesson recorded in this CLAUDE.md and in cmemory. The work is *additive* validators on `TripleInput` / `EntityInput` in `src/knowledge_service/models.py`: (1) `model_validator(mode="before")` aliasing non-canonical triple shapes (`{from, to, relation}`, `{source, target, type}`, `{head, relation, tail}`) → `{s, p, o}`; (2) default `rdf_type` to `schema:Thing` when missing on `EntityInput`; (3) unwrap nested `{value, type}` dicts on object and property values; (4) lift `confidence` from `properties` to top level. Each is a small validator + test. Demo impact: graph quality improves measurably, the cmemory lesson becomes resolved, makes the future blog post stronger. Risk: low — schema gets looser, not tighter; existing valid payloads still validate.
-
-- **(C) Minimal read-only web UI.** Bundled with FastAPI (already has Jinja2 + Alpine + Tailwind via the admin panel). New page at `/demo` or `/explorer` (public, no auth needed against demo data) that shows: ingest a URL → see chunks → see extracted triples → see contradictions → ask a question with citations. Should fit inside the existing `admin/templates/` structure with a new template + route. Demo impact: highest shareability — a screenshot or screen recording carries on Twitter/HN. Risk: medium-low — net-new surface area, must not regress admin auth.
-
-**Recommendation in conversation**: (B) for substance, (C) for shareability, (A) for best demo-to-effort. Whichever the user picks, scope to ~2 weeks max and don't slip into Phase 3 territory.
-
-### Phase 3 — Story & launch
-
-After Phase 2 wedge is in:
-
-1. **One blog post.** Strongest framing in the conversation: *"I replaced 332 lines of ProbLog with four lines of Noisy-OR — here's what I learned about over-engineering probabilistic reasoning."* Second-best: *"Knowledge graphs that know when their sources contradict each other."* The Noisy-OR story has a clear before/after (commit history before the replacement is the receipt), a villain (over-engineering), and a hero (the right primitive). Post should reference the demo corpus and link to `docs/architecture.md`.
-
-2. **Hacker News launch.** Aim for ~few-hundred views and thoughtful comments, not virality. The substance is the artifact. Title should foreground the architecture story, not the project name. Don't market it — let the substance pull.
-
-3. **Dogfood ongoing.** User commits to pointing knowledge-service at their own reading pile / project notes / lessons-learned for a month. This is the only feedback loop that will reveal whether a future business hides in here.
-
-### Hard non-goals (do not pursue without explicit re-discussion)
-
-- B2B compliance / KYC verticals (Refinitiv, Quantexa, Sayari space). Wrong distribution shape for a solo career artifact.
-- Stockopedia integration as a feature. Functional fit isn't there.
+- More polish on README / architecture / demo / blog post / launch. Phase 1 polish (PR #76, on main) is the line; don't extend it.
+- New features, new endpoints, new UIs, new "wedges" of any kind.
+- B2B compliance / KYC verticals — wrong distribution shape for a solo artifact.
+- Stockopedia integration as a feature — functional fit isn't there.
 - Multi-tenant SaaS, billing, auth-beyond-admin-password.
-- Replacing Postgres with sqlite/duckdb. Aegis runs on Postgres.
-- "Second brain" consumer app. Frontend product surface, wrong scope.
-- Adding more features in Phase 1. The polish is the product right now.
+- Replacing Postgres with sqlite/duckdb. Aegis runs on Postgres; that's the reference deployment.
+- "Second brain" consumer app. Wrong scope for a solo build.
 
-### How to resume
+### What would unpause this
 
-1. Read this section, then read the top of `README.md` (post-Phase-1) and `docs/architecture.md` to recover full context.
-2. Ask the user which Phase 2 wedge to pick before writing any code.
-3. New worktree per the worktree policy at the top of `~/.claude/CLAUDE.md`.
+A signal from the user that:
+
+1. They're actively using knowledge-service against their own corpus, and
+2. They've hit a concrete gap that more development would close.
+
+Without both, default to "park" — do not propose new feature work, do not extend Phase 1, do not pitch Phases 2 or 3. The earlier conversation explored three Phase 2 wedge candidates (numerical contradictions, extraction precision, public `/demo` page) and a Phase 3 launch plan. None should be re-introduced without the user explicitly asking.
