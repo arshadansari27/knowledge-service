@@ -3,7 +3,10 @@ __pycache__/
 .env*
 !.env.example
 data/oxigraph/
-docs/
+docs/*
+!docs/architecture.md
+!docs/deployment.md
+!docs/superpowers/
 .venv/
 *.egg-info/
 dist/
