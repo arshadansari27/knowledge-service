@@ -102,3 +102,37 @@ async def test_triples_browse_no_duplicates(stats_client):
         key = (item["subject"], item["predicate"], item["object"])
         assert key not in seen, f"Duplicate triple in browse results: {key}"
         seen.add(key)
+
+
+async def test_content_items_default(stats_client, mock_pg_pool):
+    _pool, conn = mock_pg_pool
+    resp = await stats_client.get("/api/admin/stats/content-items")
+    assert resp.status_code == 200
+    sql, *args = conn.fetch.call_args.args
+    assert "WHERE source_type" not in sql
+    assert "LIMIT $1" in sql
+    assert args == [200]
+
+
+async def test_content_items_filters_by_source_type(stats_client, mock_pg_pool):
+    _pool, conn = mock_pg_pool
+    resp = await stats_client.get(
+        "/api/admin/stats/content-items",
+        params={"source_type": "reference", "limit": 500},
+    )
+    assert resp.status_code == 200
+    sql, *args = conn.fetch.call_args.args
+    assert "WHERE source_type = $1" in sql
+    assert "LIMIT $2" in sql
+    assert args == ["reference", 500]
+
+
+async def test_content_items_limit_validation(stats_client):
+    resp = await stats_client.get(
+        "/api/admin/stats/content-items", params={"limit": 5000}
+    )
+    assert resp.status_code == 422
+    resp = await stats_client.get(
+        "/api/admin/stats/content-items", params={"limit": 0}
+    )
+    assert resp.status_code == 422
