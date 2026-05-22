@@ -18,7 +18,7 @@ _DEFAULT_ENTITY_TEMPLATE = """{context}Extract entities and events from the text
 Return ONLY a JSON object: {{"items": [...]}}
 
 Each item must have a knowledge_type field. Supported types and required fields:
-- Entity: uri, rdf_type (e.g. "schema:Person", "schema:Thing"), label, properties (dict), confidence
+- Entity: uri, rdf_type (a schema.org class name like "Person", "Country", "Organization", "Thing" — bare class name, no "schema:" prefix and no other namespace), label, properties (dict), confidence
 - Event: subject, occurred_at (YYYY-MM-DD), confidence, properties (dict)
 
 Entity naming rules:
@@ -27,14 +27,15 @@ Entity naming rules:
 - Use lowercase snake_case: "cold_exposure" not "Cold Exposure"
 - Be specific: "vitamin_d3" not "vitamin_d" when the text specifies D3
 - The uri and label should both use the snake_case form
+- The uri must be the entity's own name. NEVER use the literal string "schema" or "schema_<type>" as a uri — those are not entities.
 
 Extract every distinct entity and event mentioned. If nothing found, return {{"items": []}}
 
 Example:
 Text: "Regular cold water immersion has been shown to increase dopamine levels by up to 250%."
 Output: {{"items": [
-  {{"knowledge_type": "Entity", "uri": "cold_water_immersion", "rdf_type": "schema:Thing", "label": "cold_water_immersion", "properties": {{}}, "confidence": 0.95}},
-  {{"knowledge_type": "Entity", "uri": "dopamine", "rdf_type": "schema:Thing", "label": "dopamine", "properties": {{}}, "confidence": 0.95}}
+  {{"knowledge_type": "Entity", "uri": "cold_water_immersion", "rdf_type": "Thing", "label": "cold_water_immersion", "properties": {{}}, "confidence": 0.95}},
+  {{"knowledge_type": "Entity", "uri": "dopamine", "rdf_type": "Thing", "label": "dopamine", "properties": {{}}, "confidence": 0.95}}
 ]}}
 
 Text:
@@ -90,7 +91,7 @@ Return ONLY a JSON object: {{"entities": [...], "relations": [...]}}
 ## Step 1: Extract Entities and Events
 
 Each entity/event item must have a knowledge_type field:
-- Entity: uri, rdf_type (e.g. "schema:Person", "schema:Thing"), label, properties (dict), confidence
+- Entity: uri, rdf_type (a schema.org class name like "Person", "Country", "Organization", "Thing" — bare class name, no "schema:" prefix and no other namespace), label, properties (dict), confidence
 - Event: subject, occurred_at (YYYY-MM-DD), confidence, properties (dict)
 
 Entity naming rules:
@@ -99,6 +100,7 @@ Entity naming rules:
 - Use lowercase snake_case: "cold_exposure" not "Cold Exposure"
 - Be specific: "vitamin_d3" not "vitamin_d" when the text specifies D3
 - The uri and label should both use the snake_case form
+- The uri must be the entity's own name. NEVER use the literal string "schema" or "schema_<type>" as a uri (or as a subject/object below) — those are not entities.
 
 ## Step 2: Extract Relationships Using Those Entities
 

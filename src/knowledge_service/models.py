@@ -66,6 +66,27 @@ _TRIPLE_ALIASES: tuple[tuple[str, tuple[str, ...]], ...] = (
 )
 
 
+def _is_schema_placeholder_uri(value: Any) -> bool:
+    """Detect the LLM-hallucinated ``"schema"`` / ``"schema_<type>"`` /
+    ``"schema:<Type>"`` placeholder URIs that aren't real entities.
+
+    Production triples were collecting unrelated things under a single
+    ``http://knowledge.local/data/schema`` subject because the LLM, primed
+    by ``rdf_type`` examples like ``"schema:Person"``, sometimes emitted
+    ``"schema"`` or ``"schema_person"`` as the entity ``uri`` itself.
+    Items that survive past this guard would otherwise produce junk
+    triples that link disjoint entities together.
+    """
+    if not isinstance(value, str):
+        return False
+    normalised = value.strip().lower()
+    if not normalised:
+        return False
+    if normalised == "schema":
+        return True
+    return normalised.startswith("schema_") or normalised.startswith("schema:")
+
+
 class TripleInput(BaseModel):
     """Universal knowledge unit. Replaces Claim, Fact, Relationship, TemporalState."""
 
@@ -108,6 +129,16 @@ class TripleInput(BaseModel):
     def _coerce_null_knowledge_type(cls, value: Any) -> Any:
         return _normalise_knowledge_type(value, "claim")
 
+    @field_validator("subject", "object", mode="after")
+    @classmethod
+    def _reject_schema_placeholder(cls, value: str) -> str:
+        if _is_schema_placeholder_uri(value):
+            raise ValueError(
+                f"refusing schema-placeholder URI {value!r} — the LLM is "
+                "emitting type names as entity URIs; the item is dropped"
+            )
+        return value
+
     def to_triples(self) -> list[dict]:
         return [
             {
@@ -141,6 +172,13 @@ class EventInput(BaseModel):
     @classmethod
     def _coerce_null_knowledge_type(cls, value: Any) -> Any:
         return _normalise_knowledge_type(value, "event")
+
+    @field_validator("subject", mode="after")
+    @classmethod
+    def _reject_schema_placeholder(cls, value: str) -> str:
+        if _is_schema_placeholder_uri(value):
+            raise ValueError(f"refusing schema-placeholder subject {value!r} on event item")
+        return value
 
     @field_validator("properties", mode="before")
     @classmethod
@@ -218,6 +256,13 @@ class EntityInput(BaseModel):
     @classmethod
     def _coerce_null_knowledge_type(cls, value: Any) -> Any:
         return _normalise_knowledge_type(value, "entity")
+
+    @field_validator("uri", mode="after")
+    @classmethod
+    def _reject_schema_placeholder(cls, value: str) -> str:
+        if _is_schema_placeholder_uri(value):
+            raise ValueError(f"refusing schema-placeholder uri {value!r} on entity item")
+        return value
 
     @field_validator("properties", mode="before")
     @classmethod
