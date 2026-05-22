@@ -653,3 +653,73 @@ class TestEntityMisplacedConfidence:
         }
         result = _ADAPTER.validate_python(payload)
         assert result.confidence == 0.7
+
+
+class TestSchemaPlaceholderRejection:
+    """The LLM occasionally emits the literal placeholder strings ``"schema"``,
+    ``"schema_person"``, ``"schema:Country"`` etc. as entity URIs / triple
+    subjects — likely pattern-matched off the ``rdf_type`` example like
+    ``"schema:Person"`` in the prompt. Items with these placeholder URIs
+    must be rejected at validation so they don't survive to ``to_triples()``
+    and collect unrelated entities under one junk URI."""
+
+    @pytest.mark.parametrize(
+        "bad",
+        [
+            "schema",
+            "Schema",
+            "  schema  ",
+            "schema_person",
+            "Schema_Country",
+            "schema:Person",
+            "schema:Thing",
+        ],
+    )
+    def test_entity_with_schema_uri_is_rejected(self, bad):
+        payload = {
+            "knowledge_type": "Entity",
+            "uri": bad,
+            "rdf_type": "schema:Person",
+            "label": "anything",
+        }
+        with pytest.raises(ValidationError):
+            _ADAPTER.validate_python(payload)
+
+    @pytest.mark.parametrize("bad", ["schema", "schema_country", "schema:Country"])
+    def test_triple_with_schema_subject_is_rejected(self, bad):
+        payload = {
+            "knowledge_type": "Claim",
+            "subject": bad,
+            "predicate": "located_in",
+            "object": "australia",
+        }
+        with pytest.raises(ValidationError):
+            _ADAPTER.validate_python(payload)
+
+    @pytest.mark.parametrize("bad", ["schema", "schema_country"])
+    def test_triple_with_schema_object_is_rejected(self, bad):
+        payload = {
+            "knowledge_type": "Claim",
+            "subject": "australia",
+            "predicate": "is_a",
+            "object": bad,
+        }
+        with pytest.raises(ValidationError):
+            _ADAPTER.validate_python(payload)
+
+    def test_event_with_schema_subject_is_rejected(self):
+        payload = {
+            "knowledge_type": "Event",
+            "subject": "schema_event",
+            "occurred_at": "2026-05-22",
+        }
+        with pytest.raises(ValidationError):
+            _ADAPTER.validate_python(payload)
+
+    def test_legitimate_words_containing_schema_pass(self):
+        """Real entities whose name *contains* "schema" but isn't the placeholder
+        — e.g. "schemata", "json_schema_validator" — must still validate.
+        Only the exact placeholders are rejected."""
+        for ok in ("schemata", "json_schema_validator", "x_schema_y"):
+            entity = EntityInput(uri=ok, rdf_type="schema:Thing", label=ok)
+            assert entity.uri == ok
