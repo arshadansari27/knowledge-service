@@ -128,11 +128,7 @@ async def test_content_items_filters_by_source_type(stats_client, mock_pg_pool):
 
 
 async def test_content_items_limit_validation(stats_client):
-    resp = await stats_client.get(
-        "/api/admin/stats/content-items", params={"limit": 5000}
-    )
+    resp = await stats_client.get("/api/admin/stats/content-items", params={"limit": 5000})
     assert resp.status_code == 422
-    resp = await stats_client.get(
-        "/api/admin/stats/content-items", params={"limit": 0}
-    )
+    resp = await stats_client.get("/api/admin/stats/content-items", params={"limit": 0})
     assert resp.status_code == 422
