@@ -104,17 +104,32 @@ async def get_type_breakdown(request: Request) -> dict:
 
 
 @router.get("/stats/content-items")
-async def get_content_items(request: Request) -> list[dict]:
+async def get_content_items(
+    request: Request,
+    source_type: str | None = Query(None, description="Filter by source_type"),
+    limit: int = Query(200, ge=1, le=2000),
+) -> list[dict]:
     pg_pool = request.app.state.pg_pool
 
-    sql = """
-        SELECT id, url, title, source_type, tags, ingested_at
-        FROM content_metadata
-        ORDER BY ingested_at DESC
-        LIMIT 200
-    """
+    if source_type is None:
+        sql = """
+            SELECT id, url, title, source_type, tags, ingested_at
+            FROM content_metadata
+            ORDER BY ingested_at DESC
+            LIMIT $1
+        """
+        params = (limit,)
+    else:
+        sql = """
+            SELECT id, url, title, source_type, tags, ingested_at
+            FROM content_metadata
+            WHERE source_type = $1
+            ORDER BY ingested_at DESC
+            LIMIT $2
+        """
+        params = (source_type, limit)
     async with pg_pool.acquire() as conn:
-        rows = await conn.fetch(sql)
+        rows = await conn.fetch(sql, *params)
 
     return [
         {
