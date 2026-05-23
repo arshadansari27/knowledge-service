@@ -393,7 +393,6 @@ class ContentRequest(BaseModel):
     raw_text: str | None = None
     source_type: str | None = None
     tags: list[str] = []
-    metadata: dict = {}
     knowledge: list[KnowledgeInput] = []
     domains: list[str] | None = None  # optional domain hint for extraction
 
@@ -411,21 +410,6 @@ class ContentAcceptedResponse(BaseModel):
     status: str = "accepted"
     chunks_total: int
     chunks_capped_from: int | None = None
-
-
-class IngestionJobStatus(BaseModel):
-    content_id: str
-    job_id: str
-    status: str
-    chunks_total: int
-    chunks_embedded: int
-    chunks_extracted: int
-    chunks_failed: int
-    triples_created: int
-    entities_resolved: int
-    error: str | None
-    created_at: str
-    updated_at: str
 
 
 class ClaimsResponse(BaseModel):
@@ -452,8 +436,3 @@ class SearchResult(BaseModel):
     chunk_text: str
     chunk_index: int
     section_header: str | None = None
-
-
-class HealthResponse(BaseModel):
-    status: str
-    components: dict[str, str]

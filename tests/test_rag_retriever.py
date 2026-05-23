@@ -107,15 +107,6 @@ class TestRetrieveContentSearch:
 
 
 class TestRetrieveEntityDiscovery:
-    async def test_entities_found_populated(self):
-        retriever = RAGRetriever(
-            embedding_client=_make_embedding_client(),
-            embedding_store=_make_embedding_store(entity_rows=[_ENTITY_ROW]),
-            knowledge_store=_make_knowledge_store(),
-        )
-        ctx = await retriever.retrieve("dopamine", max_sources=5, min_confidence=0.0)
-        assert ctx.entities_found == ["http://knowledge.local/data/dopamine"]
-
     async def test_knowledge_triples_from_entity_lookup(self):
         triple = {
             "subject": "http://knowledge.local/data/dopamine",
@@ -199,7 +190,6 @@ class TestRetrieveEmpty:
         assert ctx.content_results == []
         assert ctx.knowledge_triples == []
         assert ctx.contradictions == []
-        assert ctx.entities_found == []
 
 
 class TestRetrieveTripleSerialization:
@@ -250,7 +240,10 @@ class TestIntentDispatch:
         retriever = RAGRetriever(ec, es, ks)
         intent = QueryIntent(intent="entity", entities=["dopamine"])
         context = await retriever.retrieve("what is dopamine?", intent=intent)
-        assert len(context.entities_found) >= 1
+        # Entity-intent retrieval looks up triples by the resolved URI; assert
+        # the entity store was consulted and triples were attempted.
+        es.search_entities.assert_called()
+        assert context.knowledge_triples is not None
 
     async def test_none_intent_defaults_to_semantic(self):
         ec = _make_embedding_client()

@@ -103,11 +103,10 @@ async def test_items_rejected_flows_into_job_record():
     xc._call_llm_combined = AsyncMock(return_value=[bad, good])  # type: ignore[assignment]
 
     phase = ExtractPhase(xc)
-    _, _, chunks_failed, chunks_skipped, items_rejected = await phase.run(
+    _, _, chunks_failed, items_rejected = await phase.run(
         chunk_records=[{"chunk_index": 0, "chunk_text": "t", "section_header": None}],
         chunk_id_map={0: "cid"},
         nlp_hints=None,
     )
     assert chunks_failed == 0
-    assert chunks_skipped == 0
     assert items_rejected == 1

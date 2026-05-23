@@ -31,9 +31,10 @@ class IngestContext:
 @dataclass
 class IngestResult:
     is_new: bool
-    delta: dict | None
     contradictions: list[dict]
-    confidence: float
+    # ``inferred_triples`` is retained so the inference engine's per-call
+    # output can be asserted in tests and surfaced in future responses; the
+    # /api/claims path uses ``is_new`` and ``contradictions`` only.
     inferred_triples: list[dict] = field(default_factory=list)
 
 
@@ -394,4 +395,4 @@ async def ingest_triple(
     }
     inferred = await run_inference(normalized, engine, stores, context, drainer=drainer)
 
-    return IngestResult(is_new, delta, contradictions, confidence, inferred)
+    return IngestResult(is_new, contradictions, inferred)

@@ -15,12 +15,9 @@ _ALLOWED_JOB_COLUMNS = frozenset(
         "chunks_embedded",
         "chunks_extracted",
         "chunks_failed",
-        "chunks_skipped",
         "items_rejected",
         "triples_created",
         "entities_resolved",
-        "entities_linked",
-        "entities_coref",
         "error",
     }
 )
@@ -51,7 +48,6 @@ class JobTracker:
         triples_created: int,
         entities_resolved: int,
         chunks_failed: int,
-        chunks_skipped: int = 0,
         items_rejected: int = 0,
     ) -> None:
         async with self._pool.acquire() as conn:
@@ -59,12 +55,11 @@ class JobTracker:
                 """UPDATE ingestion_jobs
                    SET status = 'completed', triples_created = $1,
                        entities_resolved = $2, chunks_failed = $3,
-                       chunks_skipped = $4, items_rejected = $5
-                   WHERE id = $6::uuid""",
+                       items_rejected = $4
+                   WHERE id = $5::uuid""",
                 triples_created,
                 entities_resolved,
                 chunks_failed,
-                chunks_skipped,
                 items_rejected,
                 self._job_id,
             )
@@ -141,15 +136,12 @@ async def run_ingestion(
 
             nlp_phase = NlpPhase(nlp)
             nlp_results = await nlp_phase.run(chunk_records)
-            entities_linked = sum(1 for r in nlp_results for e in r.entities if e.wikidata_id)
-            await tracker.update_status("analyzing", entities_linked=entities_linked)
 
         # Phase 3: Extract
         current_phase = "extracting"
         await tracker.update_status("extracting")
 
         chunks_failed = 0
-        chunks_skipped = 0
         items_rejected = 0
         if not knowledge and raw_text and extraction_client:
             extract = ExtractPhase(extraction_client)
@@ -157,7 +149,6 @@ async def run_ingestion(
                 knowledge_items,
                 chunk_ids_for_items,
                 chunks_failed,
-                chunks_skipped,
                 items_rejected,
             ) = await extract.run(
                 chunk_records,
@@ -168,7 +159,7 @@ async def run_ingestion(
                 domains=domains,
             )
             extractor = "llm"
-            chunks_extracted = len(chunk_records) - chunks_failed - chunks_skipped
+            chunks_extracted = len(chunk_records) - chunks_failed
         else:
             knowledge_items = list(knowledge or [])
             chunk_ids_for_items = [None] * len(knowledge_items)
@@ -179,7 +170,6 @@ async def run_ingestion(
             "extracting",
             chunks_extracted=chunks_extracted,
             chunks_failed=chunks_failed,
-            chunks_skipped=chunks_skipped,
             items_rejected=items_rejected,
         )
         graph = KS_GRAPH_ASSERTED if extractor == "api" else KS_GRAPH_EXTRACTED
@@ -195,7 +185,6 @@ async def run_ingestion(
             coref = CoreferencePhase(stores.pg_pool)
             coref_result = await coref.run(knowledge_items, nlp_results)
             knowledge_items = coref_result.canonicalize(knowledge_items)
-            await tracker.update_status("resolving", entities_coref=len(coref_result.groups))
 
         # Phase 5: Process
         current_phase = "processing"
@@ -215,7 +204,6 @@ async def run_ingestion(
             triples_created,
             entities_resolved,
             chunks_failed,
-            chunks_skipped,
             items_rejected,
         )
 
@@ -223,13 +211,12 @@ async def run_ingestion(
             total_chunks = len(chunk_records)
             logger.warning(
                 "Ingestion job %s yielded 0 triples — chunks total=%d embedded=%d "
-                "extracted=%d failed=%d skipped=%d items_rejected=%d (title=%s, url=%s)",
+                "extracted=%d failed=%d items_rejected=%d (title=%s, url=%s)",
                 job_id,
                 total_chunks,
                 len(chunk_id_map),
                 chunks_extracted,
                 chunks_failed,
-                chunks_skipped,
                 items_rejected,
                 title,
                 source_url,

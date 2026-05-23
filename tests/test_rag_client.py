@@ -14,13 +14,8 @@ _KEY = "sk-test"
 _CHAT_URL = f"{_BASE}/v1/chat/completions"
 
 
-def _make_chat_response(answer: str, source_urls: list[str] | None = None) -> dict:
-    content = json.dumps(
-        {
-            "answer": answer,
-            "source_urls_cited": source_urls or [],
-        }
-    )
+def _make_chat_response(answer: str) -> dict:
+    content = json.dumps({"answer": answer})
     return {"choices": [{"message": {"role": "assistant", "content": content}}]}
 
 
@@ -57,7 +52,6 @@ def _sample_context() -> RetrievalContext:
                 "confidence": 0.3,
             }
         ],
-        entities_found=["http://ks/cold_shock"],
     )
 
 
@@ -170,15 +164,12 @@ class TestRAGClientAnswer:
     async def test_returns_rag_answer(self, httpx_mock):
         httpx_mock.add_response(
             url=_CHAT_URL,
-            json=_make_chat_response(
-                "Cold exposure increases dopamine.", ["https://example.com/article"]
-            ),
+            json=_make_chat_response("Cold exposure increases dopamine."),
         )
         client = RAGClient(base_url=_BASE, model="qwen3:14b", api_key=_KEY)
         result = await client.answer("Does cold exposure increase dopamine?", _sample_context())
         assert isinstance(result, RAGAnswer)
         assert "dopamine" in result.answer.lower()
-        assert result.source_urls_cited == ["https://example.com/article"]
         await client.close()
 
     async def test_fallback_on_bad_json(self, httpx_mock):
@@ -189,13 +180,10 @@ class TestRAGClientAnswer:
         client = RAGClient(base_url=_BASE, model="qwen3:14b", api_key=_KEY)
         result = await client.answer("q", _sample_context())
         assert result.answer == "not json at all {{"
-        assert result.source_urls_cited == []
         await client.close()
 
     async def test_fallback_on_markdown_fenced_json(self, httpx_mock):
-        fenced = (
-            "```json\n" + json.dumps({"answer": "fenced answer", "source_urls_cited": []}) + "\n```"
-        )
+        fenced = "```json\n" + json.dumps({"answer": "fenced answer"}) + "\n```"
         httpx_mock.add_response(
             url=_CHAT_URL,
             json={"choices": [{"message": {"content": fenced}}]},

@@ -15,7 +15,7 @@ def _mock_registry():
 class TestBuildCombinedPrompt:
     def test_combined_prompt_includes_entity_and_relation_instructions(self):
         reg = _mock_registry()
-        reg.get_domains_for_entity_types.return_value = ["base"]
+        reg.all_domain_names.return_value = ["base"]
         reg.get_predicates.return_value = [
             PredicateInfo(uri="http://x/causes", label="causes", domain="base"),
         ]
@@ -30,7 +30,7 @@ class TestBuildCombinedPrompt:
 
     def test_combined_prompt_includes_nlp_hints(self):
         reg = _mock_registry()
-        reg.get_domains_for_entity_types.return_value = ["base"]
+        reg.all_domain_names.return_value = ["base"]
         reg.get_predicates.return_value = []
         builder = PromptBuilder(reg)
         hints = [{"text": "dopamine", "label": "CHEMICAL", "wikidata_id": "Q80635"}]
@@ -40,7 +40,7 @@ class TestBuildCombinedPrompt:
 
     def test_combined_prompt_includes_predicates(self):
         reg = _mock_registry()
-        reg.get_domains_for_entity_types.return_value = ["base"]
+        reg.all_domain_names.return_value = ["base"]
         reg.get_predicates.return_value = [
             PredicateInfo(uri="http://x/causes", label="causes", domain="base"),
             PredicateInfo(uri="http://x/increases", label="increases", domain="base"),
@@ -52,7 +52,7 @@ class TestBuildCombinedPrompt:
 
     def test_combined_prompt_truncates_text(self):
         reg = _mock_registry()
-        reg.get_domains_for_entity_types.return_value = ["base"]
+        reg.all_domain_names.return_value = ["base"]
         reg.get_predicates.return_value = []
         builder = PromptBuilder(reg)
         long_text = "word " * 2000  # ~10000 chars

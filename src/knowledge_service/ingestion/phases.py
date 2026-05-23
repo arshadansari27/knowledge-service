@@ -67,7 +67,7 @@ class ExtractPhase:
         source_type: str | None = None,
         nlp_hints: list | None = None,
         domains: list[str] | None = None,
-    ) -> tuple[list[dict], list[str | None], int, int, int]:
+    ) -> tuple[list[dict], list[str | None], int, int]:
         """Extract knowledge from chunks.
 
         ``domains`` scopes the LLM prompt's predicate list (and prompt
@@ -75,12 +75,11 @@ class ExtractPhase:
         to every registered domain, which dilutes the prompt for domain-tagged
         ingests.
 
-        Returns (knowledge_items, chunk_ids_for_items, chunks_failed, chunks_skipped, items_rejected).
+        Returns (knowledge_items, chunk_ids_for_items, chunks_failed, items_rejected).
         """
         knowledge: list[dict] = []
         chunk_ids: list[str | None] = []
         chunks_failed = 0
-        chunks_skipped = 0
         items_rejected = 0
 
         # Build a lookup from chunk_index → NlpResult for hint injection
@@ -124,7 +123,7 @@ class ExtractPhase:
             if nlp_result and nlp_result.entities and items is not None:
                 self._emit_ner_missed(nlp_result, items, cid, knowledge, chunk_ids)
 
-        return knowledge, chunk_ids, chunks_failed, chunks_skipped, items_rejected
+        return knowledge, chunk_ids, chunks_failed, items_rejected
 
     @staticmethod
     def _emit_ner_missed(

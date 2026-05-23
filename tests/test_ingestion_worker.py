@@ -142,14 +142,14 @@ class TestExtractPhaseFiltering:
         ]
         chunk_id_map = {0: "uuid-0", 1: "uuid-1"}
 
-        knowledge, chunk_ids, chunks_failed, chunks_skipped, items_rejected = await phase.run(
+        knowledge, chunk_ids, chunks_failed, items_rejected = await phase.run(
             chunk_records,
             chunk_id_map,
             nlp_hints=None,
         )
 
         assert extraction_client.extract_with_stats.call_count == 2
-        assert chunks_skipped == 0
+        assert chunks_failed == 0
         assert items_rejected == 0
 
     async def test_domains_threaded_to_extractor(self):
@@ -175,10 +175,3 @@ class TestExtractPhaseFiltering:
         assert kwargs["domains"] == ["health", "research"]
 
 
-class TestJobTrackerChunksSkipped:
-    async def test_update_status_accepts_chunks_skipped(self):
-        pool, conn = _make_mock_pool()
-        tracker = JobTracker("job-id", pool)
-        await tracker.update_status("extracting", chunks_skipped=5)
-        call_args = conn.execute.call_args
-        assert "chunks_skipped" in str(call_args)

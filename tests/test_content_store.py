@@ -48,7 +48,6 @@ class TestUpsertMetadata:
             raw_text="hello",
             source_type="article",
             tags=None,
-            metadata=None,
         )
         assert cid == "content-uuid-1234"
         conn.fetchval.assert_called_once()

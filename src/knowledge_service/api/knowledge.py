@@ -39,7 +39,6 @@ class KnowledgeResult(BaseModel):
     valid_from: str | None = None
     valid_until: str | None = None
     provenance: list[dict] = []
-    source: str | None = None
 
 
 class SparqlQueryBody(BaseModel):

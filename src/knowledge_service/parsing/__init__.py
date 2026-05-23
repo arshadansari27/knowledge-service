@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Protocol
 from urllib.parse import urlparse
 
@@ -15,7 +15,6 @@ class ParsedDocument:
     title: str | None
     metadata: dict
     source_format: str
-    images: list[bytes] = field(default_factory=list)
 
 
 class Parser(Protocol):

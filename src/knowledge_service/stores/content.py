@@ -30,7 +30,6 @@ Tables:
 
 from __future__ import annotations
 
-import json
 import re
 from typing import Any
 
@@ -139,27 +138,23 @@ class ContentStore:
         raw_text: str | None,
         source_type: str,
         tags: list[str] | None,
-        metadata: dict | None,
     ) -> str:
         """Upsert a content_metadata row and return its UUID.
 
         On conflict (url) the existing row is updated with fresh values,
         leaving id and ingested_at unchanged.
         """
-        metadata_json = json.dumps(metadata or {})
-
         sql = """
             INSERT INTO content_metadata (
-                url, title, summary, raw_text, source_type, tags, metadata
+                url, title, summary, raw_text, source_type, tags
             )
-            VALUES ($1, $2, $3, $4, $5, $6, $7)
+            VALUES ($1, $2, $3, $4, $5, $6)
             ON CONFLICT (url) DO UPDATE SET
                 title       = EXCLUDED.title,
                 summary     = EXCLUDED.summary,
                 raw_text    = EXCLUDED.raw_text,
                 source_type = EXCLUDED.source_type,
-                tags        = EXCLUDED.tags,
-                metadata    = EXCLUDED.metadata
+                tags        = EXCLUDED.tags
             RETURNING id
         """
 
@@ -172,7 +167,6 @@ class ContentStore:
                 raw_text,
                 source_type,
                 tags or [],
-                metadata_json,
             )
         return str(content_id)
 

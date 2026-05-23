@@ -53,7 +53,6 @@ class RetrievalContext:
     content_results: list[dict] = field(default_factory=list)
     knowledge_triples: list[dict] = field(default_factory=list)
     contradictions: list[dict] = field(default_factory=list)
-    entities_found: list[str] = field(default_factory=list)
     traversal_depth: int | None = None
 
 
@@ -198,8 +197,7 @@ class RAGRetriever:
             query_embedding=embedding, limit=max_sources, query_text=question
         )
         entity_rows = await self._entity_store.search_entities(query_embedding=embedding, limit=3)
-        entities_found = [row["uri"] for row in entity_rows]
-        triples = await self._lookup_triples_by_subject(entities_found)
+        triples = await self._lookup_triples_by_subject([row["uri"] for row in entity_rows])
         predicate_triples = await self._lookup_triples_by_predicate(embedding)
         merged = self._deduplicate_triples(triples + predicate_triples)
         filtered = self._filter_by_confidence(merged, min_confidence)
@@ -208,7 +206,6 @@ class RAGRetriever:
             content_results=content_results,
             knowledge_triples=filtered,
             contradictions=contradictions,
-            entities_found=entities_found,
         )
 
     # --- Strategy: entity ---
@@ -233,7 +230,6 @@ class RAGRetriever:
             content_results=content_results,
             knowledge_triples=filtered,
             contradictions=contradictions,
-            entities_found=resolved_uris,
         )
 
     # --- Strategy: graph ---
@@ -261,10 +257,6 @@ class RAGRetriever:
 
         # Use traversal edges as knowledge triples
         filtered = self._filter_by_confidence(traversal.edges, min_confidence)
-
-        # Use traversal node URIs as entities found
-        entities_found = resolved_uris + [n["uri"] for n in traversal.nodes[:10]]
-
         contradictions = await self._detect_contradictions(filtered)
         content_results = await self._embedding_store.search(
             query_embedding=embedding, limit=3, query_text=question
@@ -277,7 +269,6 @@ class RAGRetriever:
             content_results=content_results,
             knowledge_triples=filtered,
             contradictions=contradictions,
-            entities_found=entities_found,
             traversal_depth=traversal_depth,
         )
 

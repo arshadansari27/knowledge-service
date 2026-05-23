@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import logging
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
 import httpx
 
@@ -19,7 +19,6 @@ class RAGAnswer:
     """Parsed LLM response."""
 
     answer: str
-    source_urls_cited: list[str] = field(default_factory=list)
 
 
 _MAX_PROMPT_CHARS = 48_000
@@ -30,7 +29,7 @@ def build_rag_prompt(question: str, context: RetrievalContext) -> str:
     sections: list[str] = [
         "You are a knowledge assistant. Answer the question using ONLY the context below.",
         "If the context doesn't contain enough information, say so. Do not fabricate.",
-        'Return a JSON object: {"answer": "...", "source_urls_cited": ["..."]}',
+        'Return a JSON object: {"answer": "..."}',
         "",
     ]
     running_len = sum(len(s) for s in sections)
@@ -125,9 +124,6 @@ class RAGClient(BaseLLMClient):
         parsed = _extract_json(raw)
 
         if parsed and isinstance(parsed, dict):
-            return RAGAnswer(
-                answer=parsed.get("answer", raw),
-                source_urls_cited=parsed.get("source_urls_cited", []),
-            )
+            return RAGAnswer(answer=parsed.get("answer", raw))
         logger.warning("RAGClient: could not parse JSON response, using raw text")
-        return RAGAnswer(answer=raw, source_urls_cited=[])
+        return RAGAnswer(answer=raw)

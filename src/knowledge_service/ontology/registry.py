@@ -1,7 +1,7 @@
 """Domain registry. Reads predicates, synonyms, and materiality from ontology."""
 
 import logging
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
 
 from knowledge_service.ontology.uri import KS
@@ -17,7 +17,6 @@ class PredicateInfo:
     label: str
     domain: str
     materiality_weight: float = DEFAULT_MATERIALITY
-    synonyms: list[str] = field(default_factory=list)
 
 
 class DomainRegistry:
@@ -53,20 +52,19 @@ class DomainRegistry:
                 else DEFAULT_MATERIALITY
             )
 
-            syns = self._load_synonyms(uri)
             info = PredicateInfo(
                 uri=uri,
                 label=label_val,
                 domain=domain_val,
                 materiality_weight=weight_val,
-                synonyms=syns,
             )
             self._predicates.setdefault(domain_val, []).append(info)
             self._materiality[uri] = weight_val
-            # Register canonical label (slugified) as mapping to URI
+            # Register canonical label (slugified) as mapping to URI so the
+            # synonym table lets prompt-time predicates resolve back to URIs.
             canonical_slug = label_val.lower().strip().replace(" ", "_")
             self._synonyms[canonical_slug] = uri
-            for syn in syns:
+            for syn in self._load_synonyms(uri):
                 slug = syn.lower().strip().replace(" ", "_")
                 self._synonyms[slug] = uri
 
@@ -106,5 +104,11 @@ class DomainRegistry:
     def get_prompt(self, name: str) -> str | None:
         return self._prompts.get(name)
 
-    def get_domains_for_entity_types(self, rdf_types: list[str]) -> list[str]:
+    def all_domain_names(self) -> list[str]:
+        """Return every domain that has at least one loaded predicate.
+
+        Used by ``PromptBuilder.build_combined_prompt`` when the request did
+        not specify ``domains``, so the prompt lists predicates from every
+        registered domain.
+        """
         return list(self._predicates.keys())

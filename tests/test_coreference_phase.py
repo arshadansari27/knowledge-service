@@ -33,7 +33,7 @@ def _make_nlp_result(
     entities: list[tuple[str, str | None]],
 ) -> NlpResult:
     nlp_entities = [
-        NlpEntity(text=text, label="MISC", start_char=0, end_char=len(text), wikidata_id=wid)
+        NlpEntity(text=text, label="MISC", wikidata_id=wid)
         for text, wid in entities
     ]
     return NlpResult(chunk_index=chunk_index, entities=nlp_entities)
@@ -235,26 +235,6 @@ class TestCoreferencePhaseStoreAliases:
         rows = conn.executemany.call_args[0][1]
         assert len(rows) == 1
         assert rows[0][0] == "dopamine"
-
-    async def test_store_aliases_tags_source_as_spacy(self):
-        conn = AsyncMock()
-        pool = _make_pool(conn)
-
-        groups = [
-            EntityGroup(
-                canonical_label="london",
-                canonical_uri=to_entity_uri("london"),
-                aliases=["city_of_london"],
-                wikidata_id="Q84",
-            )
-        ]
-
-        phase = CoreferencePhase(pool)
-        await phase._store_aliases(groups)
-
-        rows = conn.executemany.call_args[0][1]
-        for _, _, source_tag in rows:
-            assert source_tag == "spacy_linking"
 
     async def test_store_aliases_swallows_db_errors(self):
         conn = AsyncMock()

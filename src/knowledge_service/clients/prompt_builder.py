@@ -72,7 +72,7 @@ class PromptBuilder:
     ) -> str:
         """Build single-pass prompt for combined entity + relation extraction."""
         active_domains = domains or (
-            self._registry.get_domains_for_entity_types([]) if self._registry else ["base"]
+            self._registry.all_domain_names() if self._registry else ["base"]
         )
 
         # Check for domain-specific override first (skip "base" — that's the default)

@@ -115,7 +115,6 @@ async def _accept_content_request(body: ContentRequest, stores) -> dict:
         raw_text=body.raw_text or "",
         source_type=body.source_type,
         tags=body.tags,
-        metadata=body.metadata,
     )
 
     # Step 3: Chunk the text

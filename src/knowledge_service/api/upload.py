@@ -26,12 +26,12 @@ async def upload_content(
     source_type: str | None = Form(None),
     tags: str | None = Form(None),
     domains: str | None = Form(None),
-    metadata: str | None = Form(None),
 ):
     """Upload a file for ingestion.
 
-    Accepts multipart/form-data with a file and optional metadata fields.
-    Detects format, parses the file, and feeds into the content ingestion pipeline.
+    Accepts multipart/form-data with a file and optional fields (tags,
+    domains). Detects format, parses the file, and feeds into the content
+    ingestion pipeline.
     """
     from knowledge_service.api.content import _parser_registry  # noqa: PLC0415
 
@@ -100,13 +100,6 @@ async def upload_content(
         except (json.JSONDecodeError, TypeError):
             parsed_domains = [d.strip() for d in domains.split(",") if d.strip()]
 
-    parsed_metadata: dict = {}
-    if metadata:
-        try:
-            parsed_metadata = json.loads(metadata)
-        except (json.JSONDecodeError, TypeError):
-            pass
-
     # Build ContentRequest
     body = ContentRequest(
         url=url or f"upload://{filename}",
@@ -115,7 +108,6 @@ async def upload_content(
         source_type=source_type or fmt,
         tags=parsed_tags,
         domains=parsed_domains,
-        metadata=parsed_metadata,
     )
 
     stores = request.app.state.stores
