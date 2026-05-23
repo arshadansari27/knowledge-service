@@ -20,7 +20,6 @@ from pyoxigraph import (
     Literal,
     NamedNode,
     Quad,
-    RdfFormat,
     Store,
 )
 
@@ -449,11 +448,6 @@ class TripleStore:
                 row[var_name] = value
             results.append(row)
         return results
-
-    def backup(self, path: str) -> None:
-        """Dump the store contents to an N-Quads file."""
-        with open(path, "wb") as f:
-            self._store.dump(f, RdfFormat.N_QUADS)
 
     def flush(self) -> None:
         """Flush any pending writes to disk. No-op for in-memory stores."""

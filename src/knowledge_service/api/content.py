@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import ipaddress
 import logging
-from enum import StrEnum
 from urllib.parse import urlparse
 
 import asyncpg.exceptions
@@ -27,14 +26,6 @@ logger = logging.getLogger(__name__)
 
 # Set by lifespan or tests; used for URL auto-fetch format detection + parsing.
 _parser_registry = None
-
-
-class JobPhase(StrEnum):
-    EMBEDDING = "embedding"
-    EXTRACTING = "extracting"
-    PROCESSING = "processing"
-    COMPLETED = "completed"
-    FAILED = "failed"
 
 
 _CHUNK_SIZE = settings.chunk_size

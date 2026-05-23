@@ -72,20 +72,6 @@ async def detect_delta(triple: dict, triple_store) -> dict | None:
     }
 
 
-async def insert_triple(triple: dict, triple_store, graph: str) -> tuple[str, bool]:
-    return await asyncio.to_thread(
-        triple_store.insert,
-        triple["subject"],
-        triple["predicate"],
-        triple["object"],
-        triple["confidence"],
-        triple["knowledge_type"],
-        triple.get("valid_from"),
-        triple.get("valid_until"),
-        graph,
-    )
-
-
 async def detect_contradictions(triple: dict, triple_store) -> list[dict]:
     contras = await asyncio.to_thread(
         triple_store.find_contradictions,

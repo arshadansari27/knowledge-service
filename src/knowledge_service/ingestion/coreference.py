@@ -33,7 +33,6 @@ class EntityGroup:
     canonical_uri: str  # via to_entity_uri()
     aliases: list[str] = field(default_factory=list)
     wikidata_id: str | None = None
-    rdf_type: str | None = None
 
 
 @dataclass

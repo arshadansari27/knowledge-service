@@ -320,21 +320,6 @@ class RAGRetriever:
             all_triples.extend(triples)
         return all_triples
 
-    async def _lookup_triples_by_object(self, uris: list[str]) -> list[dict]:
-        all_triples = []
-        for uri in uris:
-            triples = await asyncio.to_thread(self._knowledge_store.get_triples, object_=uri)
-            for t in triples:
-                graph = t.get("graph", "")
-                if graph == KS_GRAPH_ASSERTED:
-                    t["trust_tier"] = "verified"
-                elif graph == KS_GRAPH_FEDERATED:
-                    t["trust_tier"] = "federated"
-                else:
-                    t["trust_tier"] = "extracted"
-            all_triples.extend(triples)
-        return all_triples
-
     async def _lookup_triples_by_predicate(
         self, embedding, limit=_PREDICATE_TRIPLE_LIMIT
     ) -> list[dict]:
