@@ -1,6 +1,6 @@
 from knowledge_service._utils import (
     _is_uri,
-    _triple_hash,
+    compute_triple_hash,
     _rdf_value_to_str,
     is_object_entity,
     sanitize_sparql_string,
@@ -24,31 +24,72 @@ def test_is_uri_plain_string():
     assert _is_uri("some_value") is False
 
 
-def test_triple_hash_is_deterministic():
-    assert _triple_hash("http://s", "http://p", "o") == _triple_hash("http://s", "http://p", "o")
+def test_compute_triple_hash_is_deterministic():
+    assert compute_triple_hash("http://s", "http://p", "o") == compute_triple_hash("http://s", "http://p", "o")
 
 
-def test_triple_hash_differs_for_different_inputs():
-    assert _triple_hash("http://s", "http://p", "a") != _triple_hash("http://s", "http://p", "b")
+def test_compute_triple_hash_differs_for_different_inputs():
+    assert compute_triple_hash("http://s", "http://p", "a") != compute_triple_hash("http://s", "http://p", "b")
 
 
-def test_triple_hash_bare_labels_do_not_crash():
+def test_compute_triple_hash_bare_labels_do_not_crash():
     """Bare labels (non-URIs) are auto-normalized — must not raise ValueError."""
-    h = _triple_hash("community_abc", "has_summary", "Some summary text")
+    h = compute_triple_hash("community_abc", "has_summary", "Some summary text")
     assert isinstance(h, str) and len(h) == 64
 
 
-def test_triple_hash_bare_label_matches_normalized():
+def test_compute_triple_hash_bare_label_matches_normalized():
     """Hashing a bare label should match hashing its normalized URI equivalent."""
     from knowledge_service.ontology.uri import to_entity_uri, to_predicate_uri
 
-    bare = _triple_hash("cold_exposure", "causes", "dopamine release")
-    normalized = _triple_hash(
+    bare = compute_triple_hash("cold_exposure", "causes", "dopamine release")
+    normalized = compute_triple_hash(
         to_entity_uri("cold_exposure"),
         to_predicate_uri("causes"),
         "dopamine release",
     )
     assert bare == normalized
+
+
+def test_all_hashers_agree():
+    """Regression guard: every hash producer in the codebase must agree on
+    the same triple. Drift here silently breaks outbox idempotency,
+    provenance lookup, and inferred-triple retraction (see PR #72).
+    """
+    from knowledge_service.ingestion.pipeline import compute_hash
+    from knowledge_service.reasoning.engine import DerivedTriple, _triple_dict_hash
+
+    subject = "http://knowledge.local/data/cold_exposure"
+    predicate = "http://knowledge.local/schema/increases"
+    obj = "http://knowledge.local/data/dopamine"
+
+    canonical = compute_triple_hash(subject, predicate, obj)
+    pipeline_dict = compute_hash({"subject": subject, "predicate": predicate, "object": obj})
+    engine_dict = _triple_dict_hash(
+        {"subject": subject, "predicate": predicate, "object": obj}
+    )
+    engine_object_alias = _triple_dict_hash(
+        {"subject": subject, "predicate": predicate, "object_": obj}
+    )
+    derived = DerivedTriple(
+        subject=subject,
+        predicate=predicate,
+        object_=obj,
+        confidence=0.9,
+        derived_from=[],
+        inference_method="inverse",
+        depth=0,
+    ).compute_hash()
+
+    assert canonical == pipeline_dict == engine_dict == engine_object_alias == derived
+
+
+def test_compute_triple_hash_literal_vs_uri_object():
+    """Literal objects and URI objects hash to different values even when the
+    string content is identical — they're stored as different RDF terms."""
+    lit_hash = compute_triple_hash("http://s", "http://p", "plain string")
+    uri_hash = compute_triple_hash("http://s", "http://p", "http://x")
+    assert lit_hash != uri_hash
 
 
 def test_rdf_value_to_str_named_node():

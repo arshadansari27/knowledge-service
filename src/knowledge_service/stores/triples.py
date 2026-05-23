@@ -14,7 +14,6 @@ All data triples are stored in named graphs for trust-tier separation:
 
 from __future__ import annotations
 
-import hashlib
 from datetime import date, datetime
 
 from pyoxigraph import (
@@ -23,10 +22,9 @@ from pyoxigraph import (
     Quad,
     RdfFormat,
     Store,
-    Triple,
 )
 
-from knowledge_service._utils import _rdf_value_to_str, _to_rdf_term
+from knowledge_service._utils import _rdf_value_to_str, _to_rdf_term, compute_triple_hash
 from knowledge_service.ontology.namespaces import (
     KS,
     KS_CONFIDENCE,
@@ -121,8 +119,7 @@ class TripleStore:
         p = NamedNode(predicate)
         o = _to_rdf_term(object_)
 
-        triple = Triple(s, p, o)
-        triple_hash = hashlib.sha256(str(triple).encode()).hexdigest()
+        triple_hash = compute_triple_hash(subject, predicate, object_)
 
         graph_uri = graph or KS_GRAPH_EXTRACTED
         graph_node = NamedNode(graph_uri)

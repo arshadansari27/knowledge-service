@@ -2,13 +2,11 @@
 
 from __future__ import annotations
 
-import hashlib
 import logging
 from collections import deque
 from dataclasses import dataclass
 
-from pyoxigraph import Literal, NamedNode, Triple
-
+from knowledge_service._utils import compute_triple_hash
 from knowledge_service.ontology.namespaces import (
     KS_GRAPH_ONTOLOGY,
     KS_INVERSE_PREDICATE,
@@ -18,6 +16,12 @@ from knowledge_service.ontology.uri import KS as KS_PREFIX
 from knowledge_service.ontology.uri import is_uri
 
 logger = logging.getLogger(__name__)
+
+
+def _triple_dict_hash(triple: dict) -> str:
+    """Canonical hash of a trigger triple. Tolerates ``object`` vs ``object_``."""
+    obj = triple.get("object") or triple.get("object_", "")
+    return compute_triple_hash(triple["subject"], triple["predicate"], obj)
 
 
 @dataclass
@@ -44,10 +48,7 @@ class DerivedTriple:
         }
 
     def compute_hash(self) -> str:
-        s = NamedNode(self.subject)
-        p = NamedNode(self.predicate)
-        o = NamedNode(self.object_) if is_uri(self.object_) else Literal(self.object_)
-        return hashlib.sha256(str(Triple(s, p, o)).encode()).hexdigest()
+        return compute_triple_hash(self.subject, self.predicate, self.object_)
 
 
 class InferenceRule:
@@ -94,7 +95,7 @@ class InverseRule(InferenceRule):
         if not is_uri(obj):
             return []
         inv_pred = self._inverse_map[pred]
-        source_hash = _compute_trigger_hash(triple)
+        source_hash = _triple_dict_hash(triple)
         return [
             DerivedTriple(
                 subject=triple["object"],
@@ -141,7 +142,7 @@ class TransitiveRule(InferenceRule):
         if not is_uri(obj):
             return []
         conf = triple["confidence"]
-        source_hash = _compute_trigger_hash(triple)
+        source_hash = _triple_dict_hash(triple)
         results = []
 
         # Forward: (A, p, B) + existing (B, p, ?C) → (A, p, C)
@@ -151,7 +152,7 @@ class TransitiveRule(InferenceRule):
             if c_obj == subj:
                 continue
             existing_conf = existing.get("confidence") or 0.0
-            existing_hash = _compute_triple_hash_from_parts(obj, pred, c_obj)
+            existing_hash = compute_triple_hash(obj, pred, c_obj)
             results.append(
                 DerivedTriple(
                     subject=subj,
@@ -171,7 +172,7 @@ class TransitiveRule(InferenceRule):
             if z_subj == obj:
                 continue
             existing_conf = existing.get("confidence") or 0.0
-            existing_hash = _compute_triple_hash_from_parts(z_subj, pred, subj)
+            existing_hash = compute_triple_hash(z_subj, pred, subj)
             results.append(
                 DerivedTriple(
                     subject=z_subj,
@@ -203,7 +204,7 @@ class TypeInheritanceRule(InferenceRule):
         subj = triple["subject"]
         obj = triple.get("object") or triple.get("object_", "")
         conf = triple["confidence"]
-        source_hash = _compute_trigger_hash(triple)
+        source_hash = _triple_dict_hash(triple)
         results = []
 
         if pred == self._is_a_uri:
@@ -214,7 +215,7 @@ class TypeInheritanceRule(InferenceRule):
             for prop in properties:
                 prop_obj = prop["object"]
                 prop_conf = prop.get("confidence") or 0.0
-                prop_hash = _compute_triple_hash_from_parts(obj, self._has_property_uri, prop_obj)
+                prop_hash = compute_triple_hash(obj, self._has_property_uri, prop_obj)
                 results.append(
                     DerivedTriple(
                         subject=subj,
@@ -232,7 +233,7 @@ class TypeInheritanceRule(InferenceRule):
             for inst in instances:
                 inst_subj = inst["subject"]
                 inst_conf = inst.get("confidence") or 0.0
-                inst_hash = _compute_triple_hash_from_parts(inst_subj, self._is_a_uri, subj)
+                inst_hash = compute_triple_hash(inst_subj, self._is_a_uri, subj)
                 results.append(
                     DerivedTriple(
                         subject=inst_subj,
@@ -263,7 +264,7 @@ class InferenceEngine:
         all_derived: list[DerivedTriple] = []
         seen_hashes: set[str] = set()
 
-        trigger_hash = _compute_trigger_hash(trigger_triple)
+        trigger_hash = _triple_dict_hash(trigger_triple)
         seen_hashes.add(trigger_hash)
 
         queue: deque[tuple[dict, int]] = deque()
@@ -303,17 +304,3 @@ class InferenceEngine:
         return all_derived
 
 
-def _compute_trigger_hash(triple: dict) -> str:
-    """Compute the SHA-256 hash of a trigger triple dict."""
-    s = NamedNode(triple["subject"])
-    p = NamedNode(triple["predicate"])
-    o_val = triple.get("object") or triple.get("object_", "")
-    o = NamedNode(o_val) if is_uri(o_val) else Literal(o_val)
-    return hashlib.sha256(str(Triple(s, p, o)).encode()).hexdigest()
-
-
-def _compute_triple_hash_from_parts(subject: str, predicate: str, object_: str) -> str:
-    s = NamedNode(subject)
-    p = NamedNode(predicate)
-    o = NamedNode(object_) if is_uri(object_) else Literal(object_)
-    return hashlib.sha256(str(Triple(s, p, o)).encode()).hexdigest()
