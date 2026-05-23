@@ -30,9 +30,7 @@ class EntityStore:
     without a code change.
     """
 
-    def __init__(
-        self, pool: Any, embedding_client: Any, cache_size: int | None = None
-    ) -> None:
+    def __init__(self, pool: Any, embedding_client: Any, cache_size: int | None = None) -> None:
         self._pool = pool
         self._embedding_client = embedding_client
         effective_size = cache_size if cache_size is not None else settings.entity_cache_max_size

@@ -173,5 +173,3 @@ class TestExtractPhaseFiltering:
 
         kwargs = extraction_client.extract_with_stats.call_args.kwargs
         assert kwargs["domains"] == ["health", "research"]
-
-

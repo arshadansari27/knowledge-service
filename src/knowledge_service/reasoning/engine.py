@@ -302,5 +302,3 @@ class InferenceEngine:
                 trigger_triple.get("predicate", "?")[-30:],
             )
         return all_derived
-
-

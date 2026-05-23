@@ -163,5 +163,3 @@ class TestContradictions:
         contras = store.find_contradictions(f"{KS_DATA}a", f"{KS}revenue", "60M")
         assert len(contras) >= 1
         assert any(c["object"] == "50M" for c in contras)
-
-

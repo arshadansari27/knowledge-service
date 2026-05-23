@@ -266,9 +266,7 @@ class TestAskConfidence:
         assert abs(data["confidence"] - 0.88) < 0.01, f"Expected ~0.88, got {data['confidence']}"
 
     async def test_confidence_is_none_when_no_triples(self):
-        context = RetrievalContext(
-            content_results=[], knowledge_triples=[], contradictions=[]
-        )
+        context = RetrievalContext(content_results=[], knowledge_triples=[], contradictions=[])
         app = create_app(use_lifespan=False)
         app.state.rag_retriever = _make_rag_retriever(context)
         app.state.rag_client = _make_rag_client()
@@ -307,4 +305,3 @@ class TestAskTraversalMetadata:
         response = await client.post("/api/ask", json={"question": "test"})
         data = response.json()
         assert "traversal_depth" in data
-

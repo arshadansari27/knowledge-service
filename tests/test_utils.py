@@ -25,11 +25,15 @@ def test_is_uri_plain_string():
 
 
 def test_compute_triple_hash_is_deterministic():
-    assert compute_triple_hash("http://s", "http://p", "o") == compute_triple_hash("http://s", "http://p", "o")
+    assert compute_triple_hash("http://s", "http://p", "o") == compute_triple_hash(
+        "http://s", "http://p", "o"
+    )
 
 
 def test_compute_triple_hash_differs_for_different_inputs():
-    assert compute_triple_hash("http://s", "http://p", "a") != compute_triple_hash("http://s", "http://p", "b")
+    assert compute_triple_hash("http://s", "http://p", "a") != compute_triple_hash(
+        "http://s", "http://p", "b"
+    )
 
 
 def test_compute_triple_hash_bare_labels_do_not_crash():
@@ -65,9 +69,7 @@ def test_all_hashers_agree():
 
     canonical = compute_triple_hash(subject, predicate, obj)
     pipeline_dict = compute_hash({"subject": subject, "predicate": predicate, "object": obj})
-    engine_dict = _triple_dict_hash(
-        {"subject": subject, "predicate": predicate, "object": obj}
-    )
+    engine_dict = _triple_dict_hash({"subject": subject, "predicate": predicate, "object": obj})
     engine_object_alias = _triple_dict_hash(
         {"subject": subject, "predicate": predicate, "object_": obj}
     )

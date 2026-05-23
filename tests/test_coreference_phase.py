@@ -32,10 +32,7 @@ def _make_nlp_result(
     chunk_index: int,
     entities: list[tuple[str, str | None]],
 ) -> NlpResult:
-    nlp_entities = [
-        NlpEntity(text=text, label="MISC", wikidata_id=wid)
-        for text, wid in entities
-    ]
+    nlp_entities = [NlpEntity(text=text, label="MISC", wikidata_id=wid) for text, wid in entities]
     return NlpResult(chunk_index=chunk_index, entities=nlp_entities)
 
 

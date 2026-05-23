@@ -2,7 +2,7 @@
 
 from unittest.mock import MagicMock
 
-from knowledge_service.clients.prompt_builder import PromptBuilder, _MAX_TEXT_CHARS
+from knowledge_service.clients.prompt_builder import PromptBuilder
 from knowledge_service.ontology.registry import PredicateInfo
 
 
