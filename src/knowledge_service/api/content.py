@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import ipaddress
 import logging
-from enum import StrEnum
 from urllib.parse import urlparse
 
 import asyncpg.exceptions
@@ -27,14 +26,6 @@ logger = logging.getLogger(__name__)
 
 # Set by lifespan or tests; used for URL auto-fetch format detection + parsing.
 _parser_registry = None
-
-
-class JobPhase(StrEnum):
-    EMBEDDING = "embedding"
-    EXTRACTING = "extracting"
-    PROCESSING = "processing"
-    COMPLETED = "completed"
-    FAILED = "failed"
 
 
 _CHUNK_SIZE = settings.chunk_size
@@ -124,7 +115,6 @@ async def _accept_content_request(body: ContentRequest, stores) -> dict:
         raw_text=body.raw_text or "",
         source_type=body.source_type,
         tags=body.tags,
-        metadata=body.metadata,
     )
 
     # Step 3: Chunk the text
@@ -241,6 +231,7 @@ async def _run_ingestion_worker(
         engine=engine,
         nlp=nlp,
         app_state=app_state,
+        domains=body.domains,
     )
 
 

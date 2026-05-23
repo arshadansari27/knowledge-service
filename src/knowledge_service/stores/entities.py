@@ -12,23 +12,30 @@ from typing import Any
 
 from cachetools import LRUCache
 
+from knowledge_service.config import settings
 from knowledge_service.ontology.uri import to_entity_uri, to_predicate_uri
 
 logger = logging.getLogger(__name__)
 
 ENTITY_SIMILARITY_THRESHOLD = 0.85
 PREDICATE_SIMILARITY_THRESHOLD = 0.90
-_CACHE_SIZE = 1024
 
 
 class EntityStore:
-    """Manages entity and predicate embeddings with deduplication via similarity search."""
+    """Manages entity and predicate embeddings with deduplication via similarity search.
 
-    def __init__(self, pool: Any, embedding_client: Any) -> None:
+    ``cache_size`` bounds the LRU caches used for entity- and predicate-
+    label → URI memoisation. Defaults to ``settings.entity_cache_max_size``
+    (``ENTITY_CACHE_MAX_SIZE`` env var) so operators can tune cache pressure
+    without a code change.
+    """
+
+    def __init__(self, pool: Any, embedding_client: Any, cache_size: int | None = None) -> None:
         self._pool = pool
         self._embedding_client = embedding_client
-        self._entity_cache: LRUCache[str, str] = LRUCache(maxsize=_CACHE_SIZE)
-        self._predicate_cache: LRUCache[str, str] = LRUCache(maxsize=_CACHE_SIZE)
+        effective_size = cache_size if cache_size is not None else settings.entity_cache_max_size
+        self._entity_cache: LRUCache[str, str] = LRUCache(maxsize=effective_size)
+        self._predicate_cache: LRUCache[str, str] = LRUCache(maxsize=effective_size)
         # Lazy predicate-seed state: None=never tried, True=done, False=failed-retry-on-next-use
         self._predicate_seed_status: bool | None = None
         self._predicate_seed_spec: list[tuple[str, str]] | None = None

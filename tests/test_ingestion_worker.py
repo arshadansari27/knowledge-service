@@ -67,8 +67,6 @@ class TestRunIngestionWithNlp:
         stores = MagicMock()
         stores.pg_pool = pool
         stores.content = AsyncMock()
-        stores.content.delete_chunks = AsyncMock()
-        stores.content.insert_chunks = AsyncMock(return_value=[(0, "chunk-uuid-0")])
         stores.content.replace_chunks = AsyncMock(return_value=[(0, "chunk-uuid-0")])
 
         async def _noop_ingest_triple(*args, **kwargs):
@@ -144,21 +142,34 @@ class TestExtractPhaseFiltering:
         ]
         chunk_id_map = {0: "uuid-0", 1: "uuid-1"}
 
-        knowledge, chunk_ids, chunks_failed, chunks_skipped, items_rejected = await phase.run(
+        knowledge, chunk_ids, chunks_failed, items_rejected = await phase.run(
             chunk_records,
             chunk_id_map,
             nlp_hints=None,
         )
 
         assert extraction_client.extract_with_stats.call_count == 2
-        assert chunks_skipped == 0
+        assert chunks_failed == 0
         assert items_rejected == 0
 
+    async def test_domains_threaded_to_extractor(self):
+        """Regression guard: ContentRequest.domains must reach
+        extract_with_stats so PromptBuilder can scope predicates. See audit
+        finding A2."""
+        extraction_client = AsyncMock()
+        extraction_client.extract_with_stats = AsyncMock(return_value=([], 0))
 
-class TestJobTrackerChunksSkipped:
-    async def test_update_status_accepts_chunks_skipped(self):
-        pool, conn = _make_mock_pool()
-        tracker = JobTracker("job-id", pool)
-        await tracker.update_status("extracting", chunks_skipped=5)
-        call_args = conn.execute.call_args
-        assert "chunks_skipped" in str(call_args)
+        phase = ExtractPhase(extraction_client)
+
+        chunk_records = [
+            {"chunk_text": "Text.", "chunk_index": 0, "section_header": None},
+        ]
+
+        await phase.run(
+            chunk_records,
+            {0: "uuid-0"},
+            domains=["health", "research"],
+        )
+
+        kwargs = extraction_client.extract_with_stats.call_args.kwargs
+        assert kwargs["domains"] == ["health", "research"]

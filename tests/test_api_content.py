@@ -118,13 +118,11 @@ def _make_content_store_mock():
     """Build a mock ContentStore with new schema methods."""
     mock = AsyncMock()
     mock.upsert_metadata.return_value = "content-uuid-1234"
-    mock.delete_chunks.return_value = None
 
-    async def _insert_chunks(content_id, chunks):
+    async def _replace_chunks(content_id, chunks):
         return [(c["chunk_index"], f"chunk-uuid-{c['chunk_index']}") for c in chunks]
 
-    mock.insert_chunks.side_effect = _insert_chunks
-    mock.replace_chunks.side_effect = _insert_chunks
+    mock.replace_chunks.side_effect = _replace_chunks
     return mock
 
 
@@ -704,9 +702,6 @@ class TestContentChunking:
 
         mock_cs.replace_chunks.assert_called_once()
         assert mock_cs.replace_chunks.call_args[0][0] == "content-uuid-1234"
-        # The old non-atomic pair must not be used from the ingest pipeline
-        mock_cs.delete_chunks.assert_not_called()
-        mock_cs.insert_chunks.assert_not_called()
 
 
 # ---------------------------------------------------------------------------

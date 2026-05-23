@@ -22,26 +22,9 @@ class TestParsedDocument:
         assert doc.metadata == {"key": "val"}
         assert doc.source_format == "text"
 
-    def test_images_default_empty(self):
-        doc = ParsedDocument(text="hello", title=None, metadata={}, source_format="text")
-        assert doc.images == []
-
-    def test_images_field(self):
-        doc = ParsedDocument(
-            text="hi", title=None, metadata={}, source_format="image", images=[b"\xff\xd8\xff"]
-        )
-        assert len(doc.images) == 1
-        assert doc.images[0] == b"\xff\xd8\xff"
-
     def test_title_none(self):
         doc = ParsedDocument(text="plain", title=None, metadata={}, source_format="text")
         assert doc.title is None
-
-    def test_images_not_shared_across_instances(self):
-        doc1 = ParsedDocument(text="a", title=None, metadata={}, source_format="text")
-        doc2 = ParsedDocument(text="b", title=None, metadata={}, source_format="text")
-        doc1.images.append(b"data")
-        assert doc2.images == []
 
 
 # ---------------------------------------------------------------------------
@@ -279,11 +262,6 @@ class TestTextParser:
         parser = TextParser()
         doc = await parser.parse("some text")
         assert doc.metadata == {}
-
-    async def test_parse_images_empty(self):
-        parser = TextParser()
-        doc = await parser.parse("some text")
-        assert doc.images == []
 
     async def test_parse_content_type_ignored(self):
         parser = TextParser()

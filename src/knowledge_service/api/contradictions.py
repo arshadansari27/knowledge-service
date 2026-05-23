@@ -7,7 +7,7 @@ import asyncio
 from fastapi import APIRouter, Query, Request
 from pydantic import BaseModel
 
-from knowledge_service._utils import _triple_hash, _rdf_value_to_str
+from knowledge_service._utils import compute_triple_hash, _rdf_value_to_str
 from knowledge_service.ontology.namespaces import KS_CONFIDENCE, KS_OPPOSITE_PREDICATE, OWL
 
 router = APIRouter()
@@ -144,8 +144,8 @@ async def get_contradictions(
         p_b_str = _rdf_value_to_str(p2_val) if p2_val else p_str
 
         # Look up provenance for both triples (use correct predicate for each)
-        hash_a = _triple_hash(s_str, p_str, o1_str)
-        hash_b = _triple_hash(s_str, p_b_str, o2_str)
+        hash_a = compute_triple_hash(s_str, p_str, o1_str)
+        hash_b = compute_triple_hash(s_str, p_b_str, o2_str)
 
         prov_a_rows = await provenance_store.get_by_triple(hash_a)
         prov_b_rows = await provenance_store.get_by_triple(hash_b)

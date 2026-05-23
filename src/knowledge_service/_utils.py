@@ -49,17 +49,27 @@ def _to_rdf_term(value: str) -> NamedNode | Literal:
     return Literal(value)
 
 
-def _triple_hash(subject: str, predicate: str, object_: str) -> str:
-    """SHA-256 hash of a triple — must match KnowledgeStore.insert_triple logic.
+def compute_triple_hash(subject: str, predicate: str, object_: str) -> str:
+    """Canonical SHA-256 hash of a (subject, predicate, object) triple.
 
-    Normalizes bare labels to full URIs before hashing so callers don't need
-    to worry about whether values are already URIs.
+    Single source of truth for triple identity across the codebase —
+    ``triple_outbox.triple_hash``, ``provenance.triple_hash``, and
+    ``ks:derivedFrom`` annotations all reference values produced here.
+
+    Normalises ``subject`` and ``predicate`` via ``to_entity_uri`` /
+    ``to_predicate_uri`` before hashing so callers don't need to remember
+    whether their values are already URIs (the normalisers are idempotent).
+    ``object_`` is treated as a URI when ``is_uri()`` is True, otherwise as a
+    Literal — matching ``TripleStore.insert``'s ``_to_rdf_term`` behaviour.
+
+    Drift between this function and ad-hoc hashers silently breaks
+    idempotency for inserts and inferred-triple retraction (see PR #72 for a
+    real bug caused by exactly this drift).
     """
     s = NamedNode(to_entity_uri(subject))
     p = NamedNode(to_predicate_uri(predicate))
     o = _to_rdf_term(object_)
-    triple = Triple(s, p, o)
-    return hashlib.sha256(str(triple).encode()).hexdigest()
+    return hashlib.sha256(str(Triple(s, p, o)).encode()).hexdigest()
 
 
 def _rdf_value_to_str(value: object) -> str:

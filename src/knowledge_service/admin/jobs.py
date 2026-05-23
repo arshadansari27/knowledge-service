@@ -31,7 +31,7 @@ async def list_jobs(
     sql = f"""
         SELECT j.id, j.content_id, j.status, j.chunks_total,
                j.chunks_embedded, j.chunks_extracted, j.chunks_failed,
-               j.chunks_skipped, j.items_rejected,
+               j.items_rejected,
                j.triples_created, j.entities_resolved, j.chunks_capped_from,
                j.error, j.created_at, j.updated_at,
                m.url, m.title
@@ -54,7 +54,6 @@ async def list_jobs(
             "chunks_embedded": r["chunks_embedded"],
             "chunks_extracted": r["chunks_extracted"],
             "chunks_failed": r["chunks_failed"],
-            "chunks_skipped": r["chunks_skipped"],
             "items_rejected": r["items_rejected"],
             "triples_created": r["triples_created"],
             "entities_resolved": r["entities_resolved"],

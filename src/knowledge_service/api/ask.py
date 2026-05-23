@@ -16,7 +16,6 @@ class AskRequest(BaseModel):
     question: str = Field(..., min_length=1, max_length=_MAX_QUESTION_LEN)
     max_sources: int = Field(5, ge=1, le=20)
     min_confidence: float = Field(0.0, ge=0.0, le=1.0)
-    use_reasoning: bool = Field(False)  # Reserved for future use
 
 
 class SourceInfo(BaseModel):
@@ -114,13 +113,13 @@ async def post_ask(body: AskRequest, request: Request) -> AskResponse:
     stores = getattr(request.app.state, "stores", None)
 
     if stores and context.knowledge_triples:
-        from knowledge_service._utils import _triple_hash
+        from knowledge_service._utils import compute_triple_hash
 
         provenance_store = stores.provenance
         content_store = stores.content
 
         triple_hashes = [
-            _triple_hash(t["subject"], t["predicate"], t["object"])
+            compute_triple_hash(t["subject"], t["predicate"], t["object"])
             for t in context.knowledge_triples
         ]
         triple_prov_map = await provenance_store.get_by_triples(triple_hashes)
@@ -134,7 +133,7 @@ async def post_ask(body: AskRequest, request: Request) -> AskResponse:
         if chunk_ids_to_fetch:
             chunk_texts = await content_store.get_chunks_by_ids(chunk_ids_to_fetch)
             for t in context.knowledge_triples:
-                th = _triple_hash(t["subject"], t["predicate"], t["object"])
+                th = compute_triple_hash(t["subject"], t["predicate"], t["object"])
                 for row in triple_prov_map.get(th, []):
                     cid = str(row["chunk_id"]) if row.get("chunk_id") else None
                     if cid and cid in chunk_texts:

@@ -75,7 +75,7 @@ def mock_llm(httpx_mock):
 class TestExtract:
     async def test_returns_entity_and_claim_from_valid_response(self, mock_llm):
         client = ExtractionClient(base_url=_BASE, model="qwen3:14b", api_key=_KEY)
-        result = await client.extract("Cold exposure increases dopamine.")
+        result, _ = await client.extract_with_stats("Cold exposure increases dopamine.")
         assert len(result) == 2
         assert isinstance(result[0], EntityInput)
         assert isinstance(result[1], TripleInput)
@@ -86,7 +86,7 @@ class TestExtract:
         for _ in range(3):
             httpx_mock.add_response(url=_CHAT_URL, status_code=500)
         client = ExtractionClient(base_url=_BASE, model="qwen3:14b", api_key=_KEY)
-        result = await client.extract("some text")
+        result, _ = await client.extract_with_stats("some text")
         assert result is None
         assert len(httpx_mock.get_requests()) == 3
         await client.close()
@@ -111,7 +111,7 @@ class TestExtract:
             ),
         )
         client = ExtractionClient(base_url=_BASE, model="qwen3:14b", api_key=_KEY)
-        result = await client.extract("some text")
+        result, _ = await client.extract_with_stats("some text")
         assert result is not None
         assert len(result) == 1
         assert len(httpx_mock.get_requests()) == 3
@@ -123,7 +123,7 @@ class TestExtract:
             url=_CHAT_URL, json=_make_combined_response(entities=[], relations=[])
         )
         client = ExtractionClient(base_url=_BASE, model="qwen3:14b", api_key=_KEY)
-        result = await client.extract("text")
+        result, _ = await client.extract_with_stats("text")
         assert result == []
         assert len(httpx_mock.get_requests()) == 2
         await client.close()
@@ -131,7 +131,7 @@ class TestExtract:
     async def test_does_not_retry_on_4xx(self, httpx_mock):
         httpx_mock.add_response(url=_CHAT_URL, status_code=400)
         client = ExtractionClient(base_url=_BASE, model="qwen3:14b", api_key=_KEY)
-        result = await client.extract("text")
+        result, _ = await client.extract_with_stats("text")
         assert result is None
         assert len(httpx_mock.get_requests()) == 1
         await client.close()
@@ -142,7 +142,7 @@ class TestExtract:
             json={"choices": [{"message": {"content": "not valid json {{"}}]},
         )
         client = ExtractionClient(base_url=_BASE, model="qwen3:14b", api_key=_KEY)
-        result = await client.extract("some text")
+        result, _ = await client.extract_with_stats("some text")
         assert result is None
         await client.close()
 
@@ -166,7 +166,7 @@ class TestExtract:
             ),
         )
         client = ExtractionClient(base_url=_BASE, model="qwen3:14b", api_key=_KEY)
-        result = await client.extract("text")
+        result, _ = await client.extract_with_stats("text")
         assert len(result) == 1
         assert isinstance(result[0], EntityInput)
         await client.close()
@@ -176,7 +176,7 @@ class TestExtract:
             url=_CHAT_URL, json=_make_combined_response(entities=[], relations=[])
         )
         client = ExtractionClient(base_url=_BASE, model="qwen3:14b", api_key=_KEY)
-        result = await client.extract("text")
+        result, _ = await client.extract_with_stats("text")
         assert result == []
         await client.close()
 
@@ -185,7 +185,7 @@ class TestExtract:
             url=_CHAT_URL, json=_make_combined_response(entities=[], relations=[])
         )
         client = ExtractionClient(base_url=_BASE, model="claude-sonnet", api_key=_KEY)
-        await client.extract("text")
+        await client.extract_with_stats("text")
         body = json.loads(httpx_mock.get_requests()[0].content)
         assert body["model"] == "claude-sonnet"
         await client.close()
@@ -195,7 +195,7 @@ class TestExtract:
             url=_CHAT_URL, json=_make_combined_response(entities=[], relations=[])
         )
         client = ExtractionClient(base_url=_BASE, model="qwen3:14b", api_key=_KEY)
-        await client.extract("text")
+        await client.extract_with_stats("text")
         body = json.loads(httpx_mock.get_requests()[0].content)
         assert "messages" in body
         assert body["messages"][0]["role"] == "user"
@@ -207,7 +207,7 @@ class TestExtract:
             url=_CHAT_URL, json=_make_combined_response(entities=[], relations=[])
         )
         client = ExtractionClient(base_url=_BASE, model="qwen3:14b", api_key="sk-mykey")
-        await client.extract("text")
+        await client.extract_with_stats("text")
         headers = httpx_mock.get_requests()[0].headers
         assert headers["authorization"] == "Bearer sk-mykey"
         await client.close()
@@ -215,7 +215,7 @@ class TestExtract:
     async def test_extract_returns_raw_labels_not_uris(self, mock_llm):
         """extract() should return items with original labels, not pre-normalized URIs."""
         client = ExtractionClient(base_url=_BASE, model="qwen3:14b", api_key=_KEY)
-        result = await client.extract("Cold exposure increases dopamine.")
+        result, _ = await client.extract_with_stats("Cold exposure increases dopamine.")
         assert len(result) == 2
         # Entity item should have raw label
         entity = result[0]
@@ -230,7 +230,7 @@ class TestExtract:
 
     async def test_close_is_idempotent(self, mock_llm):
         client = ExtractionClient(base_url=_BASE, model="qwen3:14b", api_key=_KEY)
-        await client.extract("text")
+        await client.extract_with_stats("text")
         await client.close()
         await client.close()  # should not raise
 
@@ -262,7 +262,7 @@ class TestSinglePassExtract:
             ),
         )
         client = ExtractionClient(base_url=_BASE, model="qwen3:14b", api_key=_KEY)
-        result = await client.extract("Cold exposure increases dopamine.")
+        result, _ = await client.extract_with_stats("Cold exposure increases dopamine.")
         assert len(httpx_mock.get_requests()) == 1
         assert len(result) == 2
         await client.close()
@@ -285,7 +285,7 @@ class TestSinglePassExtract:
             ),
         )
         client = ExtractionClient(base_url=_BASE, model="qwen3:14b", api_key=_KEY)
-        result = await client.extract("text")
+        result, _ = await client.extract_with_stats("text")
         assert len(result) == 1
         assert isinstance(result[0], EntityInput)
         await client.close()
@@ -295,7 +295,7 @@ class TestSinglePassExtract:
         for _ in range(3):
             httpx_mock.add_response(url=_CHAT_URL, status_code=500)
         client = ExtractionClient(base_url=_BASE, model="qwen3:14b", api_key=_KEY)
-        result = await client.extract("text")
+        result, _ = await client.extract_with_stats("text")
         assert result is None
         assert len(httpx_mock.get_requests()) == 3
         await client.close()
@@ -316,7 +316,7 @@ class TestSinglePassExtract:
             },
         )
         client = ExtractionClient(base_url=_BASE, model="qwen3:14b", api_key=_KEY)
-        result = await client.extract("text")
+        result, _ = await client.extract_with_stats("text")
         assert result == []
         await client.close()
 
@@ -338,7 +338,7 @@ class TestSinglePassExtract:
             ),
         )
         client = ExtractionClient(base_url=_BASE, model="qwen3:14b", api_key=_KEY)
-        result = await client.extract("text")
+        result, _ = await client.extract_with_stats("text")
         assert len(result) == 1
         assert isinstance(result[0], EntityInput)
         await client.close()
@@ -368,7 +368,7 @@ class TestRejectionLogging:
         import logging
 
         with caplog.at_level(logging.WARNING, logger="knowledge_service.clients.llm"):
-            await client.extract("text")
+            await client.extract_with_stats("text")
         await client.close()
         rejection_lines = [
             r.getMessage() for r in caplog.records if "rejected item" in r.getMessage()
@@ -399,7 +399,7 @@ class TestRejectionLogging:
         import logging
 
         with caplog.at_level(logging.WARNING, logger="knowledge_service.clients.llm"):
-            await client.extract("text")
+            await client.extract_with_stats("text")
         await client.close()
         summaries = [
             r.getMessage() for r in caplog.records if "rejection summary" in r.getMessage().lower()
@@ -416,7 +416,7 @@ class TestNoAuth:
             json=_make_combined_response(entities=[], relations=[]),
         )
         client = ExtractionClient(base_url=_BASE, model="qwen3:14b", api_key="")
-        await client.extract("test")
+        await client.extract_with_stats("test")
         headers = httpx_mock.get_requests()[0].headers
         assert "authorization" not in headers
         await client.close()

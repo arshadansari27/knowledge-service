@@ -14,19 +14,16 @@ All data triples are stored in named graphs for trust-tier separation:
 
 from __future__ import annotations
 
-import hashlib
 from datetime import date, datetime
 
 from pyoxigraph import (
     Literal,
     NamedNode,
     Quad,
-    RdfFormat,
     Store,
-    Triple,
 )
 
-from knowledge_service._utils import _rdf_value_to_str, _to_rdf_term
+from knowledge_service._utils import _rdf_value_to_str, _to_rdf_term, compute_triple_hash
 from knowledge_service.ontology.namespaces import (
     KS,
     KS_CONFIDENCE,
@@ -121,8 +118,7 @@ class TripleStore:
         p = NamedNode(predicate)
         o = _to_rdf_term(object_)
 
-        triple = Triple(s, p, o)
-        triple_hash = hashlib.sha256(str(triple).encode()).hexdigest()
+        triple_hash = compute_triple_hash(subject, predicate, object_)
 
         graph_uri = graph or KS_GRAPH_EXTRACTED
         graph_node = NamedNode(graph_uri)
@@ -419,18 +415,6 @@ class TripleStore:
             )
         return results
 
-    def count_triples(self) -> int:
-        """Return the number of annotated triples in the store."""
-        result = self._store.query(
-            f"""SELECT (COUNT(*) AS ?cnt) WHERE {{
-                GRAPH ?g {{ ?s ?p ?o . }}
-                GRAPH ?g {{ << ?s ?p ?o >> <{KS_CONFIDENCE.value}> ?conf . }}
-            }}"""
-        )
-        for row in result:
-            return int(row["cnt"].value)
-        return 0
-
     def query(self, sparql: str):
         """Execute a SPARQL query.
 
@@ -452,11 +436,6 @@ class TripleStore:
                 row[var_name] = value
             results.append(row)
         return results
-
-    def backup(self, path: str) -> None:
-        """Dump the store contents to an N-Quads file."""
-        with open(path, "wb") as f:
-            self._store.dump(f, RdfFormat.N_QUADS)
 
     def flush(self) -> None:
         """Flush any pending writes to disk. No-op for in-memory stores."""

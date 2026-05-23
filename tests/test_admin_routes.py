@@ -23,7 +23,12 @@ def admin_app():
     pool.acquire.return_value.__aenter__ = AsyncMock(return_value=conn)
     pool.acquire.return_value.__aexit__ = AsyncMock(return_value=False)
     app.state.pg_pool = pool
-    app.state.embedding_store = None
+    stores = MagicMock()
+    stores.entities = MagicMock()
+    stores.entities.get_entity_by_uri = AsyncMock(
+        return_value={"label": "Caffeine", "rdf_type": "schema:ChemicalSubstance"}
+    )
+    app.state.stores = stores
     app.include_router(admin_router)
     app.include_router(stats_router, prefix="/api/admin")
     return app
@@ -64,3 +69,30 @@ async def test_content_list_renders(admin_client):
     resp = await admin_client.get("/admin/knowledge/content")
     assert resp.status_code == 200
     assert "Content" in resp.text
+
+
+async def test_entity_detail_uses_entity_store(admin_app, admin_client):
+    """Regression guard: entity_detail must look up via stores.entities, not
+    a misnamed app.state.embedding_store that used to point at ContentStore
+    (which doesn't define get_entity_by_uri). See audit finding A1."""
+    resp = await admin_client.get(
+        "/admin/knowledge/entity",
+        params={"uri": "http://dbpedia.org/resource/Caffeine"},
+    )
+    assert resp.status_code == 200
+    admin_app.state.stores.entities.get_entity_by_uri.assert_awaited_once_with(
+        "http://dbpedia.org/resource/Caffeine"
+    )
+    assert "Caffeine" in resp.text
+
+
+async def test_entity_detail_tolerates_missing_stores(admin_app, admin_client):
+    """When stores aren't wired (minimal test setup), the page still renders
+    with just the URI as the label rather than blowing up with AttributeError."""
+    admin_app.state.stores = None
+    resp = await admin_client.get(
+        "/admin/knowledge/entity",
+        params={"uri": "http://example.com/data/foo"},
+    )
+    assert resp.status_code == 200
+    assert "foo" in resp.text

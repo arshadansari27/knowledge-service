@@ -216,7 +216,6 @@ class TestIngestTriple:
         result = await ingest_triple(_triple(), stores, ctx, drainer=drainer)
         assert result.is_new is True
         assert result.contradictions == []
-        assert result.delta is None
 
 
 class TestIngestTripleOutboxFlow:

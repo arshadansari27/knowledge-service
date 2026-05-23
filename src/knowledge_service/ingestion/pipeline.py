@@ -1,14 +1,12 @@
 """Ingestion pipeline. Replaces the process_triple() god function."""
 
 import asyncio
-import hashlib
 import logging
 from dataclasses import dataclass, field
 
-from pyoxigraph import Literal, NamedNode, Triple
-
-from knowledge_service.ontology.uri import is_uri
+from knowledge_service._utils import compute_triple_hash
 from knowledge_service.ontology.namespaces import KS_GRAPH_EXTRACTED, KS_GRAPH_ASSERTED
+from knowledge_service.ontology.uri import is_uri
 from knowledge_service.reasoning.noisy_or import noisy_or
 
 logger = logging.getLogger(__name__)
@@ -33,20 +31,21 @@ class IngestContext:
 @dataclass
 class IngestResult:
     is_new: bool
-    delta: dict | None
     contradictions: list[dict]
-    confidence: float
+    # ``inferred_triples`` is retained so the inference engine's per-call
+    # output can be asserted in tests and surfaced in future responses; the
+    # /api/claims path uses ``is_new`` and ``contradictions`` only.
     inferred_triples: list[dict] = field(default_factory=list)
 
 
 def compute_hash(triple: dict) -> str:
-    from knowledge_service.ontology.uri import to_entity_uri, to_predicate_uri  # noqa: PLC0415
+    """Pipeline-ergonomic wrapper around :func:`compute_triple_hash`.
 
-    s = NamedNode(to_entity_uri(triple["subject"]))
-    p = NamedNode(to_predicate_uri(triple["predicate"]))
-    o_val = triple["object"]
-    o = NamedNode(o_val) if is_uri(o_val) else Literal(o_val)
-    return hashlib.sha256(str(Triple(s, p, o)).encode()).hexdigest()
+    Pipeline call sites typically have a triple dict in hand; this saves them
+    from unpacking. All identity decisions delegate to the canonical hasher
+    in ``_utils`` so there is one source of truth.
+    """
+    return compute_triple_hash(triple["subject"], triple["predicate"], triple["object"])
 
 
 def apply_penalty(confidence: float, contradictions: list[dict]) -> float:
@@ -72,20 +71,6 @@ async def detect_delta(triple: dict, triple_store) -> dict | None:
         "current_value": triple["object"],
         "description": f"changed from {latest['object']} to {triple['object']}",
     }
-
-
-async def insert_triple(triple: dict, triple_store, graph: str) -> tuple[str, bool]:
-    return await asyncio.to_thread(
-        triple_store.insert,
-        triple["subject"],
-        triple["predicate"],
-        triple["object"],
-        triple["confidence"],
-        triple["knowledge_type"],
-        triple.get("valid_from"),
-        triple.get("valid_until"),
-        graph,
-    )
 
 
 async def detect_contradictions(triple: dict, triple_store) -> list[dict]:
@@ -127,7 +112,7 @@ async def run_inference(
     results = []
 
     for derived in derived_list:
-        derived_hash = _derived_hash(derived)
+        derived_hash = compute_triple_hash(derived.subject, derived.predicate, derived.object_)
         async with stores.pg_pool.acquire() as conn:
             async with conn.transaction():
                 staged_id = await stores.outbox.stage(
@@ -165,18 +150,6 @@ async def run_inference(
         results.append(derived.to_dict())
 
     return results
-
-
-def _derived_hash(derived) -> str:
-    """SHA-256 of derived triple's canonical form, matching compute_hash()."""
-    import hashlib  # noqa: PLC0415
-
-    from pyoxigraph import Literal, NamedNode, Triple  # noqa: PLC0415
-
-    s = NamedNode(derived.subject)
-    p = NamedNode(derived.predicate)
-    o = NamedNode(derived.object_) if is_uri(derived.object_) else Literal(derived.object_)
-    return hashlib.sha256(str(Triple(s, p, o)).encode()).hexdigest()
 
 
 def _remove_inferred_triple_with_annotations(raw_store, s, p, o, graph_node) -> None:
@@ -422,4 +395,4 @@ async def ingest_triple(
     }
     inferred = await run_inference(normalized, engine, stores, context, drainer=drainer)
 
-    return IngestResult(is_new, delta, contradictions, confidence, inferred)
+    return IngestResult(is_new, contradictions, inferred)

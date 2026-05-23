@@ -33,7 +33,6 @@ class EntityGroup:
     canonical_uri: str  # via to_entity_uri()
     aliases: list[str] = field(default_factory=list)
     wikidata_id: str | None = None
-    rdf_type: str | None = None
 
 
 @dataclass
@@ -136,11 +135,11 @@ class CoreferencePhase:
         if not groups or self._pg_pool is None:
             return
 
-        rows: list[tuple[str, str, str]] = []
+        rows: list[tuple[str, str]] = []
         for group in groups:
             for alias in group.aliases:
-                rows.append((alias, group.canonical_uri, "spacy_linking"))
-            rows.append((group.canonical_label, group.canonical_uri, "spacy_linking"))
+                rows.append((alias, group.canonical_uri))
+            rows.append((group.canonical_label, group.canonical_uri))
 
         if not rows:
             return
@@ -149,10 +148,9 @@ class CoreferencePhase:
             async with self._pg_pool.acquire() as conn:
                 await conn.executemany(
                     """
-                    INSERT INTO entity_aliases (alias, canonical, source)
-                    VALUES ($1, $2, $3)
-                    ON CONFLICT (alias) DO UPDATE SET canonical = EXCLUDED.canonical,
-                                                       source = EXCLUDED.source
+                    INSERT INTO entity_aliases (alias, canonical)
+                    VALUES ($1, $2)
+                    ON CONFLICT (alias) DO UPDATE SET canonical = EXCLUDED.canonical
                     """,
                     rows,
                 )

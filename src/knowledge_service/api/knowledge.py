@@ -9,7 +9,7 @@ from pydantic import BaseModel
 
 from knowledge_service._utils import (
     _is_uri,
-    _triple_hash,
+    compute_triple_hash,
     _rdf_value_to_str,
     sanitize_sparql_string,
 )
@@ -39,7 +39,6 @@ class KnowledgeResult(BaseModel):
     valid_from: str | None = None
     valid_until: str | None = None
     provenance: list[dict] = []
-    source: str | None = None
 
 
 class SparqlQueryBody(BaseModel):
@@ -133,7 +132,7 @@ async def get_knowledge_query(
         knowledge_type = ktype_str[len(KS) :] if ktype_str.startswith(KS) else ktype_str
 
         # Look up provenance by triple hash
-        th = _triple_hash(s_str, p_str, o_str)
+        th = compute_triple_hash(s_str, p_str, o_str)
         provenance_rows = await provenance_store.get_by_triple(th)
 
         serialised_provenance: list[dict] = []

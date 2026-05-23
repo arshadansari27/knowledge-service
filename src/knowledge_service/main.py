@@ -166,9 +166,9 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     parser_registry.register(PdfParser())
     parser_registry.register(HtmlParser())
     parser_registry.register(StructuredParser())
-    app.state.parser_registry = parser_registry
 
-    # Make parser_registry available to content endpoint module
+    # Make parser_registry available to content/upload endpoint modules
+    # via module-level globals (the only readers).
     import knowledge_service.api.content as _content_mod  # noqa: PLC0415
 
     _content_mod._parser_registry = parser_registry
@@ -226,7 +226,6 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
     # State references read by admin/* and api/health.py.
     app.state.knowledge_store = triple_store
-    app.state.embedding_store = stores.content
     app.state.pg_pool = pg_pool
 
     yield

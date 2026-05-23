@@ -7,7 +7,7 @@ from unittest.mock import AsyncMock, MagicMock
 from httpx import ASGITransport, AsyncClient
 
 from knowledge_service.main import create_app
-from knowledge_service.models import ContentAcceptedResponse, ContentRequest, IngestionJobStatus
+from knowledge_service.models import ContentAcceptedResponse, ContentRequest
 from tests.conftest import make_test_session_cookie
 
 
@@ -27,25 +27,6 @@ class TestContentAcceptedResponse:
             content_id="abc", job_id="def", chunks_total=50, chunks_capped_from=337
         )
         assert r.chunks_capped_from == 337
-
-
-class TestIngestionJobStatus:
-    def test_all_fields(self):
-        s = IngestionJobStatus(
-            content_id="a",
-            job_id="b",
-            status="extracting",
-            chunks_total=10,
-            chunks_embedded=10,
-            chunks_extracted=3,
-            chunks_failed=0,
-            triples_created=5,
-            entities_resolved=2,
-            error=None,
-            created_at="2026-01-01T00:00:00Z",
-            updated_at="2026-01-01T00:01:00Z",
-        )
-        assert s.status == "extracting"
 
 
 # ---------------------------------------------------------------------------
@@ -76,8 +57,6 @@ def _make_worker_stores():
     stores.triples.get_triples.return_value = []
     stores.triples.update_confidence.return_value = None
     stores.content = AsyncMock()
-    stores.content.delete_chunks.return_value = None
-    stores.content.insert_chunks.return_value = [(0, "chunk-uuid-0")]
     stores.content.replace_chunks.return_value = [(0, "chunk-uuid-0")]
     stores.entities = AsyncMock()
     stores.provenance = AsyncMock()

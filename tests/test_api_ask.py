@@ -41,7 +41,6 @@ def _make_rag_retriever(context=None):
                 }
             ],
             contradictions=[],
-            entities_found=["http://ks/s"],
         )
     mock = AsyncMock()
     mock.retrieve.return_value = context
@@ -49,12 +48,9 @@ def _make_rag_retriever(context=None):
     return mock
 
 
-def _make_rag_client(answer="Test answer", source_urls=None):
+def _make_rag_client(answer="Test answer"):
     mock = AsyncMock()
-    mock.answer.return_value = RAGAnswer(
-        answer=answer,
-        source_urls_cited=source_urls or ["https://example.com/article"],
-    )
+    mock.answer.return_value = RAGAnswer(answer=answer)
     return mock
 
 
@@ -206,7 +202,6 @@ class TestPostAskContradictions:
                     "confidence": 0.3,
                 }
             ],
-            entities_found=[],
         )
         app = create_app(use_lifespan=False)
         app.state.rag_retriever = _make_rag_retriever(context=ctx)
@@ -252,7 +247,6 @@ class TestAskConfidence:
                 },
             ],
             contradictions=[],
-            entities_found=[],
         )
         app = create_app(use_lifespan=False)
         app.state.rag_retriever = _make_rag_retriever(context)
@@ -272,9 +266,7 @@ class TestAskConfidence:
         assert abs(data["confidence"] - 0.88) < 0.01, f"Expected ~0.88, got {data['confidence']}"
 
     async def test_confidence_is_none_when_no_triples(self):
-        context = RetrievalContext(
-            content_results=[], knowledge_triples=[], contradictions=[], entities_found=[]
-        )
+        context = RetrievalContext(content_results=[], knowledge_triples=[], contradictions=[])
         app = create_app(use_lifespan=False)
         app.state.rag_retriever = _make_rag_retriever(context)
         app.state.rag_client = _make_rag_client()
@@ -313,11 +305,3 @@ class TestAskTraversalMetadata:
         response = await client.post("/api/ask", json={"question": "test"})
         data = response.json()
         assert "traversal_depth" in data
-
-    async def test_use_reasoning_parameter_accepted(self, client):
-        response = await client.post("/api/ask", json={"question": "test", "use_reasoning": False})
-        assert response.status_code == 200
-
-    async def test_use_reasoning_true_accepted(self, client):
-        response = await client.post("/api/ask", json={"question": "test", "use_reasoning": True})
-        assert response.status_code == 200

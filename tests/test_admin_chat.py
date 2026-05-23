@@ -15,7 +15,6 @@ class MockRetrievalContext:
     content_results: list = field(default_factory=list)
     knowledge_triples: list = field(default_factory=list)
     contradictions: list = field(default_factory=list)
-    entities_found: list = field(default_factory=list)
 
 
 @dataclass

@@ -13,8 +13,6 @@ logger = logging.getLogger(__name__)
 class NlpEntity:
     text: str
     label: str
-    start_char: int
-    end_char: int
     wikidata_id: str | None = None
 
 
@@ -22,7 +20,6 @@ class NlpEntity:
 class NlpResult:
     chunk_index: int
     entities: list[NlpEntity] = field(default_factory=list)
-    sentence_count: int = 0
 
 
 class NlpPhase:
@@ -60,19 +57,14 @@ class NlpPhase:
                     NlpEntity(
                         text=ent.text,
                         label=ent.label_,
-                        start_char=ent.start_char,
-                        end_char=ent.end_char,
                         wikidata_id=wikidata_id,
                     )
                 )
-
-            sentence_count = sum(1 for _ in doc.sents)
 
             results.append(
                 NlpResult(
                     chunk_index=chunk_index,
                     entities=entities,
-                    sentence_count=sentence_count,
                 )
             )
 
