@@ -241,6 +241,7 @@ async def _run_ingestion_worker(
         engine=engine,
         nlp=nlp,
         app_state=app_state,
+        domains=body.domains,
     )
 
 

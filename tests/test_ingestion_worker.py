@@ -154,6 +154,28 @@ class TestExtractPhaseFiltering:
         assert chunks_skipped == 0
         assert items_rejected == 0
 
+    async def test_domains_threaded_to_extractor(self):
+        """Regression guard: ContentRequest.domains must reach
+        extract_with_stats so PromptBuilder can scope predicates. See audit
+        finding A2."""
+        extraction_client = AsyncMock()
+        extraction_client.extract_with_stats = AsyncMock(return_value=([], 0))
+
+        phase = ExtractPhase(extraction_client)
+
+        chunk_records = [
+            {"chunk_text": "Text.", "chunk_index": 0, "section_header": None},
+        ]
+
+        await phase.run(
+            chunk_records,
+            {0: "uuid-0"},
+            domains=["health", "research"],
+        )
+
+        kwargs = extraction_client.extract_with_stats.call_args.kwargs
+        assert kwargs["domains"] == ["health", "research"]
+
 
 class TestJobTrackerChunksSkipped:
     async def test_update_status_accepts_chunks_skipped(self):

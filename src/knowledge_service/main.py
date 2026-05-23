@@ -226,7 +226,6 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
     # State references read by admin/* and api/health.py.
     app.state.knowledge_store = triple_store
-    app.state.embedding_store = stores.content
     app.state.pg_pool = pg_pool
 
     yield

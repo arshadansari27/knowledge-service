@@ -1,37 +1,34 @@
 """Ingestion phases: embed, extract, process."""
 
 import logging
-from dataclasses import dataclass, field
 from typing import Any
 
 from knowledge_service._utils import is_object_entity
+from knowledge_service.config import settings
 from knowledge_service.ingestion.pipeline import IngestContext, ingest_triple
 from knowledge_service.ontology.uri import is_uri, to_entity_uri
 
 logger = logging.getLogger(__name__)
 
-_EMBED_BATCH_SIZE = 32
-
-
-@dataclass
-class PhaseResult:
-    """Aggregated results from all phases."""
-
-    triples_created: int = 0
-    entities_resolved: int = 0
-    chunks_failed: int = 0
-    chunk_id_map: dict = field(default_factory=dict)
-    knowledge_items: list = field(default_factory=list)
-    chunk_ids_for_items: list = field(default_factory=list)
-    extractor: str = "api"
-
 
 class EmbedPhase:
-    """Phase 1: Embed chunks and store in content table."""
+    """Phase 1: Embed chunks and store in content table.
 
-    def __init__(self, embedding_client: Any, content_store: Any):
+    ``batch_size`` controls the size of each embed_batch() call. Defaults to
+    ``settings.embed_batch_size`` (``EMBED_BATCH_SIZE`` env var, default 20)
+    so operators tuning the env var get the change without a redeploy of
+    code-level constants.
+    """
+
+    def __init__(
+        self,
+        embedding_client: Any,
+        content_store: Any,
+        batch_size: int | None = None,
+    ):
         self._embedding_client = embedding_client
         self._content_store = content_store
+        self._batch_size = batch_size if batch_size is not None else settings.embed_batch_size
 
     async def run(
         self,
@@ -44,8 +41,8 @@ class EmbedPhase:
         """
         texts = [c["chunk_text"] for c in chunk_records]
         embeddings: list[list[float]] = []
-        for i in range(0, len(texts), _EMBED_BATCH_SIZE):
-            batch = texts[i : i + _EMBED_BATCH_SIZE]
+        for i in range(0, len(texts), self._batch_size):
+            batch = texts[i : i + self._batch_size]
             batch_embeddings = await self._embedding_client.embed_batch(batch)
             embeddings.extend(batch_embeddings)
 
@@ -69,8 +66,14 @@ class ExtractPhase:
         title: str | None = None,
         source_type: str | None = None,
         nlp_hints: list | None = None,
+        domains: list[str] | None = None,
     ) -> tuple[list[dict], list[str | None], int, int, int]:
         """Extract knowledge from chunks.
+
+        ``domains`` scopes the LLM prompt's predicate list (and prompt
+        override, when one exists). Without it, ``PromptBuilder`` falls back
+        to every registered domain, which dilutes the prompt for domain-tagged
+        ingests.
 
         Returns (knowledge_items, chunk_ids_for_items, chunks_failed, chunks_skipped, items_rejected).
         """
@@ -107,6 +110,7 @@ class ExtractPhase:
                 title=title,
                 source_type=source_type,
                 entity_hints=entity_hints,
+                domains=domains,
             )
             items_rejected += rejected
             if items is None:

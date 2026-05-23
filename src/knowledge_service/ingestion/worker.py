@@ -101,6 +101,7 @@ async def run_ingestion(
     engine: Any | None = None,
     nlp: Any | None = None,
     app_state: Any | None = None,
+    domains: list[str] | None = None,
 ) -> None:
     """Orchestrate the multi-phase ingestion pipeline.
 
@@ -164,6 +165,7 @@ async def run_ingestion(
                 title=title,
                 source_type=source_type,
                 nlp_hints=nlp_results,
+                domains=domains,
             )
             extractor = "llm"
             chunks_extracted = len(chunk_records) - chunks_failed - chunks_skipped
