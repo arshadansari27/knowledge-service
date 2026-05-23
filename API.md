@@ -16,6 +16,7 @@
 | POST | `/api/content` | Ingest content (JSON or URL auto-fetch) |
 | POST | `/api/content/upload` | Upload a file (PDF, HTML, CSV, etc.) |
 | GET | `/api/content/{id}/status` | Check ingestion job status |
+| GET | `/api/content/{id}/chunks` | List parsed chunks for a content item (operator/debug) |
 | POST | `/api/claims` | Ingest knowledge items directly |
 | GET | `/api/search` | Semantic similarity search |
 | GET | `/api/knowledge/query` | Structured knowledge graph query |
@@ -23,6 +24,8 @@
 | GET | `/api/knowledge/contradictions` | Detect contradictions |
 | POST | `/api/ask` | RAG-powered question answering |
 | GET | `/api/entity/{id}/changes` | Track entity changes since a date |
+| DELETE | `/api/admin/knowledge/content/{id}` | Delete a content item and its solely-supported triples |
+| DELETE | `/api/admin/knowledge/source` | Delete triples solely supported by a given source URL |
 
 ---
 
@@ -38,7 +41,8 @@ Check the health of all service dependencies.
   "components": {
     "oxigraph": "ok | error: ...",
     "postgresql": "ok | error: ...",
-    "llm": "ok | error: ..."
+    "llm": "ok | error: ...",
+    "nlp": "ok | degraded: ... | unavailable: ..."
   }
 }
 ```
@@ -56,37 +60,31 @@ If `knowledge` is empty but `raw_text` is provided, knowledge is auto-extracted 
 ```json
 {
   "url": "string (required)",
-  "title": "string (required)",
+  "title": "string (optional)",
   "summary": "string (optional)",
   "raw_text": "string (optional)",
-  "source_type": "string (required) — e.g. 'article', 'video', 'paper'",
+  "source_type": "string (optional) — e.g. 'article', 'video', 'paper'",
   "tags": ["string"] (optional, default: []),
   "metadata": {} (optional, default: {}),
   "knowledge": [KnowledgeInput] (optional, default: [])
 }
 ```
 
-**Response:**
+**Response (202 Accepted):**
 
 ```json
 {
-  "content_id": "UUID string",
-  "triples_created": 5,
-  "contradictions_detected": [
-    {
-      "subject": "ks:caffeine",
-      "predicate": "ks:affects",
-      "existing_object": "improved alertness",
-      "existing_confidence": 0.85,
-      "new_object": "no effect on alertness",
-      "new_confidence": 0.6
-    }
-  ],
-  "entities_resolved": 2
+  "content_id": "UUID",
+  "job_id": "UUID",
+  "status": "accepted",
+  "chunks_total": 5,
+  "chunks_capped_from": null
 }
 ```
 
-**Status Codes:** `200` OK, `422` Validation Error
+Ingestion runs asynchronously. Poll `/api/content/{content_id}/status` for progress, then read triples via `/api/knowledge/query` or `/api/ask`. If an active job is already running for the same `content_id`, the response returns that job's id instead of returning `409 Conflict` (idempotent under retry).
+
+**Status Codes:** `202` Accepted, `409` Conflict, `422` Validation Error
 
 ### Example
 
@@ -122,7 +120,7 @@ curl -X POST http://localhost:8000/api/content \
 
 Upload a file for ingestion. Detects format from filename/content-type/magic bytes, parses the document, and feeds into the standard ingestion pipeline.
 
-**Supported formats:** PDF, HTML, CSV, JSON, plain text, images (stub — stores bytes for future OCR).
+**Supported formats:** PDF, HTML, CSV, JSON, plain text. Image uploads return `422` — image formats are detected but no image parser is registered.
 
 **Content-Type:** `multipart/form-data`
 
@@ -219,7 +217,7 @@ Ingest knowledge items directly without storing raw content. Useful for programm
   "source_url": "string (required)",
   "source_type": "string (required) — e.g. 'paper', 'database'",
   "extractor": "string (required) — e.g. 'llm_qwen3:14b', 'api'",
-  "knowledge": [KnowledgeInput] (required)
+  "knowledge": [KnowledgeInput] (optional, default: [])
 }
 ```
 
@@ -269,6 +267,7 @@ Search ingested content by semantic similarity using pgvector cosine distance. R
 | `limit` | int | no | 10 | Max results (1–100) |
 | `source_type` | string | no | — | Filter by source type |
 | `tags` | string[] | no | — | Filter by tags (repeat for multiple) |
+| `content_id` | string | no | — | Scope the search to a specific content item |
 
 **In-flight content is excluded.** Results only include content whose latest
 ingestion job has reached a terminal state (`completed` or `failed`), or
@@ -286,19 +285,26 @@ the `READER_EXCLUDE_INFLIGHT` environment variable (default `true`).
     "title": "Effects of Caffeine on Sleep",
     "summary": "A study on caffeine...",
     "similarity": 0.87,
+    "rrf_score": 0.032,
+    "bm25_rank": 2,
     "source_type": "article",
     "tags": ["health", "sleep"],
     "ingested_at": "2025-01-15T10:30:00Z",
     "chunk_text": "The relevant section of the document matching the query...",
-    "chunk_index": 0
+    "chunk_index": 0,
+    "section_header": "Introduction"
   }
 ]
 ```
 
 | Field | Description |
 |-------|-------------|
+| `similarity` | Cosine similarity from the vector stage. `null` when the chunk only surfaced via BM25. |
+| `rrf_score` | Reciprocal-rank-fusion score used for ordering when hybrid (vector + BM25) is active. Equals `similarity` when only the vector stage ran. |
+| `bm25_rank` | 0-based rank from the BM25 stage. `null` for vector-only hits. |
 | `chunk_text` | The text of the matching chunk (always present) |
 | `chunk_index` | Position of this chunk within its parent document (0-indexed) |
+| `section_header` | Nearest markdown heading above this chunk, when available |
 
 ### Example
 
@@ -365,7 +371,7 @@ curl "http://localhost:8000/api/knowledge/query?subject=ks:caffeine"
 
 ## POST /api/knowledge/sparql
 
-Execute arbitrary SPARQL SELECT queries against the knowledge graph. Supports SPARQL 1.2 and RDF-star syntax.
+Execute arbitrary SPARQL SELECT or ASK queries against the knowledge graph. Supports SPARQL 1.2 and RDF-star syntax. Mutating forms (`INSERT`, `DELETE`, `UPDATE`, `CONSTRUCT`, `DESCRIBE`) are rejected with `422`.
 
 **Request Body (JSON):**
 
@@ -404,7 +410,7 @@ curl -X POST http://localhost:8000/api/knowledge/sparql \
 ## GET /api/knowledge/contradictions
 
 Detect contradictions in the knowledge graph. Finds two patterns:
-- **Same predicate, different objects** (e.g. "born in London" vs "born in Paris")
+- **Same predicate, different objects** — only fires for predicates declared `owl:FunctionalProperty` in the ontology (e.g. `ks:amount`, `ks:currency`). Multi-valued predicates like `has_property` are intentionally excluded.
 - **Opposite predicates** (e.g. "increases" vs "decreases" via `ks:oppositePredicate`)
 
 **Query Parameters:**
@@ -462,7 +468,7 @@ Ask a natural language question against the knowledge base. Retrieves relevant c
 | Parameter | Type | Required | Default | Description |
 |-----------|------|----------|---------|-------------|
 | `question` | string | yes | — | Natural language question (max 4000 chars) |
-| `max_sources` | int | no | 5 | Max content items to retrieve (1–100) |
+| `max_sources` | int | no | 5 | Max content items to retrieve (1–20) |
 | `min_confidence` | float | no | 0.0 | Filter out knowledge triples below this confidence (0.0–1.0) |
 
 **Response:**
@@ -486,7 +492,18 @@ Ask a natural language question against the knowledge base. Retrieves relevant c
       "object": "http://dbpedia.org/resource/Dopamine",
       "confidence": 0.3
     }
-  ]
+  ],
+  "evidence": [
+    {
+      "triple_subject": "http://dbpedia.org/resource/Cold_shock_response",
+      "triple_predicate": "http://knowledge.local/schema/increases",
+      "triple_object": "http://dbpedia.org/resource/Dopamine",
+      "chunk_text": "Regular cold-water immersion has been shown to increase dopamine levels by up to 250%.",
+      "source_url": "https://example.com/article"
+    }
+  ],
+  "intent": "graph",
+  "traversal_depth": 3
 }
 ```
 
@@ -497,6 +514,9 @@ Ask a natural language question against the knowledge base. Retrieves relevant c
 | `sources` | array | Deduplicated content sources used in retrieval |
 | `knowledge_types_used` | string[] | Which `knowledge_type` labels (e.g. `Claim`, `Fact`, `Event`, `Entity`) contributed to the answer |
 | `contradictions` | array | Conflicting claims with subject, predicate, object, and confidence |
+| `evidence` | array | Snippets that link each cited triple back to the source chunk text |
+| `intent` | string \| null | Classified intent for the question (`semantic`, `entity`, `graph`); `null` when classification was skipped |
+| `traversal_depth` | int \| null | BFS depth used during graph-intent retrieval; `null` for non-graph intents |
 
 **In-flight content is excluded.** The hybrid retriever backing this endpoint
 only reads content whose latest ingestion job has reached a terminal state
@@ -653,11 +673,10 @@ The service is configured via environment variables (or `.env` file):
 | `OXIGRAPH_DATA_DIR` | `./data/oxigraph` | RDF store data directory |
 | `API_HOST` | `0.0.0.0` | API bind address |
 | `API_PORT` | `8000` | API port |
-| `FEDERATION_ENABLED` | `true` | Enable DBpedia/Wikidata federation |
-| `FEDERATION_TIMEOUT` | `3.0` | Federation query timeout (seconds) |
 | `ADMIN_PASSWORD` | *(required)* | Password for admin panel and API key auth |
 | `SECRET_KEY` | *(required)* | Session signing key |
 | `SPACY_DATA_DIR` | `/app/data/spacy` | spaCy Wikidata KB storage (volume-mounted) |
 | `MAX_UPLOAD_SIZE` | `52428800` (50MB) | Maximum file upload size in bytes |
 | `URL_FETCH_TIMEOUT` | `30` | Timeout for URL auto-fetch (seconds) |
 | `NLP_ENTITY_CONFIDENCE` | `0.5` | Confidence for spaCy-only entities (not confirmed by LLM) |
+| `READER_EXCLUDE_INFLIGHT` | `true` | Exclude content with non-terminal `ingestion_jobs.status` from `/api/search` and `/api/ask` |
