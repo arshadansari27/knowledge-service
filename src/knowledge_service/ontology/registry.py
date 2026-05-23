@@ -100,12 +100,6 @@ class DomainRegistry:
             result.extend(self._predicates.get(d, []))
         return result
 
-    def resolve_synonym(self, label: str) -> str:
-        slug = label.lower().strip().replace(" ", "_")
-        if slug in self._synonyms:
-            return self._synonyms[slug]
-        return label
-
     def get_materiality(self, predicate_uri: str) -> float:
         return self._materiality.get(predicate_uri, DEFAULT_MATERIALITY)
 

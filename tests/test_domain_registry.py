@@ -35,17 +35,6 @@ class TestGetPredicates:
         assert preds == []
 
 
-class TestResolveSynonym:
-    def test_known_synonym(self, registry):
-        assert registry.resolve_synonym("boosts") == f"{KS}increases"
-
-    def test_canonical_passthrough(self, registry):
-        assert registry.resolve_synonym("causes") == f"{KS}causes"
-
-    def test_unknown_returns_original(self, registry):
-        assert registry.resolve_synonym("unknown_pred") == "unknown_pred"
-
-
 class TestGetMateriality:
     def test_known_predicate(self, registry):
         weight = registry.get_materiality(f"{KS}causes")

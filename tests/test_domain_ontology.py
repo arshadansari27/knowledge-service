@@ -46,11 +46,6 @@ class TestDomainOntologyFiles:
         assert "finds" in labels
         assert len(predicates) >= 10
 
-    def test_health_synonyms_resolve(self):
-        registry = self._load_registry()
-        resolved = registry.resolve_synonym("remedies")
-        assert "treats" in resolved
-
     def test_health_opposite_predicates(self):
         registry = self._load_registry()
         predicates = registry.get_predicates(["health"])

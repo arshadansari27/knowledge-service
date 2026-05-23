@@ -42,13 +42,11 @@ def _make_pg_pool_mock():
 def _make_content_store_mock():
     mock = AsyncMock()
     mock.upsert_metadata.return_value = "content-uuid-1234"
-    mock.delete_chunks.return_value = None
 
-    async def _insert_chunks(content_id, chunks):
+    async def _replace_chunks(content_id, chunks):
         return [(c["chunk_index"], f"chunk-uuid-{c['chunk_index']}") for c in chunks]
 
-    mock.insert_chunks.side_effect = _insert_chunks
-    mock.replace_chunks.side_effect = _insert_chunks
+    mock.replace_chunks.side_effect = _replace_chunks
     return mock
 
 

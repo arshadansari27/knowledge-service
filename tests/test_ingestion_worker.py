@@ -67,8 +67,6 @@ class TestRunIngestionWithNlp:
         stores = MagicMock()
         stores.pg_pool = pool
         stores.content = AsyncMock()
-        stores.content.delete_chunks = AsyncMock()
-        stores.content.insert_chunks = AsyncMock(return_value=[(0, "chunk-uuid-0")])
         stores.content.replace_chunks = AsyncMock(return_value=[(0, "chunk-uuid-0")])
 
         async def _noop_ingest_triple(*args, **kwargs):

@@ -76,8 +76,6 @@ def _make_worker_stores():
     stores.triples.get_triples.return_value = []
     stores.triples.update_confidence.return_value = None
     stores.content = AsyncMock()
-    stores.content.delete_chunks.return_value = None
-    stores.content.insert_chunks.return_value = [(0, "chunk-uuid-0")]
     stores.content.replace_chunks.return_value = [(0, "chunk-uuid-0")]
     stores.entities = AsyncMock()
     stores.provenance = AsyncMock()

@@ -187,28 +187,6 @@ class ExtractionClient(BaseLLMClient):
 
         return parsed.get("items", [])
 
-    async def extract(
-        self,
-        text: str,
-        title: str | None = None,
-        source_type: str | None = None,
-        domains: list[str] | None = None,
-        entity_hints: list[dict] | None = None,
-    ) -> list | None:
-        """Extract KnowledgeInput items from raw text using single-pass extraction.
-
-        Extracts entities, events, and relations in a single LLM call.
-        Returns None if LLM call failed (distinguishable from [] = nothing found).
-        """
-        items, _rejected = await self.extract_with_stats(
-            text=text,
-            title=title,
-            source_type=source_type,
-            domains=domains,
-            entity_hints=entity_hints,
-        )
-        return items
-
     async def extract_with_stats(
         self,
         text: str,

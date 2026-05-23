@@ -54,7 +54,19 @@ class TestUpsertMetadata:
         conn.fetchval.assert_called_once()
 
 
-class TestInsertChunks:
+_SAMPLE_CHUNKS = [
+    {
+        "chunk_index": 0,
+        "chunk_text": "hello",
+        "embedding": [0.1] * 768,
+        "char_start": 0,
+        "char_end": 5,
+        "section_header": None,
+    },
+]
+
+
+class TestReplaceChunks:
     async def test_returns_chunk_id_pairs(self):
         pool, conn = _make_pool()
         conn.fetch.return_value = [
@@ -80,32 +92,10 @@ class TestInsertChunks:
                 "section_header": None,
             },
         ]
-        pairs = await store.insert_chunks("content-uuid-1234", chunks)
+        pairs = await store.replace_chunks("content-uuid-1234", chunks)
         assert len(pairs) == 2
         assert pairs[0] == (0, "chunk-uuid-0")
 
-
-class TestDeleteChunks:
-    async def test_calls_execute(self):
-        pool, conn = _make_pool()
-        store = ContentStore(pool)
-        await store.delete_chunks("content-uuid-1234")
-        conn.execute.assert_called_once()
-
-
-_SAMPLE_CHUNKS = [
-    {
-        "chunk_index": 0,
-        "chunk_text": "hello",
-        "embedding": [0.1] * 768,
-        "char_start": 0,
-        "char_end": 5,
-        "section_header": None,
-    },
-]
-
-
-class TestReplaceChunks:
     async def test_delete_and_insert_share_a_transaction(self):
         pool, conn = _make_pool()
         conn.fetch.return_value = [{"chunk_index": 0, "id": "chunk-uuid-0"}]

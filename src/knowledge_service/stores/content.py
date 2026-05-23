@@ -180,30 +180,6 @@ class ContentStore:
     # Content (chunks) table operations
     # ------------------------------------------------------------------
 
-    async def delete_chunks(self, content_id: str) -> None:
-        """Delete all chunks for a given content_id."""
-        async with self._pool.acquire() as conn:
-            await conn.execute(
-                "DELETE FROM content WHERE content_id = $1",
-                content_id,
-            )
-
-    async def insert_chunks(
-        self,
-        content_id: str,
-        chunks: list[dict],
-    ) -> list[tuple[int, str]]:
-        """Insert chunk rows. Returns list of (chunk_index, chunk_id).
-
-        Each dict must have: chunk_index, chunk_text, embedding, char_start, char_end.
-        Optional: section_header.
-        """
-        if not chunks:
-            return []
-        async with self._pool.acquire() as conn:
-            rows = await self._insert_chunks_on_conn(conn, content_id, chunks)
-        return [(row["chunk_index"], str(row["id"])) for row in rows]
-
     async def replace_chunks(
         self,
         content_id: str,
