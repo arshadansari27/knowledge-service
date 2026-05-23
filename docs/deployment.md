@@ -37,8 +37,6 @@ The knowledge-service runs as part of the **AEGIS stack** on a Docker Swarm clus
 | `LLM_EMBED_MODEL` | `nomic-embed-text` |
 | `LLM_CHAT_MODEL` | `qwen3:14b` |
 | `OXIGRAPH_DATA_DIR` | `/app/data/oxigraph` |
-| `FEDERATION_ENABLED` | `true` |
-| `FEDERATION_TIMEOUT` | `3.0` |
 | `ADMIN_PASSWORD` | Via `aegis_knowledge_admin_password` secret |
 | `SECRET_KEY` | Via `aegis_knowledge_secret_key` secret |
 | `SPACY_DATA_DIR` | `/app/data/spacy` |
@@ -68,7 +66,7 @@ Interval: 30s | Timeout: 10s | Retries: 5 | Start period: 90s
 
 ## AEGIS Stack Services
 
-The knowledge-service is one of 11 services in the AEGIS stack:
+The knowledge-service is one of 10 services in the AEGIS stack:
 
 | Service | Node | Port | Purpose |
 |---------|------|------|---------|
@@ -172,9 +170,14 @@ This:
 Push to `main` on GitHub → CI builds and pushes `arshadansari27/knowledge-service:latest` → then re-deploy the stack:
 
 ```bash
-# On meem, or via ansible
-docker service update --image arshadansari27/knowledge-service:latest aegis_knowledge
+# From an operator workstation with the swarm-baa Docker context configured.
+docker --context swarm-baa service update \
+  --image arshadansari27/knowledge-service:latest \
+  --force \
+  aegis_knowledge
 ```
+
+`--force` is required because the tag (`:latest`) does not change between deploys; without it Swarm skips the update when the image reference is unchanged. The `swarm-baa` context targets the production swarm — see CLAUDE.md for the canonical form.
 
 ---
 

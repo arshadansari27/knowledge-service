@@ -453,7 +453,7 @@ GET /api/knowledge/contradictions?min_confidence=0.5
 
 Surfaces contradictions in the knowledge graph. Detects two patterns:
 
-- **Same predicate, different objects** — e.g., "born in London" vs "born in Paris"
+- **Same predicate, different objects** — only fires for predicates declared `owl:FunctionalProperty` in the ontology (e.g. `ks:amount`, `ks:currency`); multi-valued predicates like `has_property` are intentionally excluded
 - **Opposite predicates** — e.g., "increases dopamine" vs "decreases dopamine" (via `ks:oppositePredicate` declarations)
 
 Contradiction probability is the product of both claims' confidence scores.
@@ -657,8 +657,6 @@ All settings via environment variables or `.env` file:
 | `LLM_CHAT_MODEL` | `qwen3:14b` | Chat model for knowledge extraction |
 | `LLM_RAG_MODEL` | *(empty)* | RAG answer model (defaults to `LLM_CHAT_MODEL` if empty) |
 | `OXIGRAPH_DATA_DIR` | `./data/oxigraph` | RDF store data directory |
-| `FEDERATION_ENABLED` | `true` | Enable DBpedia/Wikidata federation |
-| `FEDERATION_TIMEOUT` | `3.0` | Federation query timeout (seconds) |
 | `API_HOST` | `0.0.0.0` | Bind address |
 | `API_PORT` | `8000` | Port |
 | `ADMIN_PASSWORD` | *(required)* | Password for admin panel login and API key auth |
@@ -762,7 +760,7 @@ All tests mock external dependencies — no PostgreSQL or LLM provider required.
 GitHub Actions pipeline on every push/merge to `main`:
 
 1. **Lint** — `ruff check` + `ruff format --check`
-2. **Test** — `pytest tests/ -v` (660+ tests)
+2. **Test** — `pytest tests/ -v` (~700 tests)
 3. **Version bump** — auto-increments patch version in `pyproject.toml`, commits back to `main`, creates `vX.Y.Z` git tag
 4. **Docker build** — builds and pushes to Docker Hub as `arshadansari27/knowledge-service:X.Y.Z` and `:latest`
 
@@ -786,6 +784,7 @@ src/knowledge_service/
 │   ├── routes.py            # Admin page routes (dashboard, knowledge, chat, contradictions)
 │   ├── stats.py             # /api/admin/stats/* and /api/admin/knowledge/triples endpoints
 │   ├── jobs.py              # /api/admin/jobs
+│   ├── content.py           # DELETE /api/admin/knowledge/content/{id} and /knowledge/source
 │   └── templates/           # Jinja2 templates (base, dashboard, knowledge, chat, etc.)
 ├── api/
 │   ├── content.py           # POST /api/content (JSON + URL auto-fetch)
@@ -831,10 +830,10 @@ src/knowledge_service/
 │   ├── domains/             # Domain TTL files (base, health, technology, research)
 │   └── prompts/             # LLM extraction prompt templates (entities, relations)
 ├── clients/
-│   ├── llm.py               # EmbeddingClient + ExtractionClient (two-phase)
+│   ├── base.py              # BaseLLMClient — shared retry / timeout / auth handling
+│   ├── llm.py               # EmbeddingClient + ExtractionClient
 │   ├── prompt_builder.py    # Domain-aware extraction prompts from templates
-│   ├── rag.py               # RAGClient — LLM-powered answer generation
-│   └── federation.py        # FederationClient — DBpedia/Wikidata SPARQL federation
+│   └── rag.py               # RAGClient — LLM-powered answer generation
 └── migrations/              # SQL migrations (auto-applied at startup)
 ```
 
@@ -857,7 +856,7 @@ The system reuses established vocabularies and keeps the custom `ks:` namespace 
 
 ## Status
 
-Deployed to production (~640 tests).
+Deployed to production (~700 tests).
 
 | Capability | What |
 |------------|------|

@@ -85,7 +85,7 @@ Content arrives via `/api/content`, `/api/content/upload` (file upload), or `/ap
 
 ### Models
 
-3 knowledge input types in `models.py` using union type (no Pydantic discriminator): `TripleInput`, `EventInput`, `EntityInput`. Each has a `to_triples()` method that expands to `(subject, predicate, object)` tuples for ingestion.
+3 knowledge input types in `models.py` routed via a tagged Pydantic `Discriminator` (callable `_route_knowledge_input`): `TripleInput`, `EventInput`, `EntityInput`. `Entity`/`Event` (case-insensitive) route to their own members; every other `knowledge_type` label (`Claim`, `Fact`, `Relationship`, `TemporalFact`, …) routes to `TripleInput`. The discriminator exists so per-member validation errors don't drown out the real reason for rejection — see the docstring on `_route_knowledge_input`. Each member has a `to_triples()` method that expands to `(subject, predicate, object)` tuples for ingestion.
 
 ### App Lifecycle
 
@@ -103,7 +103,7 @@ Ingestion splits across a sync acceptance phase (`_accept_content_request`) and 
 - **Only one active job per `content_id`.** Enforced by the partial unique index `idx_ingestion_jobs_active` (`WHERE status NOT IN ('completed','failed')`). Re-ingest is blocked until the current job reaches a terminal state.
 - **Startup janitor recovers from process crashes.** The lifespan in `main.py` marks every non-terminal job as `failed` on startup so a SIGTERM/OOM mid-worker doesn't leave the content permanently un-reingestable.
 - **EmbedPhase uses `ContentStore.replace_chunks()`, not separate `delete_chunks` + `insert_chunks`.** DELETE and INSERT must land in a single PG transaction. Losing this atomicity is a silent data-quality bug: `provenance.chunk_id` is `ON DELETE SET NULL`, so a delete without a follow-up insert permanently wipes chunk-level evidence for every previously-ingested triple linked to that content.
-- **ProcessPhase is not transactional across stores.** A crash during triple ingestion can leave partial pyoxigraph writes. This is a known 2PC-shaped gap; current mitigation is the job status + startup janitor + operator-driven retry.
+- **ProcessPhase coordinates pyoxigraph and PostgreSQL via the transactional outbox.** See the "ProcessPhase consistency" section below for the full pattern. Inference and contradiction-penalty steps run after the base triple is durable in both stores and rely on idempotent re-runs.
 
 ## Testing Patterns
 
