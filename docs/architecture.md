@@ -18,7 +18,6 @@ The system stores every triple in one of five named graphs:
 | `ks:graph/asserted` | Human-provided via `POST /api/claims` with a stated extractor |
 | `ks:graph/extracted` | LLM-derived from ingested content |
 | `ks:graph/inferred` | Forward-chaining derivations from existing triples |
-| `ks:graph/federated` | External sources (DBpedia, Wikidata) when federation is on |
 
 The choice that matters: **the graph a triple lives in is surfaced to readers as a `trust_tier` label, but retrieval does not filter by tier.** When `RAGRetriever` builds the LLM prompt, every retrieved triple comes annotated with which graph it came from, and the prompt instructs the model to weight `verified` evidence above `extracted` when they conflict. Ranking, however, is tier-agnostic.
 

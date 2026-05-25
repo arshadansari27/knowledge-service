@@ -35,7 +35,7 @@ Single-process FastAPI service. No microservices.
 
 The user-visible feature is **hybrid BM25 + vector RAG** over ingested documents: chunks with pgvector embeddings in `content`, fused with a Postgres full-text tsvector via Reciprocal Rank Fusion. A small **RDF knowledge graph layer** sits behind it: an LLM extracts entity/relation triples per chunk (pyoxigraph named graphs, Postgres provenance), multi-source confidences combine via **Noisy-OR** (a 4-line function), and a **3-rule forward-chaining inference engine** (inverse / transitive / type-inheritance) derives extra triples at ingestion time.
 
-Contradictions are detected at retrieval and reported in the `/api/ask` response; per-graph trust labels (`verified` / `federated` / `extracted`) are tagged onto retrieved triples for the LLM prompt. Neither contradictions nor trust tiers filter or re-rank results today — they are surfaced, not enforced.
+Contradictions are detected at retrieval and reported in the `/api/ask` response; per-graph trust labels (`verified` / `extracted`) are tagged onto retrieved triples for the LLM prompt. Neither contradictions nor trust tiers filter or re-rank results today — they are surfaced, not enforced. The `/api/knowledge/contradictions` endpoint additionally filters same-`chunk_id` pairs (extraction conflation, not real disagreement across sources) and identical-object pairs.
 
 ### Data Flow
 
@@ -45,7 +45,7 @@ Content arrives via `/api/content`, `/api/content/upload` (file upload), or `/ap
 
 ### Key Components
 
-- **TripleStore** (`stores/triples.py`): pyoxigraph wrapper with **named graph support**. Triples are stored in 5 named graphs by provenance class: `ks:graph/ontology` (schema), `ks:graph/asserted` (human-provided), `ks:graph/extracted` (LLM-derived), `ks:graph/inferred` (computed), `ks:graph/federated` (external sources). The graph a triple lives in is surfaced to readers as a `trust_tier` label but retrieval does not filter by tier — it's informational. All triples are content-addressed via SHA-256 hash. RDF-star annotations attach confidence, knowledge type, and temporal validity. Single `get_triples(subject, predicate, object_, graphs)` method replaces 3 separate query methods. Confidence updates use the Python API to find reification blank nodes.
+- **TripleStore** (`stores/triples.py`): pyoxigraph wrapper with **named graph support**. Triples are stored in 4 named graphs by provenance class: `ks:graph/ontology` (schema), `ks:graph/asserted` (human-provided), `ks:graph/extracted` (LLM-derived), `ks:graph/inferred` (computed). The graph a triple lives in is surfaced to readers as a `trust_tier` label but retrieval does not filter by tier — it's informational. All triples are content-addressed via SHA-256 hash. RDF-star annotations attach confidence, knowledge type, and temporal validity. Single `get_triples(subject, predicate, object_, graphs)` method replaces 3 separate query methods. Confidence updates use the Python API to find reification blank nodes.
 
 - **ContentStore** (`stores/content.py`): PostgreSQL + pgvector. Manages `content_metadata` (document metadata) and `content` (chunks with embeddings). Uses `halfvec(768)` for nomic-embed-text embeddings. Hybrid search via vector + BM25 with Reciprocal Rank Fusion.
 
@@ -61,7 +61,7 @@ Content arrives via `/api/content`, `/api/content/upload` (file upload), or `/ap
 
 - **Parser Registry** (`parsing/__init__.py`): Pluggable document parsing layer. `ParserRegistry` with format detection (content-type > URL extension > magic bytes > fallback). Built-in parsers: `PdfParser` (PyMuPDF), `HtmlParser` (readability-lxml + BeautifulSoup), `StructuredParser` (JSON/CSV), `TextParser` (passthrough). Image formats are detected but no image parser is registered; `/api/content/upload` returns 422 for image uploads. Each parser produces a `ParsedDocument` (text, title, metadata, source_format, images).
 
-- **NLP Phase** (`nlp/__init__.py`): spaCy-based NER + Wikidata entity linking pre-pass. Runs on each chunk, produces `NlpResult` with `NlpEntity` objects (text, label, start/end char, wikidata_id). Entity hints are forwarded to LLM extraction to improve recognition. Fallback entities (spaCy-only, not confirmed by LLM) are included at `nlp_entity_confidence` (default 0.5). Graceful degradation when spaCy is unavailable.
+- **NLP Phase** (`nlp/__init__.py`): spaCy-based NER + Wikidata entity linking pre-pass. Runs on each chunk, produces `NlpResult` with `NlpEntity` objects (text, label, start/end char, wikidata_id). Entity hints are forwarded to LLM extraction to improve recognition. Fallback entities (spaCy-only, not confirmed by LLM) are included at `nlp_entity_confidence` (default 0.5). The fallback path (`ingestion/phases.py:_emit_ner_missed`) skips URL-shaped text (page headers, marketing URLs), drops numeric labels (`CARDINAL`/`MONEY`/`PERCENT`/`QUANTITY`/`DATE`/`TIME`/`ORDINAL`) which describe values not entities, and remaps the remaining spaCy UPPERCASE labels to schema.org canonical via `_SPACY_LABEL_TO_SCHEMA` (`ORG`→`Organization`, `GPE`→`Place`, `WORK_OF_ART`→`CreativeWork`, …). Graceful degradation when spaCy is unavailable.
 
 - **Coreference Phase** (`ingestion/coreference.py`): Deterministic entity deduplication. Entities sharing a Wikidata QID (from NLP pre-pass) are merged into a single `EntityGroup`. Results stored in `entity_aliases` table. `canonicalize()` rewrites knowledge item labels before processing.
 
@@ -73,7 +73,7 @@ Content arrives via `/api/content`, `/api/content/upload` (file upload), or `/ap
 
 - **PromptBuilder** (`clients/prompt_builder.py`): Builds domain-aware extraction prompts from templates + DomainRegistry. Supports file-based overrides with inline fallbacks.
 
-- **RAGRetriever** (`stores/rag.py`): Hybrid retrieval — combines chunk-level hybrid search (vector + BM25 via RRF) with knowledge graph triples for RAG context. Retrieved triples are tagged with a `trust_tier` label (verified/federated/extracted) derived from their source graph — the prompt discloses this to the LLM, but ranking and filtering are tier-agnostic. Contradictions found during retrieval are passed through to the `/api/ask` response as-is; they don't penalise or exclude triples at read time. `/api/ask` returns **evidence snippets** with exact source chunk text.
+- **RAGRetriever** (`stores/rag.py`): Hybrid retrieval — combines chunk-level hybrid search (vector + BM25 via RRF) with knowledge graph triples for RAG context. Retrieved triples are tagged with a `trust_tier` label (`verified`/`extracted`) derived from their source graph — the prompt discloses this to the LLM, but ranking and filtering are tier-agnostic. Contradictions found during retrieval are passed through to the `/api/ask` response as-is; they don't penalise or exclude triples at read time. `/api/ask` returns **evidence snippets** with exact source chunk text.
 
 ### Ontology
 
@@ -87,9 +87,22 @@ Content arrives via `/api/content`, `/api/content/upload` (file upload), or `/ap
 
 3 knowledge input types in `models.py` routed via a tagged Pydantic `Discriminator` (callable `_route_knowledge_input`): `TripleInput`, `EventInput`, `EntityInput`. `Entity`/`Event` (case-insensitive) route to their own members; every other `knowledge_type` label (`Claim`, `Fact`, `Relationship`, `TemporalFact`, …) routes to `TripleInput`. The discriminator exists so per-member validation errors don't drown out the real reason for rejection — see the docstring on `_route_knowledge_input`. Each member has a `to_triples()` method that expands to `(subject, predicate, object)` tuples for ingestion.
 
+`_normalise_knowledge_type` lowercases the value before storage and collapses the `Relation` alias to `relationship` — so the LLM's `"Fact"` and the human-typed `"fact"` produce identical RDF-star annotations. All subject/predicate/object strings are also sanitised (`_sanitize_rdf_term` strips control characters) before reaching pyoxigraph; without this a stray `\n` in an extracted URI would fail the whole job at insert time with `Invalid IRI code point '\n'`.
+
 ### App Lifecycle
 
-`main.py:create_app()` creates the FastAPI app. `lifespan()` handles startup (pyoxigraph init, asyncpg pool, migrations, DomainRegistry, LLM clients, ParserRegistry, spaCy NLP pipeline, Stores dataclass) and shutdown (flush, close). Tests use `create_app(use_lifespan=False)` and set `app.state` manually.
+`main.py:create_app()` creates the FastAPI app. `lifespan()` handles startup (pyoxigraph init, asyncpg pool, migrations, DomainRegistry, LLM clients, ParserRegistry, spaCy NLP pipeline, Stores dataclass, maintenance scheduler) and shutdown (cancel maintenance task, flush, close). Tests use `create_app(use_lifespan=False)` and set `app.state` manually.
+
+### Maintenance Service
+
+`src/knowledge_service/maintenance/` runs idempotent data-quality cleanup operations on the live graph. Started from the lifespan as a background asyncio task; every `MAINTENANCE_INTERVAL_SECONDS` (6h default, set `0` to disable) it runs `run_all(stores)`:
+
+- `normalize_knowledge_types`: canonicalises every `ks:knowledgeType` RDF-star annotation to a lowercase `<ks:type>` NamedNode (rewrites any drift to mixed-case URIs, literal strings with full URIs, or bare-name literals). Matches the ingestion path's storage shape from `stores/triples.py:149`.
+- `normalize_spacy_rdf_types`: remaps `rdf:type` values that originated from spaCy NER (`schema:ORG` → `schema:Organization`, etc.) and drops numeric labels (`schema:MONEY`/`CARDINAL`/`PERCENT`/`QUANTITY`/`DATE`/`TIME`/`ORDINAL`).
+
+`POST /api/admin/maintenance/run` triggers a sweep on demand — useful right after a deploy that introduces a new normalization rule or for verifying convergence. Both ops return stat dicts (`{scanned, changed}` and `{scanned, remapped, dropped}`) so the result is auditable.
+
+The first scheduled sweep waits `MAINTENANCE_INITIAL_DELAY_SECONDS` (60s default) so it doesn't compete with startup migrations / outbox drain / spaCy KB load. Failure of a sweep is logged but doesn't crash the service; the next interval retries.
 
 ### Migrations
 
