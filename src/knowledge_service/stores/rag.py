@@ -9,7 +9,7 @@ from dataclasses import dataclass, field
 import httpx
 
 from knowledge_service._utils import _extract_json
-from knowledge_service.ontology.namespaces import KS_GRAPH_ASSERTED, KS_GRAPH_FEDERATED
+from knowledge_service.ontology.namespaces import KS_GRAPH_ASSERTED
 from knowledge_service.ontology.uri import to_entity_uri
 
 logger = logging.getLogger(__name__)
@@ -304,8 +304,6 @@ class RAGRetriever:
                 graph = t.get("graph", "")
                 if graph == KS_GRAPH_ASSERTED:
                     t["trust_tier"] = "verified"
-                elif graph == KS_GRAPH_FEDERATED:
-                    t["trust_tier"] = "federated"
                 else:
                     t["trust_tier"] = "extracted"
             all_triples.extend(triples)
@@ -329,8 +327,6 @@ class RAGRetriever:
                 graph = t.get("graph", "")
                 if graph == KS_GRAPH_ASSERTED:
                     t["trust_tier"] = "verified"
-                elif graph == KS_GRAPH_FEDERATED:
-                    t["trust_tier"] = "federated"
                 else:
                     t["trust_tier"] = "extracted"
             all_triples.extend(triples)

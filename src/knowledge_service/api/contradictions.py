@@ -150,6 +150,19 @@ async def get_contradictions(
         prov_a_rows = await provenance_store.get_by_triple(hash_a)
         prov_b_rows = await provenance_store.get_by_triple(hash_b)
 
+        # Same-chunk filter: when both triples were extracted from the same
+        # chunk_id, the "contradiction" is almost always the LLM emitting two
+        # distinct numbers (or facts) from the same paragraph under a single
+        # subject URI — extraction conflation, not a real world contradiction.
+        # 6 of the 8 contradictions found in the 141k-triple production graph
+        # (2026-05-26) fell into this bucket. We also skip the trivial
+        # ``object_a == object_b`` case the SPARQL planner emits when an
+        # opposite-predicate pair points to identical objects.
+        if o1_str == o2_str:
+            continue
+        if _shares_chunk(prov_a_rows, prov_b_rows):
+            continue
+
         results.append(
             ContradictionResponse(
                 claim_a={
@@ -171,3 +184,10 @@ async def get_contradictions(
         )
 
     return results
+
+
+def _shares_chunk(prov_a: list[dict], prov_b: list[dict]) -> bool:
+    chunks_a = {row.get("chunk_id") for row in prov_a if row.get("chunk_id")}
+    if not chunks_a:
+        return False
+    return any(row.get("chunk_id") in chunks_a for row in prov_b)

@@ -57,6 +57,51 @@ class TestTripleInput:
             TripleInput(subject="a", predicate="b", object="c", confidence=-0.1)
 
 
+class TestKnowledgeTypeNormalisation:
+    """Migration 019 lowercases knowledge_type at storage time. The model
+    must produce lower-case values so new ingests don't re-pollute the DB."""
+
+    @pytest.mark.parametrize(
+        "raw,canonical",
+        [
+            ("Fact", "fact"),
+            ("CLAIM", "claim"),
+            ("Relationship", "relationship"),
+            ("Relation", "relationship"),  # alias collapse
+            ("TemporalState", "temporalstate"),
+        ],
+    )
+    def test_triple_input_lowercases_knowledge_type(self, raw, canonical):
+        t = TripleInput(subject="a", predicate="b", object="c", knowledge_type=raw)
+        assert t.knowledge_type == canonical
+        assert t.to_triples()[0]["knowledge_type"] == canonical
+
+    def test_null_knowledge_type_uses_default(self):
+        t = TripleInput(subject="a", predicate="b", object="c", knowledge_type=None)
+        assert t.knowledge_type == "claim"
+
+
+class TestRdfTermSanitisation:
+    """Pyoxigraph rejects IRIs that contain control characters. The model
+    strips them upfront so a stray ``\\n`` doesn't fail the whole job at
+    insert time (observed in prod 2026-05-25 on pluralistic.net)."""
+
+    def test_triple_strips_newline_in_subject(self):
+        t = TripleInput(subject="https://example.com/a\n", predicate="p", object="o")
+        assert "\n" not in t.subject
+        assert t.subject == "https://example.com/a"
+
+    def test_triple_strips_tab_in_object(self):
+        t = TripleInput(subject="s", predicate="p", object="value\twith\ttabs")
+        assert "\t" not in t.object
+
+    def test_entity_strips_control_chars(self):
+        e = EntityInput(uri="acme\n", rdf_type="schema:Organization", label="ACME\r\nCorp")
+        assert "\n" not in e.uri
+        assert "\r" not in e.label
+        assert "\n" not in e.label
+
+
 class TestEventInput:
     def test_basic_event(self):
         e = EventInput(subject="ipo_acme", occurred_at=date(2025, 6, 1))

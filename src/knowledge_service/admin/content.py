@@ -36,7 +36,6 @@ from knowledge_service.ingestion.pipeline import (
 from knowledge_service.ontology.namespaces import (
     KS_GRAPH_ASSERTED,
     KS_GRAPH_EXTRACTED,
-    KS_GRAPH_FEDERATED,
     KS_GRAPH_INFERRED,
 )
 from knowledge_service.ontology.uri import is_uri
@@ -48,7 +47,6 @@ router = APIRouter()
 _CONTENT_GRAPHS: tuple[str, ...] = (
     KS_GRAPH_ASSERTED,
     KS_GRAPH_EXTRACTED,
-    KS_GRAPH_FEDERATED,
     KS_GRAPH_INFERRED,
 )
 

@@ -158,19 +158,26 @@ async def browse_triples(
 ) -> dict:
     knowledge_store = request.app.state.knowledge_store
 
+    # Migration 019 lowercases all knowledge_type values in storage. Accept
+    # either casing on input so older callers (and the admin UI dropdown)
+    # keep working after the backfill.
     valid_types = {
-        "Claim",
-        "Fact",
-        "Event",
-        "Entity",
-        "Relationship",
-        "Conclusion",
-        "TemporalState",
+        "claim",
+        "fact",
+        "event",
+        "entity",
+        "relationship",
+        "conclusion",
+        "temporal_state",
+        "inferred",
     }
-    if knowledge_type and knowledge_type not in valid_types:
-        raise HTTPException(
-            status_code=422, detail=f"Invalid knowledge_type. Must be one of: {valid_types}"
-        )
+    if knowledge_type:
+        knowledge_type = knowledge_type.lower()
+        if knowledge_type not in valid_types:
+            raise HTTPException(
+                status_code=422,
+                detail=f"Invalid knowledge_type. Must be one of: {sorted(valid_types)}",
+            )
 
     filters = []
     if subject:

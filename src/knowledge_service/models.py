@@ -17,12 +17,34 @@ logger = logging.getLogger(__name__)
 PropertyValue = str | list[str]
 
 
+_KNOWLEDGE_TYPE_ALIASES = {
+    "relation": "relationship",
+}
+
+
 def _normalise_knowledge_type(value: Any, default: str) -> str:
-    """Coerce qwen3's occasional ``"knowledge_type": null`` to the default
-    so the routed member's own validator doesn't reject the whole item."""
+    """Coerce qwen3's occasional ``"knowledge_type": null`` to the default,
+    lower-case the LLM's preferred casing (``Fact``, ``Claim``, …) so
+    analytics aren't bifurcated, and collapse near-synonyms like
+    ``Relation`` to their canonical form."""
     if value is None:
         return default
-    return value
+    if not isinstance(value, str):
+        return value
+    canon = value.strip().lower()
+    return _KNOWLEDGE_TYPE_ALIASES.get(canon, canon) or default
+
+
+def _sanitize_rdf_term(value: Any) -> Any:
+    """Strip control characters (NL, CR, TAB, NUL, …) from a string before
+    it becomes part of an IRI or a literal. Without this, the LLM
+    occasionally emits a subject like ``"https://example.com/\n"`` which
+    pyoxigraph rejects at insert time with ``Invalid IRI code point '\\n'``
+    — killing the whole job at the processing phase."""
+    if not isinstance(value, str):
+        return value
+    cleaned = "".join(ch for ch in value if ch == " " or ch >= "\x20")
+    return cleaned.strip()
 
 
 def _unwrap_value_type_dict(value: Any) -> Any:
@@ -129,6 +151,11 @@ class TripleInput(BaseModel):
     def _coerce_null_knowledge_type(cls, value: Any) -> Any:
         return _normalise_knowledge_type(value, "claim")
 
+    @field_validator("subject", "predicate", "object", mode="before")
+    @classmethod
+    def _strip_control_chars(cls, value: Any) -> Any:
+        return _sanitize_rdf_term(value)
+
     @field_validator("subject", "object", mode="after")
     @classmethod
     def _reject_schema_placeholder(cls, value: str) -> str:
@@ -172,6 +199,11 @@ class EventInput(BaseModel):
     @classmethod
     def _coerce_null_knowledge_type(cls, value: Any) -> Any:
         return _normalise_knowledge_type(value, "event")
+
+    @field_validator("subject", mode="before")
+    @classmethod
+    def _strip_control_chars(cls, value: Any) -> Any:
+        return _sanitize_rdf_term(value)
 
     @field_validator("subject", mode="after")
     @classmethod
@@ -256,6 +288,11 @@ class EntityInput(BaseModel):
     @classmethod
     def _coerce_null_knowledge_type(cls, value: Any) -> Any:
         return _normalise_knowledge_type(value, "entity")
+
+    @field_validator("uri", "label", "rdf_type", mode="before")
+    @classmethod
+    def _strip_control_chars(cls, value: Any) -> Any:
+        return _sanitize_rdf_term(value)
 
     @field_validator("uri", mode="after")
     @classmethod
