@@ -14,7 +14,7 @@ from typing import Any
 
 from pyoxigraph import Literal, NamedNode, Quad
 
-from knowledge_service.ontology.namespaces import KS_KNOWLEDGE_TYPE
+from knowledge_service.ontology.namespaces import KS, KS_KNOWLEDGE_TYPE
 from knowledge_service.ontology.uri import RDF_TYPE
 
 logger = logging.getLogger(__name__)
@@ -54,12 +54,28 @@ _SCHEMA_TYPE_REMAP: dict[str, str | None] = {
 }
 
 
+_KNOWLEDGE_TYPE_ALIASES = {"relation": "relationship"}
+
+
+def _canonical_knowledge_type_uri(raw_value: str) -> str:
+    """Strip a ``http://knowledge.local/schema/`` prefix if present, lowercase
+    the suffix, and apply alias collapse — returns the canonical ``ks:<name>``
+    URI string. Handles both already-URI inputs and bare type names that
+    might have slipped in as literals."""
+    stripped = raw_value.strip()
+    if stripped.startswith(KS):
+        stripped = stripped[len(KS) :]
+    suffix = _KNOWLEDGE_TYPE_ALIASES.get(stripped.lower(), stripped.lower())
+    return f"{KS}{suffix}"
+
+
 def normalize_knowledge_types(triple_store: Any) -> dict[str, int]:
-    """Lowercase every ``ks:knowledgeType`` RDF-star annotation and collapse
-    the ``Relation`` alias to ``relationship``. Production was bifurcated
-    across ``Fact``/``fact``, ``Claim``/``claim``, etc. — same logical type,
-    different storage value, broken analytics."""
-    aliases = {"relation": "relationship"}
+    """Canonicalise every ``ks:knowledgeType`` RDF-star annotation to a
+    lowercase ``<ks:type>`` NamedNode. The ingestion path stores these as
+    ``<{KS}{knowledge_type}>`` URIs (see ``stores/triples.py:149``); we
+    rewrite any that drifted to mixed-case URIs (``ks:Fact``), to literal
+    strings, or to the wrong shape entirely. Also collapses the
+    ``Relation`` alias to ``relationship``."""
     select = f"""
         SELECT ?g ?bnode ?val WHERE {{
             GRAPH ?g {{
@@ -71,14 +87,17 @@ def normalize_knowledge_types(triple_store: Any) -> dict[str, int]:
 
     changed = 0
     for row in rows:
-        raw = str(row["val"].value)
-        canon = aliases.get(raw.strip().lower(), raw.strip().lower())
-        if raw == canon:
+        old_term = row["val"]
+        # Both NamedNode.value and Literal.value expose ``.value`` as a str.
+        raw = str(old_term.value)
+        canon_uri = _canonical_knowledge_type_uri(raw)
+        new_term = NamedNode(canon_uri)
+        if old_term == new_term:
             continue
         bnode = row["bnode"]
         graph_node = row["g"]
-        triple_store.remove(Quad(bnode, KS_KNOWLEDGE_TYPE, row["val"], graph_node))
-        triple_store.add(Quad(bnode, KS_KNOWLEDGE_TYPE, Literal(canon), graph_node))
+        triple_store.remove(Quad(bnode, KS_KNOWLEDGE_TYPE, old_term, graph_node))
+        triple_store.add(Quad(bnode, KS_KNOWLEDGE_TYPE, new_term, graph_node))
         changed += 1
 
     return {"scanned": len(rows), "changed": changed}
