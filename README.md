@@ -36,7 +36,7 @@ docker compose up -d
 uv run python scripts/demo.py --api-key changeme
 ```
 
-Expect to see, in order: ingestion progress per document; a summary of how many triples landed in each named graph (`ontology` / `asserted` / `extracted` / `inferred` / `federated`); the contradictions the engine surfaced (e.g. OpenAI's CEO predicate resolving to four different people over five days); and three RAG answers with source citations and evidence snippets.
+Expect to see, in order: ingestion progress per document; a summary of how many triples landed in each named graph (`ontology` / `asserted` / `extracted` / `inferred`); the contradictions the engine surfaced (e.g. OpenAI's CEO predicate resolving to four different people over five days); and three RAG answers with source citations and evidence snippets.
 
 The corpus lives in [`examples/openai-nov-2023/`](examples/openai-nov-2023/) and is paraphrased synthesis of publicly reported events — not journalism, not from any single outlet, MIT-licensed alongside the rest of the repo. Point the script at your own directory of `.md` files with the same frontmatter format to swap in a different corpus.
 
@@ -183,14 +183,14 @@ Accepts a **single object** or a **JSON array** for batch processing.
   "metadata": {},
   "knowledge": [
     {
-      "knowledge_type": "Claim",
+      "knowledge_type": "claim",
       "subject": "http://dbpedia.org/resource/Cold_shock_response",
       "predicate": "http://knowledge.local/schema/increases",
       "object": "http://dbpedia.org/resource/Dopamine",
       "confidence": 0.75
     },
     {
-      "knowledge_type": "Entity",
+      "knowledge_type": "entity",
       "uri": "http://dbpedia.org/resource/Dopamine",
       "rdf_type": "schema:ChemicalSubstance",
       "label": "Dopamine",
@@ -275,7 +275,7 @@ Accepts a **single object** or a **JSON array** for batch processing. When an ar
   "extractor": "llm_qwen3:14b",
   "knowledge": [
     {
-      "knowledge_type": "Fact",
+      "knowledge_type": "fact",
       "subject": "http://knowledge.local/data/aegis",
       "predicate": "http://schema.org/softwareRequirements",
       "object": "http://dbpedia.org/resource/PostgreSQL",
@@ -293,13 +293,13 @@ Accepts a **single object** or a **JSON array** for batch processing. When an ar
     "source_url": "https://example.com/a",
     "source_type": "bookmark",
     "extractor": "n8n",
-    "knowledge": [{ "knowledge_type": "Claim", "subject": "...", "predicate": "...", "object": "...", "confidence": 0.85 }]
+    "knowledge": [{ "knowledge_type": "claim", "subject": "...", "predicate": "...", "object": "...", "confidence": 0.85 }]
   },
   {
     "source_url": "https://example.com/b",
     "source_type": "bookmark",
     "extractor": "n8n",
-    "knowledge": [{ "knowledge_type": "Claim", "subject": "...", "predicate": "...", "object": "...", "confidence": 0.9 }]
+    "knowledge": [{ "knowledge_type": "claim", "subject": "...", "predicate": "...", "object": "...", "confidence": 0.9 }]
   }
 ]
 ```
@@ -309,7 +309,7 @@ All three input shapes are accepted. Examples:
 ```json
 // EventInput
 {
-  "knowledge_type": "Event",
+  "knowledge_type": "event",
   "subject": "http://knowledge.local/data/payment/2026-03-01",
   "occurred_at": "2026-03-01",
   "properties": { "amount": "4500", "currency": "GBP" }
@@ -317,7 +317,7 @@ All three input shapes are accepted. Examples:
 
 // TripleInput with temporal bounds (time-bounded fact)
 {
-  "knowledge_type": "TemporalFact",
+  "knowledge_type": "temporalfact",
   "subject": "http://dbpedia.org/resource/Bitcoin",
   "predicate": "http://schema.org/price",
   "object": "65000",
@@ -327,7 +327,7 @@ All three input shapes are accepted. Examples:
 
 // TripleInput (Relationship)
 {
-  "knowledge_type": "Relationship",
+  "knowledge_type": "relationship",
   "subject": "http://knowledge.local/data/aegis",
   "predicate": "http://schema.org/hasPart",
   "object": "http://knowledge.local/data/knowledge-service",
@@ -398,7 +398,7 @@ Structured query with optional `subject`, `predicate`, `object` filters. Returns
     "predicate": "http://knowledge.local/schema/increases",
     "object": "http://dbpedia.org/resource/Dopamine",
     "confidence": 0.88,
-    "knowledge_type": "Claim",
+    "knowledge_type": "claim",
     "valid_from": null,
     "valid_until": null,
     "provenance": [
@@ -455,6 +455,8 @@ Surfaces contradictions in the knowledge graph. Detects two patterns:
 
 - **Same predicate, different objects** — only fires for predicates declared `owl:FunctionalProperty` in the ontology (e.g. `ks:amount`, `ks:currency`); multi-valued predicates like `has_property` are intentionally excluded
 - **Opposite predicates** — e.g., "increases dopamine" vs "decreases dopamine" (via `ks:oppositePredicate` declarations)
+
+Two filters keep noise down: pairs that share a `chunk_id` are dropped (extraction conflation — the LLM emitted two distinct values from one paragraph under one subject URI, not a real disagreement across sources), and pairs whose objects are identical (a SPARQL artefact of opposite-predicate pairs pointing at the same object) are dropped.
 
 Contradiction probability is the product of both claims' confidence scores.
 
@@ -520,7 +522,7 @@ Ask a natural language question against the knowledge base. Retrieves relevant c
       "source_type": "article"
     }
   ],
-  "knowledge_types_used": ["Claim"],
+  "knowledge_types_used": ["claim"],
   "contradictions": [],
   "evidence": [{"triple_subject": "...", "triple_predicate": "...", "triple_object": "...", "chunk_text": "...", "source_url": "..."}],
   "intent": "graph",
@@ -860,9 +862,10 @@ Deployed to production (~700 tests).
 
 | Capability | What |
 |------------|------|
-| Knowledge model | 3 Pydantic input shapes (`TripleInput` / `EventInput` / `EntityInput`); `knowledge_type` is a free-form label preserved on each triple's RDF-star annotation; temporal validity via `valid_from` / `valid_until` |
-| RDF store | pyoxigraph, 5 named graphs by provenance class (ontology / asserted / extracted / inferred / federated) |
+| Knowledge model | 3 Pydantic input shapes (`TripleInput` / `EventInput` / `EntityInput`); `knowledge_type` is preserved on each triple's RDF-star annotation as a lowercase canonical label (`claim` / `fact` / `event` / `entity` / `relationship` / …; `Relation` is collapsed to `relationship`); temporal validity via `valid_from` / `valid_until` |
+| RDF store | pyoxigraph, 4 named graphs by provenance class (ontology / asserted / extracted / inferred) |
 | Ingestion | Parse (PDF / HTML / CSV / JSON / text) → chunk → embed → spaCy NER + Wikidata linking → LLM extraction → QID-based coreference → ingest |
+| Maintenance | Background asyncio task lowercases `ks:knowledgeType` annotations and remaps spaCy NER labels to schema.org canonical types on a configurable interval; manual trigger at `POST /api/admin/maintenance/run` |
 | Hybrid retrieval | BM25 (OR-tokenised `to_tsquery`) + pgvector, fused via Reciprocal Rank Fusion |
 | RAG endpoint | `/api/ask` with intent classification (semantic / entity / graph), returns answer + source chunks + triples + contradictions |
 | Evidence combination | Noisy-OR across multi-source confidences: `1 - Π(1 − cᵢ)` |

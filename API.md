@@ -26,6 +26,7 @@
 | GET | `/api/entity/{id}/changes` | Track entity changes since a date |
 | DELETE | `/api/admin/knowledge/content/{id}` | Delete a content item and its solely-supported triples |
 | DELETE | `/api/admin/knowledge/source` | Delete triples solely supported by a given source URL |
+| POST | `/api/admin/maintenance/run` | Trigger the data-quality sweep immediately (otherwise runs every `MAINTENANCE_INTERVAL_SECONDS`) |
 
 ---
 
@@ -98,14 +99,14 @@ curl -X POST http://localhost:8000/api/content \
     "tags": ["health", "sleep"],
     "knowledge": [
       {
-        "knowledge_type": "Claim",
+        "knowledge_type": "claim",
         "subject": "ks:caffeine",
         "predicate": "ks:affects",
         "object": "sleep quality",
         "confidence": 0.9
       },
       {
-        "knowledge_type": "Entity",
+        "knowledge_type": "entity",
         "uri": "ks:caffeine",
         "rdf_type": "schema:ChemicalSubstance",
         "label": "Caffeine"
@@ -243,7 +244,7 @@ curl -X POST http://localhost:8000/api/claims \
     "extractor": "manual",
     "knowledge": [
       {
-        "knowledge_type": "Fact",
+        "knowledge_type": "fact",
         "subject": "ks:vitamin_d",
         "predicate": "ks:supports",
         "object": "bone health",
@@ -337,7 +338,7 @@ At least one of `subject`, `predicate`, or `object` must be provided.
     "predicate": "ks:affects",
     "object": "sleep quality",
     "confidence": 0.9,
-    "knowledge_type": "Claim",
+    "knowledge_type": "claim",
     "valid_from": "2025-01-01",
     "valid_until": null,
     "provenance": [
@@ -357,7 +358,7 @@ At least one of `subject`, `predicate`, or `object` must be provided.
 ]
 ```
 
-The `source` field is populated only for federated results (e.g. `"dbpedia"` or `"wikidata"`).
+The `source` field is reserved for results sourced from external graphs; it is currently always `null` (federation is not enabled).
 
 **Status Codes:** `200` OK, `422` Validation Error (no parameters provided)
 
@@ -484,7 +485,7 @@ Ask a natural language question against the knowledge base. Retrieves relevant c
       "source_type": "article"
     }
   ],
-  "knowledge_types_used": ["Claim"],
+  "knowledge_types_used": ["claim"],
   "contradictions": [
     {
       "subject": "http://dbpedia.org/resource/Cold_shock_response",
@@ -512,7 +513,7 @@ Ask a natural language question against the knowledge base. Retrieves relevant c
 | `answer` | string | LLM-generated natural language response |
 | `confidence` | float \| null | Highest confidence among supporting knowledge triples. `null` if no triples found. |
 | `sources` | array | Deduplicated content sources used in retrieval |
-| `knowledge_types_used` | string[] | Which `knowledge_type` labels (e.g. `Claim`, `Fact`, `Event`, `Entity`) contributed to the answer |
+| `knowledge_types_used` | string[] | Which `knowledge_type` labels (e.g. `claim`, `fact`, `event`, `entity`) contributed to the answer |
 | `contradictions` | array | Conflicting claims with subject, predicate, object, and confidence |
 | `evidence` | array | Snippets that link each cited triple back to the source chunk text |
 | `intent` | string \| null | Classified intent for the question (`semantic`, `entity`, `graph`); `null` when classification was skipped |
@@ -545,14 +546,16 @@ curl -X POST http://localhost:8000/api/ask \
 Knowledge items are sent in the `knowledge` array of `/api/content` and
 `/api/claims`. Each item must match one of three Pydantic input shapes —
 `TripleInput` (`subject` / `predicate` / `object`), `EventInput` (`subject` /
-`occurred_at`), or `EntityInput` (`uri` / `rdf_type` / `label`). Pydantic
-resolves the union by shape; the `knowledge_type` field is a free-form label
-that is preserved through to provenance and surfaced to readers but does not
-drive validation.
+`occurred_at`), or `EntityInput` (`uri` / `rdf_type` / `label`). The
+discriminator routes by `knowledge_type` (case-insensitive — `Entity`/`entity`
+both route to `EntityInput`), and the validator lowercases the value before
+storage so analytics aren't bifurcated across casings. The alias `Relation`
+is collapsed to `relationship` for the same reason.
 
-The labels below (`Claim` / `Fact` / `Relationship` / `Event` / `Entity`) are
+The labels below (`claim` / `fact` / `relationship` / `event` / `entity`) are
 conventions for the LLM extraction prompts and the admin browser; they all
-collapse onto one of the three Pydantic shapes.
+collapse onto one of the three Pydantic shapes. Capitalised input is accepted
+on the wire (the LLM emits `"Fact"` / `"Claim"`) but stored lowercase.
 
 ### Claim
 
@@ -560,7 +563,7 @@ A statement with a confidence score. General-purpose triple.
 
 ```json
 {
-  "knowledge_type": "Claim",
+  "knowledge_type": "claim",
   "subject": "ks:caffeine",
   "predicate": "ks:affects",
   "object": "sleep quality",
@@ -576,7 +579,7 @@ A high-confidence claim. Confidence must be >= 0.9.
 
 ```json
 {
-  "knowledge_type": "Fact",
+  "knowledge_type": "fact",
   "subject": "ks:earth",
   "predicate": "ks:orbits",
   "object": "ks:sun",
@@ -590,7 +593,7 @@ A directional link between two entities.
 
 ```json
 {
-  "knowledge_type": "Relationship",
+  "knowledge_type": "relationship",
   "subject": "ks:python",
   "predicate": "ks:influencedBy",
   "object": "ks:abc_language",
@@ -604,7 +607,7 @@ A timestamped occurrence.
 
 ```json
 {
-  "knowledge_type": "Event",
+  "knowledge_type": "event",
   "subject": "ks:moon_landing",
   "occurred_at": "1969-07-20",
   "confidence": 1.0,
@@ -621,7 +624,7 @@ A typed entity with ontology class and label.
 
 ```json
 {
-  "knowledge_type": "Entity",
+  "knowledge_type": "entity",
   "uri": "ks:python",
   "rdf_type": "schema:ProgrammingLanguage",
   "label": "Python",
@@ -639,7 +642,7 @@ time-bounded facts (e.g. who was CEO of a company between two dates):
 
 ```json
 {
-  "knowledge_type": "TemporalFact",
+  "knowledge_type": "temporalfact",
   "subject": "ks:tesla",
   "predicate": "ks:ceo",
   "object": "Elon Musk",
@@ -655,6 +658,43 @@ time-bounded facts (e.g. who was CEO of a company between two dates):
 > extraction prompts no longer emit them. Use `TripleInput` with a
 > descriptive `knowledge_type` label and the `valid_from` / `valid_until`
 > bounds instead.
+
+---
+
+## POST /api/admin/maintenance/run
+
+Trigger the data-quality sweep immediately. The same sweep runs on a
+schedule (every `MAINTENANCE_INTERVAL_SECONDS`, default 6h); this
+endpoint exists so operators can re-run it on demand — useful right
+after a deploy that introduces a new normalization rule, or to verify
+counts after re-ingest.
+
+The sweep is idempotent: every operation is a no-op after convergence.
+
+**Request:** no body required.
+
+**Response:**
+
+```json
+{
+  "knowledge_type": { "scanned": 141946, "changed": 0 },
+  "rdf_type":      { "scanned": 26545,  "remapped": 0, "dropped": 0 }
+}
+```
+
+| Operation | What it does |
+|-----------|--------------|
+| `knowledge_type` | Canonicalises every `ks:knowledgeType` RDF-star annotation to a lowercase `<ks:type>` NamedNode. Collapses the `Relation` alias to `relationship`. |
+| `rdf_type` | Remaps `rdf:type` values that came from spaCy NER (`schema:ORG` → `schema:Organization`, `schema:GPE` → `schema:Place`, etc.) and drops numeric labels (`schema:MONEY`, `schema:CARDINAL`, `schema:PERCENT`, …) which were never valid as types. |
+
+**Status Codes:** `200` OK
+
+### Example
+
+```bash
+curl -X POST http://localhost:8000/api/admin/maintenance/run \
+  -H "X-API-Key: your-password"
+```
 
 ---
 
@@ -680,3 +720,5 @@ The service is configured via environment variables (or `.env` file):
 | `URL_FETCH_TIMEOUT` | `30` | Timeout for URL auto-fetch (seconds) |
 | `NLP_ENTITY_CONFIDENCE` | `0.5` | Confidence for spaCy-only entities (not confirmed by LLM) |
 | `READER_EXCLUDE_INFLIGHT` | `true` | Exclude content with non-terminal `ingestion_jobs.status` from `/api/search` and `/api/ask` |
+| `MAINTENANCE_INTERVAL_SECONDS` | `21600` (6h) | Interval between background data-quality sweeps. Set to `0` to disable; trigger manually with `POST /api/admin/maintenance/run`. |
+| `MAINTENANCE_INITIAL_DELAY_SECONDS` | `60` | How long after app startup to wait before the first sweep (lets migrations + outbox drain + spaCy KB finish). |
