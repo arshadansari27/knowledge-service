@@ -561,3 +561,82 @@ class TestGetContradictionsNonNumericConfidence:
         # Only the second (valid) row is returned
         assert len(data) == 1
         assert data[0]["contradiction_probability"] == pytest.approx(0.63, abs=1e-6)
+
+
+# ---------------------------------------------------------------------------
+# Tests: same-source dedup (2026-05-26 audit finding — 6/8 prod
+# "contradictions" came from the same chunk)
+# ---------------------------------------------------------------------------
+
+
+class TestSameSourceDedup:
+    async def test_same_chunk_id_in_both_provenances_is_filtered_out(self):
+        """When both contradicting triples cite the same chunk_id, it's
+        extraction conflation (LLM emitted two distinct numbers under one
+        subject from one paragraph), not a real contradiction."""
+        prov_with_chunk = {**_SAMPLE_PROVENANCE_ROW, "chunk_id": "chunk-aa"}
+
+        mock_prov = AsyncMock()
+        mock_prov.get_by_triple.return_value = [prov_with_chunk]
+
+        app = _make_app(provenance_rows=[prov_with_chunk])
+        # Override provenance mock so both lookups return the same chunk_id
+        app.state.stores.provenance = mock_prov
+
+        transport = ASGITransport(app=app)
+        async with AsyncClient(
+            transport=transport,
+            base_url="http://test",
+            cookies={"ks_session": make_test_session_cookie()},
+        ) as c:
+            response = await c.get("/api/knowledge/contradictions")
+
+        assert response.status_code == 200
+        assert response.json() == []
+
+    async def test_different_chunk_ids_still_returned(self):
+        prov_a = {**_SAMPLE_PROVENANCE_ROW, "chunk_id": "chunk-aa"}
+        prov_b = {**_SAMPLE_PROVENANCE_ROW, "chunk_id": "chunk-bb"}
+
+        mock_prov = AsyncMock()
+        # Alternate per call: A then B
+        mock_prov.get_by_triple.side_effect = [[prov_a], [prov_b]]
+
+        app = _make_app()
+        app.state.stores.provenance = mock_prov
+
+        transport = ASGITransport(app=app)
+        async with AsyncClient(
+            transport=transport,
+            base_url="http://test",
+            cookies={"ks_session": make_test_session_cookie()},
+        ) as c:
+            response = await c.get("/api/knowledge/contradictions")
+
+        assert response.status_code == 200
+        assert len(response.json()) == 1
+
+    async def test_identical_object_skipped(self):
+        """An opposite-predicate pair pointing to the SAME object isn't a
+        real contradiction even though SPARQL surfaces it (object A == B)."""
+        rows = [
+            {
+                "s": _FakeNamedNode(_SUBJECT),
+                "p": _FakeNamedNode(_PREDICATE),
+                "o1": _FakeNamedNode(_OBJECT_A),
+                "o2": _FakeNamedNode(_OBJECT_A),  # identical
+                "conf1": _FakeLiteral(_CONF_A),
+                "conf2": _FakeLiteral(_CONF_B),
+            },
+        ]
+        app = _make_app(rows=rows, provenance_rows=[])
+        transport = ASGITransport(app=app)
+        async with AsyncClient(
+            transport=transport,
+            base_url="http://test",
+            cookies={"ks_session": make_test_session_cookie()},
+        ) as c:
+            response = await c.get("/api/knowledge/contradictions")
+
+        assert response.status_code == 200
+        assert response.json() == []

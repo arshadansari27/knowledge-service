@@ -129,7 +129,15 @@ class ExtractPhase:
     def _emit_ner_missed(
         nlp_result: Any, items: list, cid: str | None, knowledge: list, chunk_ids: list
     ) -> None:
-        """Emit NER entities that the LLM missed as fallback items."""
+        """Emit NER entities that the LLM missed as fallback items.
+
+        Filters out spaCy NER hits that produce junk triples in production:
+        URL-shaped text (every page header gets one), and the numeric/quantity
+        labels (``CARDINAL``, ``MONEY``, ``PERCENT``, ``QUANTITY``,
+        ``ORDINAL``, ``DATE``, ``TIME``) which are values, not entities.
+        Remaining spaCy labels are mapped to schema.org canonical names so
+        ``ORG`` doesn't bifurcate against the LLM's ``Organization``.
+        """
         from knowledge_service.config import settings  # noqa: PLC0415
         from knowledge_service.models import EntityInput  # noqa: PLC0415
 
@@ -146,15 +154,55 @@ class ExtractPhase:
                         llm_labels.add(val.lower())
 
         for ent in nlp_result.entities:
-            if ent.text.lower() not in llm_labels:
-                fallback = EntityInput(
-                    uri=ent.text,
-                    rdf_type=f"schema:{ent.label}" if ent.label else "schema:Thing",
-                    label=ent.text,
-                    confidence=settings.nlp_entity_confidence,
-                )
-                knowledge.append(fallback)
-                chunk_ids.append(cid)
+            text = (ent.text or "").strip()
+            if not text or text.lower() in llm_labels:
+                continue
+            if _looks_like_url(text):
+                continue
+            mapped = _SPACY_LABEL_TO_SCHEMA.get(ent.label, ent.label)
+            if mapped is None:
+                continue
+            fallback = EntityInput(
+                uri=text,
+                rdf_type=f"schema:{mapped}" if mapped else "schema:Thing",
+                label=text,
+                confidence=settings.nlp_entity_confidence,
+            )
+            knowledge.append(fallback)
+            chunk_ids.append(cid)
+
+
+# spaCy ``ner`` model uses UPPERCASE labels (``ORG``, ``PERSON``, ``GPE``,
+# ``WORK_OF_ART``, ``NORP``, ``PRODUCT``, ``EVENT``, ``LAW``, ``LANGUAGE``,
+# ``FAC``). Map them to schema.org canonical types so they don't bifurcate
+# against the LLM's emitted ``Organization`` / ``Person`` / ``Place`` /
+# ``CreativeWork``. Labels mapped to ``None`` are dropped — those are
+# numeric/quantity classes that describe values, not entities.
+_SPACY_LABEL_TO_SCHEMA: dict[str, str | None] = {
+    "ORG": "Organization",
+    "PERSON": "Person",
+    "GPE": "Place",
+    "LOC": "Place",
+    "FAC": "Place",
+    "NORP": "Organization",
+    "PRODUCT": "Product",
+    "WORK_OF_ART": "CreativeWork",
+    "EVENT": "Event",
+    "LAW": "Legislation",
+    "LANGUAGE": "Language",
+    "CARDINAL": None,
+    "ORDINAL": None,
+    "QUANTITY": None,
+    "PERCENT": None,
+    "MONEY": None,
+    "DATE": None,
+    "TIME": None,
+}
+
+
+def _looks_like_url(value: str) -> bool:
+    lowered = value.lower()
+    return lowered.startswith(("http://", "https://", "www.", "ftp://"))
 
 
 class ProcessPhase:

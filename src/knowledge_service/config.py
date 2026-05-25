@@ -30,6 +30,11 @@ class Settings(BaseSettings):
     # Reader-side status filtering
     reader_exclude_inflight: bool = True  # env: READER_EXCLUDE_INFLIGHT
 
+    # Background maintenance sweep (lowercases knowledge_type, remaps
+    # spaCy NER labels to schema.org canonical). Set interval to 0 to disable.
+    maintenance_interval_seconds: float = 21600.0  # 6h
+    maintenance_initial_delay_seconds: float = 60.0
+
     model_config = {"env_file": ".env", "extra": "ignore"}
 
 

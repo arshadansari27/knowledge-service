@@ -173,3 +173,72 @@ class TestExtractPhaseFiltering:
 
         kwargs = extraction_client.extract_with_stats.call_args.kwargs
         assert kwargs["domains"] == ["health", "research"]
+
+
+class TestNerFallbackFiltering:
+    """``_emit_ner_missed`` previously produced ~12k polluted entities in
+    production where the spaCy NER text was a URL (the page header) and
+    the rdf_type was an UPPERCASE spaCy label. Verify filters."""
+
+    def _entities_from_ner(self, ner_entities, llm_items=None):
+        from knowledge_service.nlp import NlpResult
+
+        knowledge: list = []
+        chunk_ids: list = []
+        nlp_result = NlpResult(entities=ner_entities, chunk_index=0)
+        ExtractPhase._emit_ner_missed(nlp_result, llm_items or [], "chunk-1", knowledge, chunk_ids)
+        return knowledge
+
+    def test_url_text_is_skipped(self):
+        from knowledge_service.nlp import NlpEntity
+
+        out = self._entities_from_ner(
+            [
+                NlpEntity(text="https://example.com/foo", label="ORG"),
+                NlpEntity(text="Apple", label="ORG"),
+            ]
+        )
+        labels = {e.label for e in out}
+        assert "https://example.com/foo" not in labels
+        assert "Apple" in labels
+
+    def test_numeric_labels_dropped(self):
+        """``CARDINAL``, ``MONEY``, ``PERCENT``, ``QUANTITY``, ``DATE``,
+        ``TIME``, ``ORDINAL`` describe values, not entities; they get
+        dropped."""
+        from knowledge_service.nlp import NlpEntity
+
+        out = self._entities_from_ner(
+            [
+                NlpEntity(text=text, label=label)
+                for text, label in [
+                    ("169", "CARDINAL"),
+                    ("$1.5M", "MONEY"),
+                    ("50%", "PERCENT"),
+                    ("2026-05-26", "DATE"),
+                    ("12pm", "TIME"),
+                    ("first", "ORDINAL"),
+                    ("3 kg", "QUANTITY"),
+                ]
+            ]
+        )
+        assert out == []
+
+    def test_spacy_labels_mapped_to_schema_org(self):
+        from knowledge_service.nlp import NlpEntity
+
+        out = self._entities_from_ner(
+            [
+                NlpEntity(text="Apple", label="ORG"),
+                NlpEntity(text="London", label="GPE"),
+                NlpEntity(text="Alice", label="PERSON"),
+                NlpEntity(text="Hamlet", label="WORK_OF_ART"),
+            ]
+        )
+        rdf_types = {e.rdf_type for e in out}
+        assert rdf_types == {
+            "schema:Organization",
+            "schema:Place",
+            "schema:Person",
+            "schema:CreativeWork",
+        }

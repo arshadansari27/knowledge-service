@@ -228,9 +228,27 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     app.state.knowledge_store = triple_store
     app.state.pg_pool = pg_pool
 
+    # Background maintenance sweep: lowercases knowledge_type values and
+    # remaps spaCy NER labels to schema.org canonical names. Idempotent.
+    maintenance_task = None
+    if settings.maintenance_interval_seconds > 0:
+        from knowledge_service.maintenance.scheduler import start as _start_maintenance  # noqa: PLC0415
+
+        maintenance_task = _start_maintenance(
+            stores,
+            interval_seconds=settings.maintenance_interval_seconds,
+            initial_delay_seconds=settings.maintenance_initial_delay_seconds,
+        )
+
     yield
 
     # --- Shutdown ---
+    if maintenance_task is not None:
+        maintenance_task.cancel()
+        try:
+            await maintenance_task
+        except Exception:  # CancelledError + any final-tick errors
+            pass
     triple_store.flush()
     await pg_pool.close()
     await classify_client.close()
@@ -276,6 +294,7 @@ def create_app(use_lifespan: bool = True) -> FastAPI:
 
     from knowledge_service.admin.content import router as content_admin_router
     from knowledge_service.admin.jobs import router as jobs_router
+    from knowledge_service.admin.maintenance import router as maintenance_router
     from knowledge_service.admin.stats import router as stats_router
 
     app.include_router(login_router)
@@ -283,6 +302,7 @@ def create_app(use_lifespan: bool = True) -> FastAPI:
     app.include_router(stats_router, prefix="/api/admin")
     app.include_router(jobs_router, prefix="/api/admin")
     app.include_router(content_admin_router, prefix="/api/admin")
+    app.include_router(maintenance_router, prefix="/api/admin")
 
     app.add_middleware(
         AuthMiddleware,
