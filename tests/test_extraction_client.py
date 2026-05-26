@@ -1,3 +1,4 @@
+import asyncio
 import json
 
 import httpx
@@ -6,11 +7,14 @@ import pytest
 from knowledge_service.clients.llm import ExtractionClient
 from knowledge_service.models import EntityInput, TripleInput
 
+# Capture the real asyncio.sleep before any autouse fixture rebinds it; concurrency
+# tests need a real yield to observe overlap.
+_REAL_SLEEP = asyncio.sleep
+
 
 @pytest.fixture(autouse=True)
 def _skip_retry_backoff(monkeypatch):
     """Monkeypatch asyncio.sleep to a no-op so retry tests don't actually wait."""
-    import asyncio
 
     async def _nosleep(_seconds):
         return None
@@ -419,4 +423,51 @@ class TestNoAuth:
         await client.extract_with_stats("test")
         headers = httpx_mock.get_requests()[0].headers
         assert "authorization" not in headers
+        await client.close()
+
+
+class TestConcurrencyCap:
+    """ExtractionClient must bound concurrent LLM calls.
+
+    Regression for the prod cascade: an aegis batch of 30+ ingestion jobs
+    all hit qwen3 simultaneously, queued inside Ollama, and timed out at
+    the 600s read boundary together. The semaphore moves the queue from
+    qwen3 back into KS, where the read timeout doesn't apply.
+    """
+
+    async def test_inflight_never_exceeds_cap(self, monkeypatch):
+        cap = 4
+        burst = 12  # ≥ 3× the cap so violations are obvious if uncapped
+
+        inflight = 0
+        max_inflight = 0
+
+        async def trace_post(*_args, **_kwargs):
+            nonlocal inflight, max_inflight
+            inflight += 1
+            max_inflight = max(max_inflight, inflight)
+            try:
+                # Real sleep to keep slots occupied long enough for overlap.
+                await _REAL_SLEEP(0.02)
+            finally:
+                inflight -= 1
+            return httpx.Response(
+                200,
+                json=_make_combined_response(entities=[], relations=[]),
+                request=httpx.Request("POST", _CHAT_URL),
+            )
+
+        client = ExtractionClient(
+            base_url=_BASE, model="qwen3:14b", api_key=_KEY, max_concurrent=cap
+        )
+        monkeypatch.setattr(client._client, "post", trace_post)
+
+        await asyncio.gather(*[client._post_chat("prompt") for _ in range(burst)])
+
+        assert max_inflight <= cap, f"max_inflight={max_inflight} exceeded cap={cap}"
+        await client.close()
+
+    async def test_default_cap_is_set(self):
+        client = ExtractionClient(base_url=_BASE, model="qwen3:14b", api_key=_KEY)
+        assert client._sem._value >= 1
         await client.close()

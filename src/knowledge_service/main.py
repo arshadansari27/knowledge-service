@@ -150,6 +150,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         model=settings.llm_chat_model,
         api_key=settings.llm_api_key,
         registry=domain_registry,
+        max_concurrent=settings.extraction_max_concurrent,
     )
     app.state.extraction_client = extraction_client
     app.state.embedding_client = embedding_client

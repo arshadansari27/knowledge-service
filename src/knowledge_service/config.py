@@ -20,6 +20,12 @@ class Settings(BaseSettings):
     max_chunks: int = 50
     embed_batch_size: int = 20
     entity_cache_max_size: int = 1000
+    # Cap concurrent extraction LLM calls. Without this, a burst of N ingestion
+    # jobs (typical aegis daily arxiv pull is 30–50) fires N parallel requests
+    # at qwen3, which serves ~2–4 at a time on asif; the tail queues inside
+    # Ollama past the 600s read timeout and the whole batch falls into a
+    # retry-cascade. Pick 4 to match observed parallelism.
+    extraction_max_concurrent: int = 4
 
     # Ingestion pipeline
     spacy_data_dir: str = "/app/data/spacy"

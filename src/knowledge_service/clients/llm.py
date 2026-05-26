@@ -87,9 +87,14 @@ class ExtractionClient(BaseLLMClient):
         model: str,
         api_key: str,
         registry: DomainRegistry | None = None,
+        max_concurrent: int = 4,
     ) -> None:
         super().__init__(base_url, model, api_key, read_timeout=600.0)
         self._registry = registry
+        # Cap concurrent LLM calls so an aegis ingestion burst doesn't queue
+        # past the read timeout inside Ollama. Acquired around the POST itself
+        # (not the whole retry loop) so backoff sleep doesn't hold a slot.
+        self._sem = asyncio.Semaphore(max_concurrent)
         self._prompt_builder = None
         if registry is not None:
             from knowledge_service.clients.prompt_builder import PromptBuilder  # noqa: PLC0415
@@ -111,13 +116,14 @@ class ExtractionClient(BaseLLMClient):
 
         for attempt in range(_EXTRACT_MAX_RETRIES + 1):
             try:
-                response = await self._client.post(
-                    "/v1/chat/completions",
-                    json={
-                        "model": self._model,
-                        "messages": [{"role": "user", "content": prompt}],
-                    },
-                )
+                async with self._sem:
+                    response = await self._client.post(
+                        "/v1/chat/completions",
+                        json={
+                            "model": self._model,
+                            "messages": [{"role": "user", "content": prompt}],
+                        },
+                    )
                 response.raise_for_status()
                 return response.json()["choices"][0]["message"]["content"]
             except httpx.HTTPStatusError as exc:
