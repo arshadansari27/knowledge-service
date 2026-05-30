@@ -14,6 +14,38 @@ router = APIRouter()
 
 _MAX_QUESTION_LEN = 4000
 
+# Query intents (from RAGRetriever.classify) for which the knowledge-graph path
+# ("full") improves answers. The 2026-05-31 relevance-ranking eval showed graph-on
+# wins on entity questions (ndcg +0.028, correctness +0.018) and lifts correctness
+# on relationship/graph questions (+0.083), but mildly hurts plain semantic search.
+# See docs/kg-vs-rag-eval-findings.md.
+_GRAPH_FAVORED_INTENTS = frozenset({"entity", "graph"})
+
+
+def _needs_classification(explicit_mode: str | None, default_mode: str) -> bool:
+    """Whether we must classify the query before retrieving.
+
+    Classification is skippable only when the effective mode is definitely
+    ``chunks_only`` (the graph path is never taken). ``auto`` and ``full`` both
+    need the intent — ``auto`` to route on it, ``full`` to pick the strategy.
+    """
+    effective = explicit_mode or default_mode
+    return effective != "chunks_only"
+
+
+def _resolve_mode(explicit_mode: str | None, default_mode: str, intent_label: str | None) -> str:
+    """Resolve the concrete retrieval mode (``full`` | ``chunks_only``).
+
+    An explicit per-request mode always wins. Otherwise the server default
+    applies: ``auto`` routes by intent (graph for entity/relationship questions,
+    chunks-only for plain semantic search); ``full``/``chunks_only`` are used as-is.
+    """
+    if explicit_mode in ("full", "chunks_only"):
+        return explicit_mode
+    if default_mode == "auto":
+        return "full" if intent_label in _GRAPH_FAVORED_INTENTS else "chunks_only"
+    return default_mode
+
 
 class AskRequest(BaseModel):
     question: str = Field(..., min_length=1, max_length=_MAX_QUESTION_LEN)
@@ -63,15 +95,19 @@ async def post_ask(body: AskRequest, request: Request) -> AskResponse:
     retriever = request.app.state.rag_retriever
     rag_client = request.app.state.rag_client
 
-    # Resolve the effective retrieval mode: an explicit request value wins,
-    # otherwise fall back to the server default (chunks_only — the KG layer is
-    # net-negative on answer quality per docs/kg-vs-rag-eval-findings.md).
-    # Classification is only needed for the graph-augmented "full" path.
-    mode = body.retrieval_mode or settings.rag_default_retrieval_mode
+    # Resolve the effective retrieval mode. An explicit request value wins;
+    # otherwise the server default applies. The default "auto" routes by query
+    # intent — graph-augmented retrieval for entity/relationship questions, plain
+    # hybrid RAG for semantic search (see docs/kg-vs-rag-eval-findings.md).
+    default_mode = settings.rag_default_retrieval_mode
+    if _needs_classification(body.retrieval_mode, default_mode):
+        intent = await retriever.classify(body.question)
+    else:
+        intent = None
+    mode = _resolve_mode(body.retrieval_mode, default_mode, intent.intent if intent else None)
+    # In chunks_only the intent is unused; drop it so the retriever skips the graph.
     if mode == "chunks_only":
         intent = None
-    else:
-        intent = await retriever.classify(body.question)
 
     context = await retriever.retrieve(
         body.question,

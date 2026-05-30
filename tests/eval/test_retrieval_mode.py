@@ -90,10 +90,12 @@ class TestAskRequestMode:
         req = AskRequest(question="hello")
         assert req.retrieval_mode is None
 
-    def test_server_default_is_chunks_only(self):
+    def test_server_default_is_auto(self):
         from knowledge_service.config import settings
 
-        assert settings.rag_default_retrieval_mode == "chunks_only"
+        # "auto" routes by intent (graph for entity/relationship, chunks-only for
+        # semantic) — see docs/kg-vs-rag-eval-findings.md.
+        assert settings.rag_default_retrieval_mode == "auto"
 
     def test_full_is_accepted(self):
         req = AskRequest(question="hello", retrieval_mode="full")

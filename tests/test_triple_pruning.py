@@ -1,8 +1,10 @@
-"""Tests for triple pruning: cap + rank the triples passed to the RAG prompt.
+"""Tests for triple pruning: cap the triples passed to the RAG prompt.
 
 Root cause from the 2026-05-31 eval: graph-on mode flooded the prompt with ~97
 triples (max 239), which tanked answer faithfulness. The retriever must cap the
-knowledge_triples to a configurable maximum, keeping the highest-confidence ones.
+knowledge_triples to a configurable maximum. (Which triples survive the cap is
+decided by query relevance — see test_triple_relevance.py; this file covers the
+cap/count behaviour and the confidence-only fallback helper.)
 """
 
 from __future__ import annotations
@@ -15,7 +17,13 @@ from knowledge_service.stores.rag import RAGRetriever, RetrievalContext
 def _make_embedding_client():
     mock = AsyncMock()
     mock.embed.return_value = [0.1] * 768
-    mock.embed_batch.return_value = [[0.1] * 768]
+
+    # Relevance ranking embeds one vector per rendered triple; return a same-length
+    # batch so the cap (not a zip-truncation) decides how many survive.
+    async def _embed_batch(texts):
+        return [[0.1] * 768 for _ in texts]
+
+    mock.embed_batch.side_effect = _embed_batch
     return mock
 
 
@@ -75,7 +83,10 @@ class TestTriplePruning:
         assert isinstance(ctx, RetrievalContext)
         assert len(ctx.knowledge_triples) == 2
 
-    async def test_keeps_highest_confidence(self):
+    async def test_cap_returns_subset_of_candidates(self):
+        # Which triples survive the cap is decided by query relevance
+        # (test_triple_relevance.py), not confidence — here we only assert the
+        # cap yields exactly max_triples genuine candidates.
         retriever = RAGRetriever(
             embedding_client=_make_embedding_client(),
             embedding_store=_make_embedding_store(entity_rows=[_ENTITY_ROW]),
@@ -83,8 +94,9 @@ class TestTriplePruning:
             max_triples=2,
         )
         ctx = await retriever.retrieve("q", max_sources=5, min_confidence=0.0)
-        objs = {t["object"] for t in ctx.knowledge_triples}
-        assert objs == {"e", "a"}  # confidences 0.95 and 0.90
+        objs = [t["object"] for t in ctx.knowledge_triples]
+        assert len(objs) == 2
+        assert set(objs) <= {"a", "b", "c", "d", "e"}
 
     async def test_default_max_is_applied(self):
         # 5 triples, default cap is 15 -> all 5 pass through unpruned.
