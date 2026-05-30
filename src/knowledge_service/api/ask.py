@@ -51,9 +51,9 @@ class AskRequest(BaseModel):
     question: str = Field(..., min_length=1, max_length=_MAX_QUESTION_LEN)
     max_sources: int = Field(5, ge=1, le=20)
     min_confidence: float = Field(0.0, ge=0.0, le=1.0)
-    # None = use the server default (settings.rag_default_retrieval_mode, currently
-    # "chunks_only" — the graph hurts answers per docs/kg-vs-rag-eval-findings.md).
-    # Pass "full" explicitly to force the KG-augmented path.
+    # None = use the server default (settings.rag_default_retrieval_mode, "auto":
+    # intent-routed — see docs/kg-vs-rag-eval-findings.md). Pass "full" or
+    # "chunks_only" to force a specific path.
     retrieval_mode: Literal["full", "chunks_only"] | None = None
 
 

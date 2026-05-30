@@ -53,13 +53,18 @@ class Settings(BaseSettings):
     # confidence triples. env: RAG_MAX_TRIPLES
     rag_max_triples: int = 15
 
-    # Default retrieval mode for /api/ask when the request doesn't specify one.
-    # "chunks_only" (pure hybrid vector+BM25, no KG triples) is the default
-    # because the 2026-05-31 eval showed graph-on ("full") is net-negative on
-    # answer quality even after triple pruning. Callers can still opt into the
-    # graph per-request with retrieval_mode="full". Flip to "full" (no redeploy
-    # needed) once the graph earns its keep. env: RAG_DEFAULT_RETRIEVAL_MODE
-    rag_default_retrieval_mode: str = "chunks_only"
+    # Default retrieval mode for /api/ask when the request doesn't specify one:
+    #   "auto"        — route by query intent (graph for entity/relationship
+    #                   questions, chunks-only for plain semantic search). After
+    #                   relevance-ranking the triples, the 2026-05-31 eval showed
+    #                   the graph wins on entity questions and lifts correctness on
+    #                   relationship questions while mildly hurting semantic search,
+    #                   so route it where it helps. See
+    #                   docs/kg-vs-rag-eval-findings.md.
+    #   "full"        — always use the KG-augmented path.
+    #   "chunks_only" — never use the graph (pure hybrid vector+BM25).
+    # A per-request retrieval_mode always overrides this. env: RAG_DEFAULT_RETRIEVAL_MODE
+    rag_default_retrieval_mode: str = "auto"
 
     model_config = {"env_file": ".env", "extra": "ignore"}
 
