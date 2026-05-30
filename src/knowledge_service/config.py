@@ -30,6 +30,12 @@ class Settings(BaseSettings):
     # Reader-side status filtering
     reader_exclude_inflight: bool = True  # env: READER_EXCLUDE_INFLIGHT
 
+    # Eval harness
+    eval_judge_base_url: str = "https://api.anthropic.com"
+    eval_judge_model: str = "claude-opus-4-8"
+    eval_judge_api_key: str = ""  # Anthropic key; required only when running the eval judge
+    eval_concurrency: int = 4
+
     # Background maintenance sweep (lowercases knowledge_type, remaps
     # spaCy NER labels to schema.org canonical). Set interval to 0 to disable.
     maintenance_interval_seconds: float = 21600.0  # 6h
