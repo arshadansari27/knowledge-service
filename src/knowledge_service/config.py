@@ -47,6 +47,20 @@ class Settings(BaseSettings):
     maintenance_interval_seconds: float = 21600.0  # 6h
     maintenance_initial_delay_seconds: float = 60.0
 
+    # Retrieval: cap on knowledge-graph triples passed into the RAG prompt.
+    # The 2026-05-31 eval showed graph-on flooded the prompt with ~97 triples
+    # (max 239), which lowered answer faithfulness. Keep only the top-N highest
+    # confidence triples. env: RAG_MAX_TRIPLES
+    rag_max_triples: int = 15
+
+    # Default retrieval mode for /api/ask when the request doesn't specify one.
+    # "chunks_only" (pure hybrid vector+BM25, no KG triples) is the default
+    # because the 2026-05-31 eval showed graph-on ("full") is net-negative on
+    # answer quality even after triple pruning. Callers can still opt into the
+    # graph per-request with retrieval_mode="full". Flip to "full" (no redeploy
+    # needed) once the graph earns its keep. env: RAG_DEFAULT_RETRIEVAL_MODE
+    rag_default_retrieval_mode: str = "chunks_only"
+
     model_config = {"env_file": ".env", "extra": "ignore"}
 
 
