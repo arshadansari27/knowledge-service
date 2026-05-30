@@ -7,6 +7,7 @@ from typing import Literal
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field
 
+from knowledge_service.config import settings
 from knowledge_service.reasoning.noisy_or import noisy_or
 
 router = APIRouter()
@@ -18,7 +19,10 @@ class AskRequest(BaseModel):
     question: str = Field(..., min_length=1, max_length=_MAX_QUESTION_LEN)
     max_sources: int = Field(5, ge=1, le=20)
     min_confidence: float = Field(0.0, ge=0.0, le=1.0)
-    retrieval_mode: Literal["full", "chunks_only"] = "full"
+    # None = use the server default (settings.rag_default_retrieval_mode, currently
+    # "chunks_only" — the graph hurts answers per docs/kg-vs-rag-eval-findings.md).
+    # Pass "full" explicitly to force the KG-augmented path.
+    retrieval_mode: Literal["full", "chunks_only"] | None = None
 
 
 class SourceInfo(BaseModel):

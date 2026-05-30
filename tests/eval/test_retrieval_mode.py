@@ -84,8 +84,19 @@ class TestChunksOnlyMode:
 
 
 class TestAskRequestMode:
-    def test_default_mode_is_full(self):
+    def test_default_mode_is_none_resolved_server_side(self):
+        # Unset means "use the server default" (settings.rag_default_retrieval_mode);
+        # the endpoint resolves None, not the model.
         req = AskRequest(question="hello")
+        assert req.retrieval_mode is None
+
+    def test_server_default_is_chunks_only(self):
+        from knowledge_service.config import settings
+
+        assert settings.rag_default_retrieval_mode == "chunks_only"
+
+    def test_full_is_accepted(self):
+        req = AskRequest(question="hello", retrieval_mode="full")
         assert req.retrieval_mode == "full"
 
     def test_chunks_only_is_accepted(self):
