@@ -1,8 +1,10 @@
-"""Tests for triple pruning: cap + rank the triples passed to the RAG prompt.
+"""Tests for triple pruning: cap the triples passed to the RAG prompt.
 
 Root cause from the 2026-05-31 eval: graph-on mode flooded the prompt with ~97
 triples (max 239), which tanked answer faithfulness. The retriever must cap the
-knowledge_triples to a configurable maximum, keeping the highest-confidence ones.
+knowledge_triples to a configurable maximum. (Which triples survive the cap is
+decided by query relevance — see test_triple_relevance.py; this file covers the
+cap/count behaviour and the confidence-only fallback helper.)
 """
 
 from __future__ import annotations
@@ -15,7 +17,13 @@ from knowledge_service.stores.rag import RAGRetriever, RetrievalContext
 def _make_embedding_client():
     mock = AsyncMock()
     mock.embed.return_value = [0.1] * 768
-    mock.embed_batch.return_value = [[0.1] * 768]
+
+    # Relevance ranking embeds one vector per rendered triple; return a same-length
+    # batch so the cap (not a zip-truncation) decides how many survive.
+    async def _embed_batch(texts):
+        return [[0.1] * 768 for _ in texts]
+
+    mock.embed_batch.side_effect = _embed_batch
     return mock
 
 

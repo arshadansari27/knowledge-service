@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import math
 from dataclasses import dataclass, field
 
 import httpx
@@ -213,7 +214,7 @@ class RAGRetriever:
         predicate_triples = await self._lookup_triples_by_predicate(embedding)
         merged = self._deduplicate_triples(triples + predicate_triples)
         filtered = self._filter_by_confidence(merged, min_confidence)
-        capped = self._rank_and_cap_triples(filtered, self._max_triples)
+        capped = await self._rank_triples_by_relevance(filtered, embedding, self._max_triples)
         contradictions = await self._detect_contradictions(capped)
         return RetrievalContext(
             content_results=content_results,
@@ -234,7 +235,7 @@ class RAGRetriever:
         predicate_triples = await self._lookup_triples_by_predicate(embedding)
         merged = self._deduplicate_triples(triples + predicate_triples)
         filtered = self._filter_by_confidence(merged, min_confidence)
-        capped = self._rank_and_cap_triples(filtered, self._max_triples)
+        capped = await self._rank_triples_by_relevance(filtered, embedding, self._max_triples)
         contradictions = await self._detect_contradictions(capped)
         # Light content search for supporting text
         content_results = await self._embedding_store.search(
@@ -269,9 +270,9 @@ class RAGRetriever:
             min_confidence=max(min_confidence, 0.1),
         )
 
-        # Use traversal edges as knowledge triples (capped to the prompt budget)
+        # Use traversal edges as knowledge triples (relevance-ranked to the budget)
         filtered = self._filter_by_confidence(traversal.edges, min_confidence)
-        capped = self._rank_and_cap_triples(filtered, self._max_triples)
+        capped = await self._rank_triples_by_relevance(filtered, embedding, self._max_triples)
         contradictions = await self._detect_contradictions(capped)
         content_results = await self._embedding_store.search(
             query_embedding=embedding, limit=3, query_text=question
@@ -375,10 +376,75 @@ class RAGRetriever:
 
         Triples without a confidence sort as 0. This bounds how much graph context
         reaches the RAG prompt: the eval showed an unbounded triple set (~97 avg)
-        degrades answer quality versus a small, high-confidence set.
+        degrades answer quality versus a small, high-confidence set. Used as the
+        fallback when relevance ranking is unavailable (embedding backend down).
         """
         ranked = sorted(triples, key=lambda t: t.get("confidence") or 0, reverse=True)
         return ranked[:limit]
+
+    @staticmethod
+    def _localize(term: str) -> str:
+        """Render a URI as its human label (last path/hash segment, de-slugged).
+
+        ``http://knowledge.local/data/cold_exposure`` -> ``cold exposure``.
+        Literals (non-URIs) are returned unchanged.
+        """
+        if not isinstance(term, str):
+            return str(term)
+        if term.startswith(("http://", "https://", "urn:")):
+            tail = term.rstrip("/").replace("#", "/").rsplit("/", 1)[-1]
+            return tail.replace("_", " ")
+        return term
+
+    @classmethod
+    def _triple_to_text(cls, triple: dict) -> str:
+        """Render a triple as a natural phrase for embedding (subject pred object)."""
+        return (
+            f"{cls._localize(triple.get('subject', ''))} "
+            f"{cls._localize(triple.get('predicate', ''))} "
+            f"{cls._localize(triple.get('object', ''))}"
+        ).strip()
+
+    @staticmethod
+    def _cosine(a: list[float], b: list[float]) -> float:
+        """Cosine similarity of two equal-length vectors (0.0 on degenerate input)."""
+        dot = sum(x * y for x, y in zip(a, b))
+        na = math.sqrt(sum(x * x for x in a))
+        nb = math.sqrt(sum(y * y for y in b))
+        if na == 0.0 or nb == 0.0:
+            return 0.0
+        return dot / (na * nb)
+
+    async def _rank_triples_by_relevance(
+        self, triples: list[dict], query_embedding: list[float], limit: int
+    ) -> list[dict]:
+        """Keep the top-``limit`` triples most relevant to the query.
+
+        Each triple is rendered to text and embedded; triples are ranked by cosine
+        similarity of that embedding to the question embedding. This fixes the
+        failure the 2026-05-31 eval exposed: capping by *confidence* alone still
+        floods the prompt with confident-but-irrelevant facts. Relevance ranking
+        puts the few triples actually about the question in front of the LLM.
+
+        Degrades gracefully to confidence ranking if the embedding backend fails,
+        so a transient embedding outage never drops graph context entirely.
+        """
+        if not triples:
+            return []
+        try:
+            texts = [self._triple_to_text(t) for t in triples]
+            embeddings = await self._embedding_client.embed_batch(texts)
+        except Exception as exc:  # embedding backend down / malformed response
+            logger.warning(
+                "Triple relevance ranking failed (%s); falling back to confidence", exc
+            )
+            return self._rank_and_cap_triples(triples, limit)
+
+        scored = [
+            (self._cosine(query_embedding, emb), t) for t, emb in zip(triples, embeddings)
+        ]
+        scored.sort(key=lambda pair: pair[0], reverse=True)
+        return [t for _, t in scored[:limit]]
 
     async def _detect_contradictions(self, triples):
         contradictions = []
