@@ -168,8 +168,15 @@ class RAGRetriever:
         max_sources: int = 5,
         min_confidence: float = 0.0,
         intent: QueryIntent | None = None,
+        retrieval_mode: str = "full",
     ) -> RetrievalContext:
         embedding = await self._embedding_client.embed(question)
+
+        if retrieval_mode == "chunks_only":
+            content_results = await self._embedding_store.search(
+                query_embedding=embedding, limit=max_sources, query_text=question
+            )
+            return RetrievalContext(content_results=content_results)
 
         if intent is None or intent.intent == "semantic":
             return await self._retrieve_semantic(question, embedding, max_sources, min_confidence)
