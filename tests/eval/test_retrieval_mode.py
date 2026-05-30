@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from unittest.mock import AsyncMock, MagicMock
 
+from knowledge_service.api.ask import AskRequest
 from knowledge_service.stores.rag import RAGRetriever, RetrievalContext
 
 
@@ -80,9 +81,6 @@ class TestChunksOnlyMode:
         )
         await retriever.retrieve("q", max_sources=5, min_confidence=0.0)
         es.search_entities.assert_called()
-
-
-from knowledge_service.api.ask import AskRequest
 
 
 class TestAskRequestMode:
