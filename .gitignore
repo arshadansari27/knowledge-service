@@ -15,3 +15,8 @@ dist/
 .firecrawl/
 CLAUDE.md
 .worktrees/
+
+# Eval harness outputs + local snapshot
+src/knowledge_service/eval/reports/
+data/snapshot/
+golden_candidates.json
