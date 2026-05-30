@@ -63,8 +63,12 @@ async def post_ask(body: AskRequest, request: Request) -> AskResponse:
     retriever = request.app.state.rag_retriever
     rag_client = request.app.state.rag_client
 
-    # Classify only when the graph path will use the intent.
-    if body.retrieval_mode == "chunks_only":
+    # Resolve the effective retrieval mode: an explicit request value wins,
+    # otherwise fall back to the server default (chunks_only — the KG layer is
+    # net-negative on answer quality per docs/kg-vs-rag-eval-findings.md).
+    # Classification is only needed for the graph-augmented "full" path.
+    mode = body.retrieval_mode or settings.rag_default_retrieval_mode
+    if mode == "chunks_only":
         intent = None
     else:
         intent = await retriever.classify(body.question)
@@ -74,7 +78,7 @@ async def post_ask(body: AskRequest, request: Request) -> AskResponse:
         max_sources=body.max_sources,
         min_confidence=body.min_confidence,
         intent=intent,
-        retrieval_mode=body.retrieval_mode,
+        retrieval_mode=mode,
     )
 
     try:
