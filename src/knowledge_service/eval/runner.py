@@ -26,12 +26,24 @@ _REPORTS_DIR = Path(__file__).with_name("reports")
 
 
 def _retrieved_ids(context: RetrievalContext) -> list[str]:
-    """Ordered content/chunk ids from a retrieval context (content_id, else id)."""
+    """Ordered, de-duplicated content ids from a retrieval context.
+
+    Several retrieved chunks can share one ``content_id`` (a document is chunked
+    N ways). Golden relevance is labelled at the content level, so the ranked id
+    list must be de-duplicated by content — keeping first-occurrence order — or a
+    single relevant document counted once per chunk inflates DCG above the ideal
+    (nDCG > 1). Falls back to the chunk ``id`` when ``content_id`` is absent.
+    """
     ids: list[str] = []
+    seen: set[str] = set()
     for row in context.content_results:
         cid = row.get("content_id") or row.get("id")
-        if cid is not None:
-            ids.append(str(cid))
+        if cid is None:
+            continue
+        cid = str(cid)
+        if cid not in seen:
+            seen.add(cid)
+            ids.append(cid)
     return ids
 
 
