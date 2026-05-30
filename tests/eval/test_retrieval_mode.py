@@ -80,3 +80,23 @@ class TestChunksOnlyMode:
         )
         await retriever.retrieve("q", max_sources=5, min_confidence=0.0)
         es.search_entities.assert_called()
+
+
+from knowledge_service.api.ask import AskRequest
+
+
+class TestAskRequestMode:
+    def test_default_mode_is_full(self):
+        req = AskRequest(question="hello")
+        assert req.retrieval_mode == "full"
+
+    def test_chunks_only_is_accepted(self):
+        req = AskRequest(question="hello", retrieval_mode="chunks_only")
+        assert req.retrieval_mode == "chunks_only"
+
+    def test_invalid_mode_rejected(self):
+        import pytest
+        from pydantic import ValidationError
+
+        with pytest.raises(ValidationError):
+            AskRequest(question="hello", retrieval_mode="bogus")

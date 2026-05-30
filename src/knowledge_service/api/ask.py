@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import Literal
+
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field
 
@@ -16,6 +18,7 @@ class AskRequest(BaseModel):
     question: str = Field(..., min_length=1, max_length=_MAX_QUESTION_LEN)
     max_sources: int = Field(5, ge=1, le=20)
     min_confidence: float = Field(0.0, ge=0.0, le=1.0)
+    retrieval_mode: Literal["full", "chunks_only"] = "full"
 
 
 class SourceInfo(BaseModel):
@@ -56,14 +59,18 @@ async def post_ask(body: AskRequest, request: Request) -> AskResponse:
     retriever = request.app.state.rag_retriever
     rag_client = request.app.state.rag_client
 
-    # Classify query intent (inlined into RAGRetriever)
-    intent = await retriever.classify(body.question)
+    # Classify only when the graph path will use the intent.
+    if body.retrieval_mode == "chunks_only":
+        intent = None
+    else:
+        intent = await retriever.classify(body.question)
 
     context = await retriever.retrieve(
         body.question,
         max_sources=body.max_sources,
         min_confidence=body.min_confidence,
         intent=intent,
+        retrieval_mode=body.retrieval_mode,
     )
 
     try:
