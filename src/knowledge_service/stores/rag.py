@@ -57,6 +57,7 @@ class RetrievalContext:
 
 
 _MAX_TRAVERSAL_EDGES = 200
+_DEFAULT_MAX_TRIPLES = 15
 
 
 def _expand_graph(
@@ -106,6 +107,7 @@ class RAGRetriever:
         knowledge_store,
         entity_store=None,
         classify_client=None,
+        max_triples: int = _DEFAULT_MAX_TRIPLES,
     ) -> None:
         self._embedding_client = embedding_client
         self._embedding_store = embedding_store  # ContentStore (search, get_chunks_by_ids)
@@ -114,6 +116,9 @@ class RAGRetriever:
         # for backward compat (old EmbeddingStore had all methods)
         self._entity_store = entity_store or embedding_store
         self._classify_client = classify_client  # BaseLLMClient for query classification
+        # Cap on triples passed to the RAG prompt — prevents the triple-flood that
+        # the 2026-05-31 eval showed harms answer faithfulness.
+        self._max_triples = max_triples
 
     async def classify(self, question: str) -> QueryIntent:
         """Classify a question into a retrieval intent via LLM.
@@ -208,10 +213,11 @@ class RAGRetriever:
         predicate_triples = await self._lookup_triples_by_predicate(embedding)
         merged = self._deduplicate_triples(triples + predicate_triples)
         filtered = self._filter_by_confidence(merged, min_confidence)
-        contradictions = await self._detect_contradictions(filtered)
+        capped = self._rank_and_cap_triples(filtered, self._max_triples)
+        contradictions = await self._detect_contradictions(capped)
         return RetrievalContext(
             content_results=content_results,
-            knowledge_triples=filtered,
+            knowledge_triples=capped,
             contradictions=contradictions,
         )
 
@@ -228,14 +234,15 @@ class RAGRetriever:
         predicate_triples = await self._lookup_triples_by_predicate(embedding)
         merged = self._deduplicate_triples(triples + predicate_triples)
         filtered = self._filter_by_confidence(merged, min_confidence)
-        contradictions = await self._detect_contradictions(filtered)
+        capped = self._rank_and_cap_triples(filtered, self._max_triples)
+        contradictions = await self._detect_contradictions(capped)
         # Light content search for supporting text
         content_results = await self._embedding_store.search(
             query_embedding=embedding, limit=3, query_text=question
         )
         return RetrievalContext(
             content_results=content_results,
-            knowledge_triples=filtered,
+            knowledge_triples=capped,
             contradictions=contradictions,
         )
 
@@ -262,9 +269,10 @@ class RAGRetriever:
             min_confidence=max(min_confidence, 0.1),
         )
 
-        # Use traversal edges as knowledge triples
+        # Use traversal edges as knowledge triples (capped to the prompt budget)
         filtered = self._filter_by_confidence(traversal.edges, min_confidence)
-        contradictions = await self._detect_contradictions(filtered)
+        capped = self._rank_and_cap_triples(filtered, self._max_triples)
+        contradictions = await self._detect_contradictions(capped)
         content_results = await self._embedding_store.search(
             query_embedding=embedding, limit=3, query_text=question
         )
@@ -274,7 +282,7 @@ class RAGRetriever:
 
         return RetrievalContext(
             content_results=content_results,
-            knowledge_triples=filtered,
+            knowledge_triples=capped,
             contradictions=contradictions,
             traversal_depth=traversal_depth,
         )
@@ -360,6 +368,17 @@ class RAGRetriever:
             for t in triples
             if t.get("confidence") is not None and t["confidence"] >= min_confidence
         ]
+
+    @staticmethod
+    def _rank_and_cap_triples(triples: list[dict], limit: int) -> list[dict]:
+        """Keep the top-``limit`` triples by confidence (desc).
+
+        Triples without a confidence sort as 0. This bounds how much graph context
+        reaches the RAG prompt: the eval showed an unbounded triple set (~97 avg)
+        degrades answer quality versus a small, high-confidence set.
+        """
+        ranked = sorted(triples, key=lambda t: t.get("confidence") or 0, reverse=True)
+        return ranked[:limit]
 
     async def _detect_contradictions(self, triples):
         contradictions = []
