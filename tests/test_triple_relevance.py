@@ -92,3 +92,20 @@ class TestRelevanceRanking:
         ranked = await r._rank_triples_by_relevance([lo, hi], query, limit=1)
         # graceful degradation: highest confidence kept
         assert ranked[0]["object"] == "hi"
+
+    async def test_falls_back_on_length_mismatch(self):
+        # A wrong-length batch must not silently drop triples via zip truncation;
+        # it falls back to confidence ranking and keeps all candidates.
+        query = [1.0, 0.0, 0.0]
+        lo = _triple("lo", 0.20)
+        hi = _triple("hi", 0.90)
+        ec = AsyncMock()
+        ec.embed_batch.return_value = [[1.0, 0.0, 0.0]]  # 1 vector for 2 triples
+        r = RAGRetriever(
+            embedding_client=ec,
+            embedding_store=AsyncMock(),
+            knowledge_store=MagicMock(),
+        )
+        ranked = await r._rank_triples_by_relevance([lo, hi], query, limit=5)
+        assert {t["object"] for t in ranked} == {"lo", "hi"}
+        assert ranked[0]["object"] == "hi"  # confidence order on fallback

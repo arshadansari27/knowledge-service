@@ -435,14 +435,22 @@ class RAGRetriever:
             texts = [self._triple_to_text(t) for t in triples]
             embeddings = await self._embedding_client.embed_batch(texts)
         except Exception as exc:  # embedding backend down / malformed response
+            logger.warning("Triple relevance ranking failed (%s); falling back to confidence", exc)
+            return self._rank_and_cap_triples(triples, limit)
+
+        # Defensive: a wrong-length batch would let zip() silently DROP triples
+        # (losing graph context with no error). Treat any length mismatch as a
+        # backend fault and fall back to confidence ranking instead.
+        if len(embeddings) != len(triples):
             logger.warning(
-                "Triple relevance ranking failed (%s); falling back to confidence", exc
+                "embed_batch returned %d vectors for %d triples; "
+                "falling back to confidence ranking",
+                len(embeddings),
+                len(triples),
             )
             return self._rank_and_cap_triples(triples, limit)
 
-        scored = [
-            (self._cosine(query_embedding, emb), t) for t, emb in zip(triples, embeddings)
-        ]
+        scored = [(self._cosine(query_embedding, emb), t) for t, emb in zip(triples, embeddings)]
         scored.sort(key=lambda pair: pair[0], reverse=True)
         return [t for _, t in scored[:limit]]
 

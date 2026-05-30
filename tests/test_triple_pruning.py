@@ -83,7 +83,10 @@ class TestTriplePruning:
         assert isinstance(ctx, RetrievalContext)
         assert len(ctx.knowledge_triples) == 2
 
-    async def test_keeps_highest_confidence(self):
+    async def test_cap_returns_subset_of_candidates(self):
+        # Which triples survive the cap is decided by query relevance
+        # (test_triple_relevance.py), not confidence — here we only assert the
+        # cap yields exactly max_triples genuine candidates.
         retriever = RAGRetriever(
             embedding_client=_make_embedding_client(),
             embedding_store=_make_embedding_store(entity_rows=[_ENTITY_ROW]),
@@ -91,8 +94,9 @@ class TestTriplePruning:
             max_triples=2,
         )
         ctx = await retriever.retrieve("q", max_sources=5, min_confidence=0.0)
-        objs = {t["object"] for t in ctx.knowledge_triples}
-        assert objs == {"e", "a"}  # confidences 0.95 and 0.90
+        objs = [t["object"] for t in ctx.knowledge_triples]
+        assert len(objs) == 2
+        assert set(objs) <= {"a", "b", "c", "d", "e"}
 
     async def test_default_max_is_applied(self):
         # 5 triples, default cap is 15 -> all 5 pass through unpruned.
