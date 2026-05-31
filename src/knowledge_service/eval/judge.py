@@ -1,7 +1,9 @@
-"""Claude-as-judge: scores generated answers for faithfulness + correctness.
+"""LLM-as-judge: scores generated answers for faithfulness + correctness.
 
-The system-under-test is qwen3; the judge is Claude so the SUT does not grade
-itself. Uses the Anthropic Messages API directly (httpx), not the OpenAI shim.
+The system-under-test is gpt-oss; the judge is a *different* model family
+(kimi-k2.5 by default) reached through the litellm OpenAI-compatible
+chat-completions endpoint, so the SUT never grades itself. (The Anthropic
+Messages path was dropped once litellm stopped routing Claude models.)
 """
 
 from __future__ import annotations
@@ -68,17 +70,18 @@ def parse_judge_response(raw: str) -> JudgeScore:
 
 
 class Judge:
-    """Anthropic Messages API client for answer scoring."""
+    """OpenAI-compatible chat-completions client (litellm) for answer scoring."""
 
     def __init__(self, base_url: str, model: str, api_key: str) -> None:
         if not api_key:
-            raise ValueError("Judge requires an Anthropic api key (eval_judge_api_key)")
+            raise ValueError("Judge requires an api key (eval_judge_api_key)")
         self._model = model
+        # Strip a trailing /v1 so we can use /v1/... paths without double-pathing
+        # (mirrors the other LLM clients).
         self._client = httpx.AsyncClient(
-            base_url=base_url.rstrip("/"),
+            base_url=base_url.rstrip("/").removesuffix("/v1"),
             headers={
-                "x-api-key": api_key,
-                "anthropic-version": "2023-06-01",
+                "Authorization": f"Bearer {api_key}",
                 "content-type": "application/json",
             },
             timeout=httpx.Timeout(connect=5.0, read=120.0, write=10.0, pool=5.0),
@@ -98,7 +101,7 @@ class Judge:
             generated_answer=generated_answer,
         )
         resp = await self._client.post(
-            "/v1/messages",
+            "/v1/chat/completions",
             json={
                 "model": self._model,
                 "max_tokens": 512,
@@ -107,8 +110,7 @@ class Judge:
             },
         )
         resp.raise_for_status()
-        blocks = resp.json().get("content", [])
-        text = "".join(b.get("text", "") for b in blocks if b.get("type") == "text")
+        text = resp.json()["choices"][0]["message"]["content"]
         return parse_judge_response(text)
 
     async def close(self) -> None:
