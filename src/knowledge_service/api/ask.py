@@ -55,10 +55,6 @@ class AskRequest(BaseModel):
     # intent-routed — see docs/kg-vs-rag-eval-findings.md). Pass "full" or
     # "chunks_only" to force a specific path.
     retrieval_mode: Literal["full", "chunks_only"] | None = None
-    # How to generate the answer. None = server default (rag_default_answer_mode).
-    # "direct" = one call; "verify" = answer from chunks, then re-check the draft
-    # against graph facts + contradictions (lever E).
-    answer_mode: Literal["direct", "verify"] | None = None
 
 
 class SourceInfo(BaseModel):
@@ -91,7 +87,6 @@ class AskResponse(BaseModel):
     evidence: list[EvidenceSnippet] = []
     intent: str | None = None
     traversal_depth: int | None = None
-    answer_mode: str | None = None
 
 
 @router.post("/ask", response_model=AskResponse)
@@ -122,12 +117,8 @@ async def post_ask(body: AskRequest, request: Request) -> AskResponse:
         retrieval_mode=mode,
     )
 
-    # Resolve the answer strategy (explicit request value wins, else server default)
-    # and generate. answer_auto runs the verify two-call path only when the graph
-    # actually has facts/contradictions to check; otherwise it's a single call.
-    answer_mode = body.answer_mode or settings.rag_default_answer_mode
     try:
-        raw_answer = await rag_client.answer_auto(body.question, context, answer_mode)
+        raw_answer = await rag_client.answer(body.question, context)
     except Exception as exc:
         raise HTTPException(status_code=502, detail=f"LLM service error: {exc}") from exc
 
@@ -216,5 +207,4 @@ async def post_ask(body: AskRequest, request: Request) -> AskResponse:
         evidence=evidence,
         intent=intent.intent if intent else None,
         traversal_depth=getattr(context, "traversal_depth", None),
-        answer_mode=answer_mode,
     )

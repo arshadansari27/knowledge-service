@@ -36,13 +36,10 @@ class Settings(BaseSettings):
     # Reader-side status filtering
     reader_exclude_inflight: bool = True  # env: READER_EXCLUDE_INFLIGHT
 
-    # Eval harness — judge runs via litellm's OpenAI-compatible chat-completions
-    # endpoint (kimi-k2.5 by default; a different family from the gpt-oss SUT, so it
-    # doesn't grade itself). Set base_url + api_key via env at eval time (same
-    # litellm proxy + key as LLM_BASE_URL/LLM_API_KEY).
-    eval_judge_base_url: str = ""
-    eval_judge_model: str = "kimi-k2.5"
-    eval_judge_api_key: str = ""  # litellm key; required only when running the eval judge
+    # Eval harness
+    eval_judge_base_url: str = "https://api.anthropic.com"
+    eval_judge_model: str = "claude-opus-4-8"
+    eval_judge_api_key: str = ""  # Anthropic key; required only when running the eval judge
     eval_concurrency: int = 4
 
     # Background maintenance sweep (lowercases knowledge_type, remaps
@@ -68,22 +65,6 @@ class Settings(BaseSettings):
     #   "chunks_only" — never use the graph (pure hybrid vector+BM25).
     # A per-request retrieval_mode always overrides this. env: RAG_DEFAULT_RETRIEVAL_MODE
     rag_default_retrieval_mode: str = "auto"
-
-    # --- Graph quality levers (2026-05-31). All default to current behavior so a
-    # deploy is a no-op until the eval picks winners; each is flipped via env per A/B.
-    # See docs/superpowers/specs/2026-05-31-graph-quality-improvements-design.md
-    # A — minimum cosine relevance a triple must clear to reach the prompt (0.0 = off).
-    rag_triple_relevance_floor: float = 0.0  # env: RAG_TRIPLE_RELEVANCE_FLOOR
-    # B — render triples as localized prose (+ source url) instead of raw-URI SPO.
-    # Default OFF so a deploy is a true no-op (no prompt-shape change, no provenance
-    # lookup) until the eval validates it. Flip on once measured.
-    rag_verbalize_triples: bool = False  # env: RAG_VERBALIZE_TRIPLES
-    # C — drop triples whose source document is already among the retrieved chunks.
-    rag_triple_novelty_filter: bool = False  # env: RAG_TRIPLE_NOVELTY_FILTER
-    # D — predicate-similarity triple lookup (relevance-blind). Off = skip it.
-    rag_predicate_lookup_enabled: bool = True  # env: RAG_PREDICATE_LOOKUP_ENABLED
-    # E — default answer strategy: "direct" (single call) or "verify" (graph fact-check).
-    rag_default_answer_mode: str = "direct"  # env: RAG_DEFAULT_ANSWER_MODE
 
     model_config = {"env_file": ".env", "extra": "ignore"}
 
