@@ -66,6 +66,22 @@ class Settings(BaseSettings):
     # A per-request retrieval_mode always overrides this. env: RAG_DEFAULT_RETRIEVAL_MODE
     rag_default_retrieval_mode: str = "auto"
 
+    # --- Graph quality levers (2026-05-31). All default to current behavior so a
+    # deploy is a no-op until the eval picks winners; each is flipped via env per A/B.
+    # See docs/superpowers/specs/2026-05-31-graph-quality-improvements-design.md
+    # A — minimum cosine relevance a triple must clear to reach the prompt (0.0 = off).
+    rag_triple_relevance_floor: float = 0.0  # env: RAG_TRIPLE_RELEVANCE_FLOOR
+    # B — render triples as localized prose (+ source url) instead of raw-URI SPO.
+    # Default OFF so a deploy is a true no-op (no prompt-shape change, no provenance
+    # lookup) until the eval validates it. Flip on once measured.
+    rag_verbalize_triples: bool = False  # env: RAG_VERBALIZE_TRIPLES
+    # C — drop triples whose source document is already among the retrieved chunks.
+    rag_triple_novelty_filter: bool = False  # env: RAG_TRIPLE_NOVELTY_FILTER
+    # D — predicate-similarity triple lookup (relevance-blind). Off = skip it.
+    rag_predicate_lookup_enabled: bool = True  # env: RAG_PREDICATE_LOOKUP_ENABLED
+    # E — default answer strategy: "direct" (single call) or "verify" (graph fact-check).
+    rag_default_answer_mode: str = "direct"  # env: RAG_DEFAULT_ANSWER_MODE
+
     model_config = {"env_file": ".env", "extra": "ignore"}
 
 

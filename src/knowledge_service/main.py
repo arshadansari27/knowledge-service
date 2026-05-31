@@ -223,6 +223,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         knowledge_store=triple_store,
         entity_store=entity_store,
         classify_client=classify_client,
+        provenance_store=stores.provenance,
     )
 
     # State references read by admin/* and api/health.py.

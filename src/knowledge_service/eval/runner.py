@@ -100,6 +100,7 @@ async def _build_components():
     from knowledge_service.ontology.bootstrap import bootstrap_ontology
     from knowledge_service.stores.content import ContentStore
     from knowledge_service.stores.entities import EntityStore
+    from knowledge_service.stores.provenance import ProvenanceStore
     from knowledge_service.stores.rag import RAGRetriever
     from knowledge_service.stores.triples import TripleStore
 
@@ -129,12 +130,16 @@ async def _build_components():
         knowledge_store=knowledge_store,
         entity_store=entity_store,
         classify_client=classify_client,
+        max_triples=settings.rag_max_triples,
+        provenance_store=ProvenanceStore(pool),
     )
     clients = (embedding_client, extraction_client, rag_client, classify_client)
     return pool, knowledge_store, retriever, rag_client, clients
 
 
-async def run_eval(modes: list[str], k: int, golden_path: Path) -> list[QueryResult]:
+async def run_eval(
+    modes: list[str], k: int, golden_path: Path, answer_mode: str = "direct"
+) -> list[QueryResult]:
     items = load_golden(golden_path)
     judge = Judge(
         base_url=settings.eval_judge_base_url,
@@ -154,7 +159,7 @@ async def run_eval(modes: list[str], k: int, golden_path: Path) -> list[QueryRes
                 intent=intent,
                 retrieval_mode=mode,
             )
-            answer_obj = await rag_client.answer(item.question, context)
+            answer_obj = await rag_client.answer_auto(item.question, context, answer_mode)
             judge_score = await judge.score_one(
                 question=item.question,
                 reference_answer=item.reference_answer,
@@ -202,7 +207,9 @@ def _write_report(results: list[QueryResult], k: int, timestamp: str) -> Path:
 async def _amain(args: argparse.Namespace) -> None:
     modes = [m.strip() for m in args.modes.split(",") if m.strip()]
     golden_path = Path(args.golden) if args.golden else _DEFAULT_GOLDEN
-    results = await run_eval(modes=modes, k=args.k, golden_path=golden_path)
+    results = await run_eval(
+        modes=modes, k=args.k, golden_path=golden_path, answer_mode=args.answer_mode
+    )
     print(format_summary_table(aggregate(results)))
     path = _write_report(results, args.k, args.timestamp)
     print(f"\nReport written to {path}")
@@ -213,6 +220,7 @@ def main() -> None:
     parser.add_argument("--modes", default="full,chunks_only")
     parser.add_argument("--k", type=int, default=5)
     parser.add_argument("--golden", default="")
+    parser.add_argument("--answer-mode", default="direct", choices=["direct", "verify"])
     parser.add_argument(
         "--timestamp",
         required=True,

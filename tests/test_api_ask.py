@@ -51,6 +51,7 @@ def _make_rag_retriever(context=None):
 def _make_rag_client(answer="Test answer"):
     mock = AsyncMock()
     mock.answer.return_value = RAGAnswer(answer=answer)
+    mock.answer_auto.return_value = RAGAnswer(answer=answer)
     return mock
 
 
@@ -130,6 +131,7 @@ class TestPostAskLLMFailure:
         app.state.rag_retriever = _make_rag_retriever()
         failing_client = AsyncMock()
         failing_client.answer.side_effect = Exception("LLM connection refused")
+        failing_client.answer_auto.side_effect = Exception("LLM connection refused")
         app.state.rag_client = failing_client
         app.state.reasoning_engine = MagicMock()
 

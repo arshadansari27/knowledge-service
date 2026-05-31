@@ -9,7 +9,8 @@ from dataclasses import dataclass, field
 
 import httpx
 
-from knowledge_service._utils import _extract_json
+from knowledge_service._utils import _extract_json, compute_triple_hash
+from knowledge_service.config import settings
 from knowledge_service.ontology.namespaces import KS_GRAPH_ASSERTED
 from knowledge_service.ontology.uri import to_entity_uri
 
@@ -109,10 +110,14 @@ class RAGRetriever:
         entity_store=None,
         classify_client=None,
         max_triples: int = _DEFAULT_MAX_TRIPLES,
+        provenance_store=None,
     ) -> None:
         self._embedding_client = embedding_client
         self._embedding_store = embedding_store  # ContentStore (search, get_chunks_by_ids)
         self._knowledge_store = knowledge_store  # TripleStore
+        # ProvenanceStore — needed for triple verbalization (source url) and the
+        # novelty filter. None-safe: enrichment is skipped when absent.
+        self._provenance_store = provenance_store
         # entity_store has search_entities/search_predicates; fall back to embedding_store
         # for backward compat (old EmbeddingStore had all methods)
         self._entity_store = entity_store or embedding_store
@@ -215,6 +220,7 @@ class RAGRetriever:
         merged = self._deduplicate_triples(triples + predicate_triples)
         filtered = self._filter_by_confidence(merged, min_confidence)
         capped = await self._rank_triples_by_relevance(filtered, embedding, self._max_triples)
+        capped = await self._finalize_triples(capped, content_results)
         contradictions = await self._detect_contradictions(capped)
         return RetrievalContext(
             content_results=content_results,
@@ -236,11 +242,12 @@ class RAGRetriever:
         merged = self._deduplicate_triples(triples + predicate_triples)
         filtered = self._filter_by_confidence(merged, min_confidence)
         capped = await self._rank_triples_by_relevance(filtered, embedding, self._max_triples)
-        contradictions = await self._detect_contradictions(capped)
-        # Light content search for supporting text
+        # Light content search for supporting text (also the novelty-filter baseline)
         content_results = await self._embedding_store.search(
             query_embedding=embedding, limit=3, query_text=question
         )
+        capped = await self._finalize_triples(capped, content_results)
+        contradictions = await self._detect_contradictions(capped)
         return RetrievalContext(
             content_results=content_results,
             knowledge_triples=capped,
@@ -273,10 +280,11 @@ class RAGRetriever:
         # Use traversal edges as knowledge triples (relevance-ranked to the budget)
         filtered = self._filter_by_confidence(traversal.edges, min_confidence)
         capped = await self._rank_triples_by_relevance(filtered, embedding, self._max_triples)
-        contradictions = await self._detect_contradictions(capped)
         content_results = await self._embedding_store.search(
             query_embedding=embedding, limit=3, query_text=question
         )
+        capped = await self._finalize_triples(capped, content_results)
+        contradictions = await self._detect_contradictions(capped)
 
         # Traversal metadata
         traversal_depth = max((n["hop_distance"] for n in traversal.nodes), default=0)
@@ -328,7 +336,14 @@ class RAGRetriever:
     async def _lookup_triples_by_predicate(
         self, embedding, limit=_PREDICATE_TRIPLE_LIMIT
     ) -> list[dict]:
-        """Find triples by predicate similarity to the query embedding."""
+        """Find triples by predicate similarity to the query embedding.
+
+        Gated by ``rag_predicate_lookup_enabled``: this lookup is relevance-blind
+        (it matches on the predicate alone, ignoring subject), so it can pull
+        confident-but-off-topic triples. Off → skip it entirely.
+        """
+        if not settings.rag_predicate_lookup_enabled:
+            return []
         pred_rows = await self._entity_store.search_predicates(query_embedding=embedding, limit=3)
         matched_uris = [
             r["uri"] for r in pred_rows if r.get("similarity", 0) >= _PREDICATE_MATCH_THRESHOLD
@@ -452,7 +467,78 @@ class RAGRetriever:
 
         scored = [(self._cosine(query_embedding, emb), t) for t, emb in zip(triples, embeddings)]
         scored.sort(key=lambda pair: pair[0], reverse=True)
+        # Relevance floor (lever A): when set, a triple must clear a minimum cosine
+        # similarity to reach the prompt. A query with no relevant triples surfaces
+        # zero, rather than the least-irrelevant N. floor=0.0 keeps the top-N cap.
+        floor = settings.rag_triple_relevance_floor
+        if floor > 0.0:
+            scored = [pair for pair in scored if pair[0] >= floor]
         return [t for _, t in scored[:limit]]
+
+    async def _finalize_triples(
+        self, triples: list[dict], content_results: list[dict]
+    ) -> list[dict]:
+        """Enrich triples for the prompt and drop redundant ones.
+
+        Two flag-gated steps sharing one provenance lookup:
+
+        * Novelty (``rag_triple_novelty_filter``): drop triples whose source
+          document is already among the retrieved chunks — they restate prose the
+          LLM already has — keeping only cross-document facts. Triples with no
+          resolvable provenance are kept (redundancy can't be proven).
+        * Verbalize (``rag_verbalize_triples``): attach localized
+          ``subject_label``/``predicate_label``/``object_label`` (no DB) plus the
+          source ``source_url`` so the prompt renders readable, attributable prose
+          instead of raw-URI SPO triples.
+
+        A provenance lookup failure degrades gracefully: labels are still attached
+        (no source_url) and the novelty filter becomes a no-op. Never raises.
+        """
+        if not triples:
+            return triples
+        want_novelty = settings.rag_triple_novelty_filter
+        want_verbalize = settings.rag_verbalize_triples
+        if not (want_novelty or want_verbalize):
+            return triples
+
+        prov_map: dict[str, list[dict]] = {}
+        if self._provenance_store is not None:
+            hashes = [
+                compute_triple_hash(
+                    t.get("subject", ""), t.get("predicate", ""), t.get("object", "")
+                )
+                for t in triples
+            ]
+            try:
+                prov_map = await self._provenance_store.get_by_triples(hashes)
+            except Exception as exc:  # provenance DB hiccup — degrade, never crash retrieval
+                logger.warning("Provenance enrichment failed (%s); skipping", exc)
+                prov_map = {}
+
+        def _source_url(triple: dict) -> str | None:
+            h = compute_triple_hash(
+                triple.get("subject", ""), triple.get("predicate", ""), triple.get("object", "")
+            )
+            for row in prov_map.get(h, []):
+                url = row.get("source_url")
+                if url:
+                    return url
+            return None
+
+        if want_novelty:
+            retrieved_urls = {r.get("url") for r in content_results if r.get("url")}
+            # _source_url is None for triples with no provenance → never in the set → kept.
+            triples = [t for t in triples if _source_url(t) not in retrieved_urls]
+
+        if want_verbalize:
+            for t in triples:
+                t["subject_label"] = self._localize(t.get("subject", ""))
+                t["predicate_label"] = self._localize(t.get("predicate", ""))
+                t["object_label"] = self._localize(t.get("object", ""))
+                src = _source_url(t)
+                if src:
+                    t["source_url"] = src
+        return triples
 
     async def _detect_contradictions(self, triples):
         contradictions = []
