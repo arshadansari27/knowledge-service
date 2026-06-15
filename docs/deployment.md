@@ -35,7 +35,8 @@ The knowledge-service runs as part of the **AEGIS stack** on a Docker Swarm clus
 | `LLM_BASE_URL` | `https://litellm.hikmahtech.in` |
 | `LLM_API_KEY` | Via `aegis_knowledge_llm_api_key` secret |
 | `LLM_EMBED_MODEL` | `nomic-embed-text` |
-| `LLM_CHAT_MODEL` | `qwen3:14b` |
+| `LLM_CHAT_MODEL` | `gpt-oss:20b` — extraction (entity/relation) + query intent classification |
+| `LLM_RAG_MODEL` | `gemma4:e2b` — answer generation for `/api/ask` (falls back to `LLM_CHAT_MODEL` if unset) |
 | `OXIGRAPH_DATA_DIR` | `/app/data/oxigraph` |
 | `ADMIN_PASSWORD` | Via `aegis_knowledge_admin_password` secret |
 | `SECRET_KEY` | Via `aegis_knowledge_secret_key` secret |
