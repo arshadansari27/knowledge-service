@@ -40,6 +40,7 @@ The knowledge-service runs as part of the **AEGIS stack** on a Docker Swarm clus
 | `ADMIN_PASSWORD` | Via `aegis_knowledge_admin_password` secret |
 | `SECRET_KEY` | Via `aegis_knowledge_secret_key` secret |
 | `SPACY_DATA_DIR` | `/app/data/spacy` |
+| `RAG_DEFAULT_RETRIEVAL_MODE` | `chunks_only` — default retrieval path for `/api/ask`. `chunks_only` = hybrid chunk RAG only (graph off); `auto` = intent-route entity/graph questions to the graph path, semantic ones to chunks; `full` = always graph-augmented. Set to `chunks_only` in prod (2026-06): at corpus scale the graph path injects hundreds of uncapped, mostly-spurious contradictions into the prompt and the model stops grounding in the retrieved chunks. A per-request `retrieval_mode` field on `/api/ask` always overrides this. |
 | `READER_EXCLUDE_INFLIGHT` | `true` (default) — hides non-terminal `ingestion_jobs` content from `/api/search` and `/api/ask`; set `false` to bypass during rollout |
 | `MAINTENANCE_INTERVAL_SECONDS` | `21600` (6h, default) — periodic data-quality sweep (lowercases `ks:knowledgeType`, remaps spaCy NER labels). Set `0` to disable; trigger manually via `POST /api/admin/maintenance/run`. |
 | `MAINTENANCE_INITIAL_DELAY_SECONDS` | `60` (default) — delay before the first sweep so migrations + outbox drain + spaCy KB load finish first. |

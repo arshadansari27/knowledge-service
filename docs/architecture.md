@@ -25,7 +25,9 @@ I argued myself out of doing tier-based filtering twice. The reason: as soon as 
 
 The same principle applies to contradictions. `/api/ask` returns conflicting claims in the response payload rather than suppressing them. Telling the caller "these two sources disagree" is more useful than silently picking one.
 
-This works because the graph is small, individually curated, and queried by humans. It would not work at compliance-vendor scale where filtering is the product. Different decision for a different shape.
+**Update (2026-06): in production this entire graph path is off by default.** `/api/ask` now defaults to `chunks_only` (`RAG_DEFAULT_RETRIEVAL_MODE`), which answers from hybrid chunk RAG alone — no triple retrieval, no contradiction detection, no trust-tier prompt annotations. The reason is empirical, not philosophical: once the corpus crossed ~19k documents, the graph path was injecting hundreds of mostly-spurious contradictions (numeric-format collisions like `169` vs `169.00`, and entity-conflation artifacts) into the prompt — uncapped — and the model responded by ignoring the retrieved chunks and falling back to generic, ungrounded answers. `chunks_only` is grounded and ~3× faster on the same questions. The graph path stays reachable per-request (`retrieval_mode: "full"`) and everything above still describes it; only the default changed, pending a fix that caps and filters the contradiction injection before re-enabling `auto`.
+
+The graph-on design works because the graph is small, individually curated, and queried by humans. It would not work at compliance-vendor scale where filtering is the product. Different decision for a different shape.
 
 ---
 
