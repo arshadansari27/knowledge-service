@@ -207,31 +207,13 @@ async def _run_ingestion_worker(
     chunk_records: list[dict],
     app_state,
 ) -> None:
-    """Background worker: delegates to the new ingestion pipeline."""
-    stores = app_state.stores
-    embedding_client = app_state.embedding_client
-    extraction_client = getattr(app_state, "extraction_client", None)
-    entity_store = stores.entities
-    engine = getattr(app_state, "inference_engine", None)
-    nlp = getattr(app_state, "nlp", None)
-
+    """Background worker: embed-only ingestion (chunk + embed, no graph)."""
     await run_ingestion(
         job_id=job_id,
         content_id=content_id,
         chunk_records=chunk_records,
-        raw_text=body.raw_text,
-        knowledge=list(body.knowledge) if body.knowledge else None,
-        title=body.title,
-        source_url=body.url,
-        source_type=body.source_type or "",
-        stores=stores,
-        embedding_client=embedding_client,
-        extraction_client=extraction_client,
-        entity_store=entity_store,
-        engine=engine,
-        nlp=nlp,
-        app_state=app_state,
-        domains=body.domains,
+        stores=app_state.stores,
+        embedding_client=app_state.embedding_client,
     )
 
 

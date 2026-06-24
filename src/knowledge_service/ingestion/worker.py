@@ -83,19 +83,8 @@ async def run_ingestion(
     job_id: str,
     content_id: str,
     chunk_records: list[dict],
-    raw_text: str | None,
-    knowledge: list | None,
-    title: str | None,
-    source_url: str,
-    source_type: str,
     stores: Any,
     embedding_client: Any,
-    extraction_client: Any | None,
-    entity_store: Any | None = None,
-    engine: Any | None = None,
-    nlp: Any | None = None,
-    app_state: Any | None = None,
-    domains: list[str] | None = None,
 ) -> None:
     """Orchestrate the multi-phase ingestion pipeline (embed-only).
 

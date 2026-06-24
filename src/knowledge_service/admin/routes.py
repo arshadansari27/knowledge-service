@@ -30,12 +30,8 @@ async def entity_detail(request: Request, uri: str):
     # uri is already decoded once by FastAPI (e.g. %3A → :)
     # but still has IRI percent-encoding (e.g. %20) — keep that for SPARQL queries
     display_label = unquote(uri).split("/")[-1]
-    stores = getattr(request.app.state, "stores", None)
+    # ponytail: entity detail was graph-only; no knowledge graph now.
     entity_info = None
-    if stores is not None:
-        entity_info = await stores.entities.get_entity_by_uri(uri)
-        if entity_info:
-            display_label = entity_info.get("label", display_label)
     return templates.TemplateResponse(
         request,
         "entity.html",

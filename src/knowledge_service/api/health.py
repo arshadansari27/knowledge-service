@@ -14,13 +14,6 @@ async def health_check(request: Request):
     """
     components = {}
 
-    # ponytail: pyoxigraph check removed (graph layer gone)
-    try:
-        request.app.state.knowledge_store.query("SELECT (1 AS ?x) WHERE {}")
-        components["oxigraph"] = "ok"
-    except Exception as e:
-        components["oxigraph"] = f"error: {e}"
-
     # Check PostgreSQL
     try:
         async with request.app.state.pg_pool.acquire() as conn:
@@ -35,11 +28,6 @@ async def health_check(request: Request):
         components["llm"] = "ok" if resp.status_code == 200 else f"status: {resp.status_code}"
     except Exception as e:
         components["llm"] = f"error: {e}"
-
-    # Check NLP / spaCy entity linker
-    nlp_status = getattr(request.app.state, "nlp_status", None)
-    if nlp_status is not None:
-        components["nlp"] = nlp_status
 
     all_ok = all(v == "ok" for v in components.values())
     return {"status": "ok" if all_ok else "degraded", "components": components}

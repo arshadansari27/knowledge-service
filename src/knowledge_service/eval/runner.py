@@ -74,7 +74,6 @@ def score_query(
         "ndcg_at_k": ndcg_at_k(retrieved, relevant, k),
         "faithfulness": judge_score.faithfulness,
         "correctness": judge_score.correctness,
-        "triples_surfaced": float(len(context.knowledge_triples)),
     }
     return QueryResult(
         query_id=item.id,
@@ -130,13 +129,11 @@ async def run_eval(modes: list[str], k: int, golden_path: Path) -> list[QueryRes
 
     async def _one(item: GoldenItem, mode: str) -> QueryResult:
         async with sem:
-            intent = None if mode == "chunks_only" else await retriever.classify(item.question)
+            # ponytail: chunk-only retrieval; intent classification (graph) removed.
             context = await retriever.retrieve(
                 item.question,
                 max_sources=k,
                 min_confidence=0.0,
-                intent=intent,
-                retrieval_mode=mode,
             )
             answer_obj = await rag_client.answer(item.question, context)
             judge_score = await judge.score_one(
