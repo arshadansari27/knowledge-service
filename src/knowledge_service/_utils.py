@@ -1,84 +1,9 @@
-"""Shared utility helpers reused across API and store modules."""
+"""Shared utility helpers reused across API modules."""
 
 from __future__ import annotations
 
-import hashlib
 import json
 import re
-
-from pyoxigraph import Literal, NamedNode, Triple
-
-from knowledge_service.ontology.uri import to_entity_uri, to_predicate_uri
-
-
-def _is_uri(value: str) -> bool:
-    return value.startswith(("http://", "https://", "urn:"))
-
-
-def sanitize_sparql_string(value: str) -> str:
-    """Sanitize a string for safe inclusion in SPARQL queries."""
-    return re.sub(r'["\\\n\r<>]', "", value)
-
-
-def is_object_entity(item) -> bool:
-    """Decide whether an item's object field is an entity reference (vs a literal).
-
-    Checks the object_type hint first (from LLM or user), falls back to
-    heuristic: must look like a snake_case entity label (lowercase letters,
-    digits, underscores only). Rejects strings with hyphens, dots, uppercase,
-    or numeric-only patterns that are likely literal values.
-
-    Works with both dicts and Pydantic models.
-    """
-    obj_type = (
-        item.get("object_type") if isinstance(item, dict) else getattr(item, "object_type", None)
-    )
-    if obj_type == "entity":
-        return True
-    if obj_type == "literal":
-        return False
-    obj = item.get("object", "") if isinstance(item, dict) else getattr(item, "object", "")
-    if not obj or len(obj) > 60:
-        return False
-    return bool(re.match(r"^[a-z][a-z0-9_]*$", obj))
-
-
-def _to_rdf_term(value: str) -> NamedNode | Literal:
-    if _is_uri(value):
-        return NamedNode(value)
-    return Literal(value)
-
-
-def compute_triple_hash(subject: str, predicate: str, object_: str) -> str:
-    """Canonical SHA-256 hash of a (subject, predicate, object) triple.
-
-    Single source of truth for triple identity across the codebase —
-    ``triple_outbox.triple_hash``, ``provenance.triple_hash``, and
-    ``ks:derivedFrom`` annotations all reference values produced here.
-
-    Normalises ``subject`` and ``predicate`` via ``to_entity_uri`` /
-    ``to_predicate_uri`` before hashing so callers don't need to remember
-    whether their values are already URIs (the normalisers are idempotent).
-    ``object_`` is treated as a URI when ``is_uri()`` is True, otherwise as a
-    Literal — matching ``TripleStore.insert``'s ``_to_rdf_term`` behaviour.
-
-    Drift between this function and ad-hoc hashers silently breaks
-    idempotency for inserts and inferred-triple retraction (see PR #72 for a
-    real bug caused by exactly this drift).
-    """
-    s = NamedNode(to_entity_uri(subject))
-    p = NamedNode(to_predicate_uri(predicate))
-    o = _to_rdf_term(object_)
-    return hashlib.sha256(str(Triple(s, p, o)).encode()).hexdigest()
-
-
-def _rdf_value_to_str(value: object) -> str:
-    """Convert a pyoxigraph RDF term or None to a plain Python string."""
-    if value is None:
-        return ""
-    if hasattr(value, "value"):
-        return str(value.value)
-    return str(value)
 
 
 def _extract_json(text: str) -> dict | None:

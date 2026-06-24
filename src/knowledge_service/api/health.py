@@ -10,11 +10,11 @@ async def health_check(request: Request):
     """Check the health of all service dependencies.
 
     Returns overall status ('ok' or 'degraded') and per-component statuses
-    for pyoxigraph, PostgreSQL, and the LLM API.
+    for PostgreSQL and the LLM API.
     """
     components = {}
 
-    # Check pyoxigraph
+    # ponytail: pyoxigraph check removed (graph layer gone)
     try:
         request.app.state.knowledge_store.query("SELECT (1 AS ?x) WHERE {}")
         components["oxigraph"] = "ok"

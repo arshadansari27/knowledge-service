@@ -7,21 +7,6 @@ import asyncio
 from fastapi import APIRouter, HTTPException, Query, Request
 
 from knowledge_service._utils import _rdf_value_to_str, sanitize_sparql_string
-from knowledge_service.ontology.namespaces import (
-    KS,
-    KS_CONFIDENCE,
-    KS_KNOWLEDGE_TYPE,
-    KS_VALID_FROM,
-    KS_VALID_UNTIL,
-)
-
-router = APIRouter()
-
-
-@router.get("/stats/counts")
-async def get_counts(request: Request) -> dict:
-    knowledge_store = request.app.state.knowledge_store
-    pg_pool = request.app.state.pg_pool
 
     sparql = f"""
         SELECT (COUNT(*) AS ?cnt) WHERE {{
