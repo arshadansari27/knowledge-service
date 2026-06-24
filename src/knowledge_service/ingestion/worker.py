@@ -4,8 +4,7 @@ import json
 import logging
 from typing import Any
 
-from knowledge_service.ingestion.phases import EmbedPhase, ExtractPhase, ProcessPhase
-from knowledge_service.ontology.namespaces import KS_GRAPH_ASSERTED, KS_GRAPH_EXTRACTED
+from knowledge_service.ingestion.phases import EmbedPhase
 
 logger = logging.getLogger(__name__)
 
@@ -98,24 +97,17 @@ async def run_ingestion(
     app_state: Any | None = None,
     domains: list[str] | None = None,
 ) -> None:
-    """Orchestrate the multi-phase ingestion pipeline.
+    """Orchestrate the multi-phase ingestion pipeline (embed-only).
+
+    Phases 1 (embed) runs; phases 2-5 (NLP, extract, coreference, process/graph)
+    are skipped. ponytail: extraction/triple/entity/inference code is retained
+    for phase 3 deletion; it's just not called from the ingest path anymore.
 
     Args:
         job_id: UUID of the ingestion job.
         content_id: UUID of the content being ingested.
         chunk_records: List of chunk dicts with chunk_text, chunk_index, etc.
-        raw_text: Original raw text (if extraction needed).
-        knowledge: Pre-supplied knowledge items (if any).
-        title: Content title for extraction context.
-        source_url: URL of the content source.
-        source_type: Type of the source (article, paper, etc.).
-        stores: Stores dataclass with triples, content, entities, provenance.
-        embedding_client: Client for generating embeddings.
-        extraction_client: Client for LLM extraction (optional if knowledge pre-supplied).
-        entity_store: Optional entity store for resolution.
-        engine: Optional reasoning engine.
-        nlp: Optional spaCy nlp pipeline. When provided, enables NLP pre-pass
-             and coreference resolution phases.
+        (other args unused after embed, retained for backward compat)
     """
     tracker = JobTracker(job_id, stores.pg_pool)
     current_phase = "embedding"
@@ -127,100 +119,16 @@ async def run_ingestion(
         chunk_id_map = await embed.run(content_id, chunk_records)
         await tracker.update_status("embedding", chunks_embedded=len(chunk_id_map))
 
-        # Phase 2: NLP Pre-pass (optional)
-        nlp_results = None
-        if nlp is not None:
-            current_phase = "analyzing"
-            await tracker.update_status("analyzing")
-            from knowledge_service.nlp import NlpPhase  # noqa: PLC0415
-
-            nlp_phase = NlpPhase(nlp)
-            nlp_results = await nlp_phase.run(chunk_records)
-
-        # Phase 3: Extract
-        current_phase = "extracting"
-        await tracker.update_status("extracting")
-
-        chunks_failed = 0
-        items_rejected = 0
-        if not knowledge and raw_text and extraction_client:
-            extract = ExtractPhase(extraction_client)
-            (
-                knowledge_items,
-                chunk_ids_for_items,
-                chunks_failed,
-                items_rejected,
-            ) = await extract.run(
-                chunk_records,
-                chunk_id_map,
-                title=title,
-                source_type=source_type,
-                nlp_hints=nlp_results,
-                domains=domains,
-            )
-            extractor = "llm"
-            chunks_extracted = len(chunk_records) - chunks_failed
-        else:
-            knowledge_items = list(knowledge or [])
-            chunk_ids_for_items = [None] * len(knowledge_items)
-            extractor = "api"
-            chunks_extracted = 0
-
-        await tracker.update_status(
-            "extracting",
-            chunks_extracted=chunks_extracted,
-            chunks_failed=chunks_failed,
-            items_rejected=items_rejected,
-        )
-        graph = KS_GRAPH_ASSERTED if extractor == "api" else KS_GRAPH_EXTRACTED
-
-        # Phase 4: Coreference (optional — requires NLP results)
-        if nlp_results and knowledge_items:
-            current_phase = "resolving"
-            await tracker.update_status("resolving")
-            from knowledge_service.ingestion.coreference import (  # noqa: PLC0415
-                CoreferencePhase,
-            )
-
-            coref = CoreferencePhase(stores.pg_pool)
-            coref_result = await coref.run(knowledge_items, nlp_results)
-            knowledge_items = coref_result.canonicalize(knowledge_items)
-
-        # Phase 5: Process
-        current_phase = "processing"
-        await tracker.update_status("processing")
-        drainer = getattr(app_state, "outbox_drainer", None) if app_state is not None else None
-        process = ProcessPhase(stores, entity_store, engine=engine, drainer=drainer)
-        triples_created, entities_resolved = await process.run(
-            knowledge_items,
-            chunk_ids_for_items,
-            source_url,
-            source_type,
-            extractor,
-            graph,
-        )
+        # ponytail: phases 2-5 (NLP pre-pass, extract, coreference, process/graph)
+        # skipped. Ingest is now chunk + embed only. These phases remain in the
+        # codebase for phase 3 complete deletion; they're just unreachable here.
 
         await tracker.complete(
-            triples_created,
-            entities_resolved,
-            chunks_failed,
-            items_rejected,
+            triples_created=0,
+            entities_resolved=0,
+            chunks_failed=0,
+            items_rejected=0,
         )
-
-        if triples_created == 0:
-            total_chunks = len(chunk_records)
-            logger.warning(
-                "Ingestion job %s yielded 0 triples — chunks total=%d embedded=%d "
-                "extracted=%d failed=%d items_rejected=%d (title=%s, url=%s)",
-                job_id,
-                total_chunks,
-                len(chunk_id_map),
-                chunks_extracted,
-                chunks_failed,
-                items_rejected,
-                title,
-                source_url,
-            )
 
     except Exception as exc:
         logger.exception("Ingestion failed for job %s in phase %s", job_id, current_phase)
