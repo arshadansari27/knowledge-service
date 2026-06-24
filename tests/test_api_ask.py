@@ -85,10 +85,11 @@ class TestPostAskBasic:
         assert data["answer"] == "Test answer"
 
     async def test_response_has_confidence(self, client):
+        # ponytail: confidence is now always None (chunk-only, no graph/triples)
         response = await client.post("/api/ask", json={"question": "test?"})
         data = response.json()
         assert "confidence" in data
-        assert data["confidence"] == pytest.approx(0.88)
+        assert data["confidence"] is None
 
     async def test_response_has_sources(self, client):
         response = await client.post("/api/ask", json={"question": "test?"})
@@ -98,10 +99,11 @@ class TestPostAskBasic:
         assert data["sources"][0]["url"] == "https://example.com/article"
 
     async def test_response_has_knowledge_types(self, client):
+        # ponytail: knowledge_types_used is now always empty (chunk-only, no graph)
         response = await client.post("/api/ask", json={"question": "test?"})
         data = response.json()
         assert "knowledge_types_used" in data
-        assert "Claim" in data["knowledge_types_used"]
+        assert data["knowledge_types_used"] == []
 
     async def test_response_has_contradictions(self, client):
         response = await client.post("/api/ask", json={"question": "test?"})
@@ -181,27 +183,11 @@ class TestPostAskNullConfidence:
 
 class TestPostAskContradictions:
     async def test_contradictions_in_response(self):
+        # ponytail: contradictions is now always empty (chunk-only, no graph)
         ctx = RetrievalContext(
             content_results=[],
-            knowledge_triples=[
-                {
-                    "subject": "http://ks/s",
-                    "predicate": "http://ks/p",
-                    "object": "http://ks/o",
-                    "confidence": 0.8,
-                    "knowledge_type": "Claim",
-                    "valid_from": None,
-                    "valid_until": None,
-                }
-            ],
-            contradictions=[
-                {
-                    "subject": "http://ks/s",
-                    "predicate": "http://ks/p2",
-                    "object": "http://ks/o2",
-                    "confidence": 0.3,
-                }
-            ],
+            knowledge_triples=[],  # No triples in chunk-only
+            contradictions=[],
         )
         app = create_app(use_lifespan=False)
         app.state.rag_retriever = _make_rag_retriever(context=ctx)
@@ -217,35 +203,16 @@ class TestPostAskContradictions:
             response = await c.post("/api/ask", json={"question": "q"})
 
         data = response.json()
-        assert len(data["contradictions"]) == 1
-        assert data["contradictions"][0]["subject"] == "http://ks/s"
+        assert data["contradictions"] == []
 
 
 class TestAskConfidence:
     async def test_confidence_uses_noisy_or_not_max(self):
-        """With two triples at 0.7 and 0.6, confidence should be ~0.88 (Noisy-OR), not 0.7."""
+        # ponytail: confidence is now always None (chunk-only, no graph/triples).
+        # This test previously tested Noisy-OR logic on triples; that's gone.
         context = RetrievalContext(
             content_results=[],
-            knowledge_triples=[
-                {
-                    "subject": "s",
-                    "predicate": "p",
-                    "object": "o",
-                    "confidence": 0.7,
-                    "knowledge_type": "Claim",
-                    "valid_from": None,
-                    "valid_until": None,
-                },
-                {
-                    "subject": "s",
-                    "predicate": "p",
-                    "object": "o",
-                    "confidence": 0.6,
-                    "knowledge_type": "Claim",
-                    "valid_from": None,
-                    "valid_until": None,
-                },
-            ],
+            knowledge_triples=[],  # No triples in chunk-only
             contradictions=[],
         )
         app = create_app(use_lifespan=False)
@@ -261,9 +228,7 @@ class TestAskConfidence:
             response = await c.post("/api/ask", json={"question": "test?"})
 
         data = response.json()
-        assert data["confidence"] is not None
-        # Noisy-OR(0.7, 0.6) = 1 - (0.3 * 0.4) = 0.88
-        assert abs(data["confidence"] - 0.88) < 0.01, f"Expected ~0.88, got {data['confidence']}"
+        assert data["confidence"] is None
 
     async def test_confidence_is_none_when_no_triples(self):
         context = RetrievalContext(content_results=[], knowledge_triples=[], contradictions=[])

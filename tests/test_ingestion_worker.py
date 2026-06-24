@@ -1,6 +1,5 @@
 # tests/test_ingestion_worker.py
 from contextlib import asynccontextmanager
-from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
 from knowledge_service.ingestion.phases import ExtractPhase
@@ -52,15 +51,12 @@ def _make_mock_pool():
 
 
 class TestRunIngestionWithNlp:
-    """Test that run_ingestion integrates NLP pre-pass and coreference."""
+    """Test that run_ingestion is now embed-only (NLP/extraction phases are skipped)."""
 
     async def test_run_ingestion_accepts_nlp_pipeline(self, monkeypatch):
-        """Verify run_ingestion works with a mock nlp pipeline without crashing.
-
-        ProcessPhase's per-triple ingestion is exercised by other tests; here
-        we patch ``ingest_triple`` to a no-op so this test stays focused on the
-        NLP/coreference wiring above ProcessPhase.
-        """
+        # ponytail: NLP and extraction phases are now skipped. Ingest is embed-only.
+        # This test verifies that even with nlp/extraction_client passed, they're
+        # not called. Job completes after embed.
         pool, conn = _make_mock_pool()
 
         # Mock stores
@@ -69,34 +65,16 @@ class TestRunIngestionWithNlp:
         stores.content = AsyncMock()
         stores.content.replace_chunks = AsyncMock(return_value=[(0, "chunk-uuid-0")])
 
-        async def _noop_ingest_triple(*args, **kwargs):
-            return SimpleNamespace(is_new=True, contradictions=[])
-
-        monkeypatch.setattr("knowledge_service.ingestion.phases.ingest_triple", _noop_ingest_triple)
-
         # Mock embedding client
         embedding_client = AsyncMock()
         embedding_client.embed_batch = AsyncMock(return_value=[[0.1] * 768])
 
-        # Mock extraction client — returns one entity item
+        # Mock extraction client (should NOT be called)
         extraction_client = AsyncMock()
-        _entity_item = {
-            "knowledge_type": "Entity",
-            "uri": "test_entity",
-            "rdf_type": "schema:Thing",
-            "label": "test_entity",
-            "properties": {},
-            "confidence": 0.9,
-        }
-        extraction_client.extract = AsyncMock(return_value=[_entity_item])
-        extraction_client.extract_with_stats = AsyncMock(return_value=([_entity_item], 0))
+        extraction_client.extract_with_stats = AsyncMock(return_value=([], 0))
 
-        # Mock spaCy nlp pipeline — returns doc with empty ents and one sentence
-        mock_doc = MagicMock()
-        mock_doc.ents = []
-        mock_sent = MagicMock()
-        mock_doc.sents = iter([mock_sent])
-        mock_nlp = MagicMock(return_value=mock_doc)
+        # Mock spaCy nlp pipeline (should NOT be called)
+        mock_nlp = MagicMock()
 
         chunk_records = [{"chunk_text": "Test sentence.", "chunk_index": 0}]
 
@@ -115,11 +93,11 @@ class TestRunIngestionWithNlp:
             nlp=mock_nlp,
         )
 
-        # Verify NLP was called on the chunk
-        mock_nlp.assert_called_once_with("Test sentence.")
+        # Verify NLP was NOT called (embed-only ingest)
+        mock_nlp.assert_not_called()
 
-        # LLM extraction should be called on every chunk now that chunk filtering is gone.
-        extraction_client.extract_with_stats.assert_called_once()
+        # Verify extraction was NOT called
+        extraction_client.extract_with_stats.assert_not_called()
 
         # Verify job was marked complete (not failed)
         calls = conn.execute.call_args_list

@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from unittest.mock import AsyncMock, MagicMock
 
-from knowledge_service.api.ask import AskRequest
 from knowledge_service.stores.rag import RAGRetriever, RetrievalContext
 
 
@@ -81,33 +80,3 @@ class TestChunksOnlyMode:
         )
         await retriever.retrieve("q", max_sources=5, min_confidence=0.0)
         es.search_entities.assert_called()
-
-
-class TestAskRequestMode:
-    def test_default_mode_is_none_resolved_server_side(self):
-        # Unset means "use the server default" (settings.rag_default_retrieval_mode);
-        # the endpoint resolves None, not the model.
-        req = AskRequest(question="hello")
-        assert req.retrieval_mode is None
-
-    def test_server_default_is_auto(self):
-        from knowledge_service.config import settings
-
-        # "auto" routes by intent (graph for entity/relationship, chunks-only for
-        # semantic) — see docs/kg-vs-rag-eval-findings.md.
-        assert settings.rag_default_retrieval_mode == "auto"
-
-    def test_full_is_accepted(self):
-        req = AskRequest(question="hello", retrieval_mode="full")
-        assert req.retrieval_mode == "full"
-
-    def test_chunks_only_is_accepted(self):
-        req = AskRequest(question="hello", retrieval_mode="chunks_only")
-        assert req.retrieval_mode == "chunks_only"
-
-    def test_invalid_mode_rejected(self):
-        import pytest
-        from pydantic import ValidationError
-
-        with pytest.raises(ValidationError):
-            AskRequest(question="hello", retrieval_mode="bogus")

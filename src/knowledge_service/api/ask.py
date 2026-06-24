@@ -1,60 +1,19 @@
-"""POST /api/ask endpoint — RAG-powered question answering."""
+"""POST /api/ask endpoint — chunk-only multi-doc synthesis (no knowledge graph)."""
 
 from __future__ import annotations
-
-from typing import Literal
 
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field
 
-from knowledge_service.config import settings
-from knowledge_service.reasoning.noisy_or import noisy_or
-
 router = APIRouter()
 
 _MAX_QUESTION_LEN = 4000
-
-# Query intents (from RAGRetriever.classify) for which the knowledge-graph path
-# ("full") improves answers. The 2026-05-31 relevance-ranking eval showed graph-on
-# wins on entity questions (ndcg +0.028, correctness +0.018) and lifts correctness
-# on relationship/graph questions (+0.083), but mildly hurts plain semantic search.
-# See docs/kg-vs-rag-eval-findings.md.
-_GRAPH_FAVORED_INTENTS = frozenset({"entity", "graph"})
-
-
-def _needs_classification(explicit_mode: str | None, default_mode: str) -> bool:
-    """Whether we must classify the query before retrieving.
-
-    Classification is skippable only when the effective mode is definitely
-    ``chunks_only`` (the graph path is never taken). ``auto`` and ``full`` both
-    need the intent — ``auto`` to route on it, ``full`` to pick the strategy.
-    """
-    effective = explicit_mode or default_mode
-    return effective != "chunks_only"
-
-
-def _resolve_mode(explicit_mode: str | None, default_mode: str, intent_label: str | None) -> str:
-    """Resolve the concrete retrieval mode (``full`` | ``chunks_only``).
-
-    An explicit per-request mode always wins. Otherwise the server default
-    applies: ``auto`` routes by intent (graph for entity/relationship questions,
-    chunks-only for plain semantic search); ``full``/``chunks_only`` are used as-is.
-    """
-    if explicit_mode in ("full", "chunks_only"):
-        return explicit_mode
-    if default_mode == "auto":
-        return "full" if intent_label in _GRAPH_FAVORED_INTENTS else "chunks_only"
-    return default_mode
 
 
 class AskRequest(BaseModel):
     question: str = Field(..., min_length=1, max_length=_MAX_QUESTION_LEN)
     max_sources: int = Field(5, ge=1, le=20)
     min_confidence: float = Field(0.0, ge=0.0, le=1.0)
-    # None = use the server default (settings.rag_default_retrieval_mode, "auto":
-    # intent-routed — see docs/kg-vs-rag-eval-findings.md). Pass "full" or
-    # "chunks_only" to force a specific path.
-    retrieval_mode: Literal["full", "chunks_only"] | None = None
 
 
 class SourceInfo(BaseModel):
@@ -63,70 +22,43 @@ class SourceInfo(BaseModel):
     source_type: str
 
 
-class ContradictionInfo(BaseModel):
-    subject: str
-    predicate: str
-    object: str
-    confidence: float | None
-
-
-class EvidenceSnippet(BaseModel):
-    triple_subject: str
-    triple_predicate: str
-    triple_object: str
-    chunk_text: str
-    source_url: str
-
-
 class AskResponse(BaseModel):
     answer: str
     confidence: float | None
     sources: list[SourceInfo]
-    knowledge_types_used: list[str]
-    contradictions: list[ContradictionInfo]
-    evidence: list[EvidenceSnippet] = []
+    # ponytail: graph-only fields (knowledge_types_used, contradictions, evidence,
+    # intent, traversal_depth) removed. ask is now chunk-only synthesis. These
+    # fields will be fully deleted in phase 3 when the graph layer is removed.
+    knowledge_types_used: list[str] = []
+    contradictions: list = []
+    evidence: list = []
     intent: str | None = None
     traversal_depth: int | None = None
 
 
 @router.post("/ask", response_model=AskResponse)
 async def post_ask(body: AskRequest, request: Request) -> AskResponse:
-    """Answer a natural language question using the knowledge base."""
+    """Answer a question via chunk-only multi-doc synthesis (no knowledge graph).
+
+    Retrieve top-k chunks, synthesize an answer with citations. No intent
+    classification, no graph/triples, no contradictions.
+    """
     retriever = request.app.state.rag_retriever
     rag_client = request.app.state.rag_client
 
-    # Resolve the effective retrieval mode. An explicit request value wins;
-    # otherwise the server default applies. The default "auto" routes by query
-    # intent — graph-augmented retrieval for entity/relationship questions, plain
-    # hybrid RAG for semantic search (see docs/kg-vs-rag-eval-findings.md).
-    default_mode = settings.rag_default_retrieval_mode
-    if _needs_classification(body.retrieval_mode, default_mode):
-        intent = await retriever.classify(body.question)
-    else:
-        intent = None
-    mode = _resolve_mode(body.retrieval_mode, default_mode, intent.intent if intent else None)
-    # In chunks_only the intent is unused; drop it so the retriever skips the graph.
-    if mode == "chunks_only":
-        intent = None
-
+    # Retrieve chunks only (no intent, no graph path).
     context = await retriever.retrieve(
         body.question,
         max_sources=body.max_sources,
         min_confidence=body.min_confidence,
-        intent=intent,
-        retrieval_mode=mode,
+        intent=None,
+        retrieval_mode="chunks_only",
     )
 
     try:
         raw_answer = await rag_client.answer(body.question, context)
     except Exception as exc:
         raise HTTPException(status_code=502, detail=f"LLM service error: {exc}") from exc
-
-    # Confidence: Noisy-OR combination of triple confidences, null if none
-    confidences = [
-        t["confidence"] for t in context.knowledge_triples if t.get("confidence") is not None
-    ]
-    confidence = noisy_or(confidences) if confidences else None
 
     # Sources: deduplicated from content results
     seen_urls: set[str] = set()
@@ -143,68 +75,12 @@ async def post_ask(body: AskRequest, request: Request) -> AskResponse:
                 )
             )
 
-    # Knowledge types: computed from retrieval context
-    knowledge_types_used = sorted(
-        {t["knowledge_type"] for t in context.knowledge_triples if t.get("knowledge_type")}
-    )
-
-    # Contradictions
-    contradictions = [
-        ContradictionInfo(
-            subject=c.get("subject", ""),
-            predicate=c.get("predicate", ""),
-            object=c.get("object", ""),
-            confidence=c.get("confidence"),
-        )
-        for c in context.contradictions
-    ]
-
-    # Evidence snippets: link triples back to their source chunks
-    evidence: list[EvidenceSnippet] = []
-    stores = getattr(request.app.state, "stores", None)
-
-    if stores and context.knowledge_triples:
-        from knowledge_service._utils import compute_triple_hash
-
-        provenance_store = stores.provenance
-        content_store = stores.content
-
-        triple_hashes = [
-            compute_triple_hash(t["subject"], t["predicate"], t["object"])
-            for t in context.knowledge_triples
-        ]
-        triple_prov_map = await provenance_store.get_by_triples(triple_hashes)
-
-        chunk_ids_to_fetch: list[str] = []
-        for prov_rows in triple_prov_map.values():
-            for row in prov_rows:
-                if row.get("chunk_id"):
-                    chunk_ids_to_fetch.append(str(row["chunk_id"]))
-
-        if chunk_ids_to_fetch:
-            chunk_texts = await content_store.get_chunks_by_ids(chunk_ids_to_fetch)
-            for t in context.knowledge_triples:
-                th = compute_triple_hash(t["subject"], t["predicate"], t["object"])
-                for row in triple_prov_map.get(th, []):
-                    cid = str(row["chunk_id"]) if row.get("chunk_id") else None
-                    if cid and cid in chunk_texts:
-                        evidence.append(
-                            EvidenceSnippet(
-                                triple_subject=t["subject"],
-                                triple_predicate=t["predicate"],
-                                triple_object=t["object"],
-                                chunk_text=chunk_texts[cid],
-                                source_url=row.get("source_url", ""),
-                            )
-                        )
+    # ponytail: confidence, knowledge_types, contradictions, evidence are removed.
+    # They depended on graph/triples which are now gone. In phase 3, these fields
+    # are fully deleted from AskResponse; for now they're empty stubs for backward compat.
 
     return AskResponse(
         answer=raw_answer.answer,
-        confidence=confidence,
+        confidence=None,
         sources=sources,
-        knowledge_types_used=knowledge_types_used,
-        contradictions=contradictions,
-        evidence=evidence,
-        intent=intent.intent if intent else None,
-        traversal_depth=getattr(context, "traversal_depth", None),
     )

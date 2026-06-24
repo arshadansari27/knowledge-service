@@ -309,7 +309,9 @@ class TestPostContentBasic:
 
 
 class TestPostContentKnowledgeStore:
-    async def test_insert_triple_called_for_claim(self):
+    # ponytail: ingest is embed-only — the triple store is never touched
+    # (graph layer removed). These guard that no triples leak from ingest.
+    async def test_triple_store_not_touched_for_claim(self):
         app = _make_app_with_mocks()
         mock_ts = app.state.stores.triples
         transport = ASGITransport(app=app)
@@ -320,9 +322,9 @@ class TestPostContentKnowledgeStore:
         ) as c:
             await c.post("/api/content", json=CLAIM_PAYLOAD)
 
-        mock_ts.insert.assert_called_once()
+        mock_ts.insert.assert_not_called()
 
-    async def test_insert_triple_called_twice_for_two_items(self):
+    async def test_triple_store_not_touched_for_two_items(self):
         app = _make_app_with_mocks()
         mock_ts = app.state.stores.triples
         transport = ASGITransport(app=app)
@@ -333,7 +335,7 @@ class TestPostContentKnowledgeStore:
         ) as c:
             await c.post("/api/content", json=MULTI_TRIPLE_PAYLOAD)
 
-        assert mock_ts.insert.call_count == 2
+        assert mock_ts.insert.call_count == 0
 
 
 # ---------------------------------------------------------------------------
@@ -409,7 +411,8 @@ RAW_TEXT_PAYLOAD = {
 
 
 class TestPostContentExtraction:
-    async def test_extract_called_when_no_knowledge_and_raw_text(self):
+    async def test_extract_not_called_with_raw_text(self):
+        # ponytail: ingest is embed-only — extraction never runs (graph removed).
         mock_xc = _make_extraction_client_mock()
         app = _make_app_with_mocks(extraction_client=mock_xc)
         transport = ASGITransport(app=app)
@@ -420,7 +423,7 @@ class TestPostContentExtraction:
         ) as c:
             await c.post("/api/content", json=RAW_TEXT_PAYLOAD)
 
-        mock_xc.extract_with_stats.assert_called_once()
+        mock_xc.extract_with_stats.assert_not_called()
 
     async def test_extract_not_called_when_knowledge_provided(self):
         mock_xc = _make_extraction_client_mock()
