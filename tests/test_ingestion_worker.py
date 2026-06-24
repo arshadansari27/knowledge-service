@@ -1,6 +1,5 @@
 # tests/test_ingestion_worker.py
 from contextlib import asynccontextmanager
-from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
 from knowledge_service.ingestion.phases import ExtractPhase
