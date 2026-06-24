@@ -10,7 +10,7 @@ from httpx import ASGITransport, AsyncClient
 
 from knowledge_service.clients.rag import RAGAnswer
 from knowledge_service.main import create_app
-from knowledge_service.stores.rag import QueryIntent, RetrievalContext
+from knowledge_service.stores.rag import RetrievalContext
 from tests.conftest import make_test_session_cookie
 
 
@@ -29,22 +29,9 @@ def _make_rag_retriever(context=None):
                     "similarity": 0.92,
                 }
             ],
-            knowledge_triples=[
-                {
-                    "subject": "http://ks/s",
-                    "predicate": "http://ks/p",
-                    "object": "http://ks/o",
-                    "confidence": 0.88,
-                    "knowledge_type": "Claim",
-                    "valid_from": None,
-                    "valid_until": None,
-                }
-            ],
-            contradictions=[],
         )
     mock = AsyncMock()
     mock.retrieve.return_value = context
-    mock.classify.return_value = QueryIntent(intent="semantic")
     return mock
 
 
@@ -184,11 +171,7 @@ class TestPostAskNullConfidence:
 class TestPostAskContradictions:
     async def test_contradictions_in_response(self):
         # ponytail: contradictions is now always empty (chunk-only, no graph)
-        ctx = RetrievalContext(
-            content_results=[],
-            knowledge_triples=[],  # No triples in chunk-only
-            contradictions=[],
-        )
+        ctx = RetrievalContext(content_results=[])
         app = create_app(use_lifespan=False)
         app.state.rag_retriever = _make_rag_retriever(context=ctx)
         app.state.rag_client = _make_rag_client()
@@ -210,11 +193,7 @@ class TestAskConfidence:
     async def test_confidence_uses_noisy_or_not_max(self):
         # ponytail: confidence is now always None (chunk-only, no graph/triples).
         # This test previously tested Noisy-OR logic on triples; that's gone.
-        context = RetrievalContext(
-            content_results=[],
-            knowledge_triples=[],  # No triples in chunk-only
-            contradictions=[],
-        )
+        context = RetrievalContext(content_results=[])
         app = create_app(use_lifespan=False)
         app.state.rag_retriever = _make_rag_retriever(context)
         app.state.rag_client = _make_rag_client()
@@ -231,7 +210,7 @@ class TestAskConfidence:
         assert data["confidence"] is None
 
     async def test_confidence_is_none_when_no_triples(self):
-        context = RetrievalContext(content_results=[], knowledge_triples=[], contradictions=[])
+        context = RetrievalContext(content_results=[])
         app = create_app(use_lifespan=False)
         app.state.rag_retriever = _make_rag_retriever(context)
         app.state.rag_client = _make_rag_client()

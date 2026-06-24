@@ -60,7 +60,6 @@ class TestHealth:
     async def test_health_components_present(self, client):
         response = await client.get("/health")
         data = response.json()
-        assert "oxigraph" in data["components"]
         assert "postgresql" in data["components"]
         assert "llm" in data["components"]
 
@@ -68,86 +67,10 @@ class TestHealth:
         response = await client.get("/health")
         data = response.json()
         assert data["status"] == "ok"
-        assert data["components"]["oxigraph"] == "ok"
         assert data["components"]["postgresql"] == "ok"
         assert data["components"]["llm"] == "ok"
 
-    async def test_health_includes_nlp_when_status_set(self):
-        app = create_app(use_lifespan=False)
-        app.state.knowledge_store = MagicMock()
-        app.state.knowledge_store.query.return_value = [{"x": 1}]
-        app.state.pg_pool = _make_pg_pool_mock()
-        mock_llm = AsyncMock()
-        mock_resp = MagicMock()
-        mock_resp.status_code = 200
-        mock_llm.get.return_value = mock_resp
-        app.state.embedding_client = MagicMock()
-        app.state.embedding_client._client = mock_llm
-        app.state.nlp_status = "ok"
-
-        transport = ASGITransport(app=app)
-        async with AsyncClient(
-            transport=transport,
-            base_url="http://test",
-            cookies={"ks_session": make_test_session_cookie()},
-        ) as c:
-            response = await c.get("/health")
-        data = response.json()
-        assert data["components"]["nlp"] == "ok"
-
-    async def test_health_nlp_unavailable_causes_degraded(self):
-        app = create_app(use_lifespan=False)
-        app.state.knowledge_store = MagicMock()
-        app.state.knowledge_store.query.return_value = [{"x": 1}]
-        app.state.pg_pool = _make_pg_pool_mock()
-        mock_llm = AsyncMock()
-        mock_resp = MagicMock()
-        mock_resp.status_code = 200
-        mock_llm.get.return_value = mock_resp
-        app.state.embedding_client = MagicMock()
-        app.state.embedding_client._client = mock_llm
-        app.state.nlp_status = "unavailable: spaCy not loaded"
-
-        transport = ASGITransport(app=app)
-        async with AsyncClient(
-            transport=transport,
-            base_url="http://test",
-            cookies={"ks_session": make_test_session_cookie()},
-        ) as c:
-            response = await c.get("/health")
-        data = response.json()
-        assert data["status"] == "degraded"
-        assert "unavailable" in data["components"]["nlp"]
-
-    async def test_health_no_nlp_key_when_status_not_set(self, client):
+    async def test_health_no_nlp_key(self, client):
         response = await client.get("/health")
         data = response.json()
         assert "nlp" not in data["components"]
-
-    async def test_health_degraded_when_oxigraph_fails(self):
-        app = create_app(use_lifespan=False)
-
-        # oxigraph raises an error
-        app.state.knowledge_store = MagicMock()
-        app.state.knowledge_store.query.side_effect = RuntimeError("store unavailable")
-
-        app.state.pg_pool = _make_pg_pool_mock()
-
-        mock_llm = AsyncMock()
-        mock_resp = MagicMock()
-        mock_resp.status_code = 200
-        mock_llm.get.return_value = mock_resp
-        app.state.embedding_client = MagicMock()
-        app.state.embedding_client._client = mock_llm
-        app.state.reasoning_engine = MagicMock()
-
-        transport = ASGITransport(app=app)
-        async with AsyncClient(
-            transport=transport,
-            base_url="http://test",
-            cookies={"ks_session": make_test_session_cookie()},
-        ) as c:
-            response = await c.get("/health")
-            data = response.json()
-            assert data["status"] == "degraded"
-            assert data["components"]["oxigraph"].startswith("error:")

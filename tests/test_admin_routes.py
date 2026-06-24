@@ -71,21 +71,6 @@ async def test_content_list_renders(admin_client):
     assert "Content" in resp.text
 
 
-async def test_entity_detail_uses_entity_store(admin_app, admin_client):
-    """Regression guard: entity_detail must look up via stores.entities, not
-    a misnamed app.state.embedding_store that used to point at ContentStore
-    (which doesn't define get_entity_by_uri). See audit finding A1."""
-    resp = await admin_client.get(
-        "/admin/knowledge/entity",
-        params={"uri": "http://dbpedia.org/resource/Caffeine"},
-    )
-    assert resp.status_code == 200
-    admin_app.state.stores.entities.get_entity_by_uri.assert_awaited_once_with(
-        "http://dbpedia.org/resource/Caffeine"
-    )
-    assert "Caffeine" in resp.text
-
-
 async def test_entity_detail_tolerates_missing_stores(admin_app, admin_client):
     """When stores aren't wired (minimal test setup), the page still renders
     with just the URI as the label rather than blowing up with AttributeError."""

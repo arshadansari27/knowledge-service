@@ -11,7 +11,6 @@ from unittest.mock import AsyncMock, MagicMock
 from httpx import AsyncClient, ASGITransport
 
 from knowledge_service.main import create_app
-from knowledge_service.ingestion.outbox import OutboxStore, OutboxDrainer
 from tests.conftest import make_test_session_cookie
 
 
@@ -147,34 +146,19 @@ def _make_app_with_mocks(**overrides):
     """Create test app with standard mocks. Override any via kwargs."""
     app = create_app(use_lifespan=False)
 
-    mock_ts = overrides.get("triples", _make_triple_store_mock())
     mock_pg = overrides.get("pg_pool", _make_pg_pool_mock())
     mock_content = overrides.get("content", _make_content_store_mock())
-    mock_entities = overrides.get("entities", _make_entity_store_mock())
-    mock_provenance = overrides.get("provenance", AsyncMock())
-    mock_provenance.get_by_triple.return_value = []
-    mock_provenance.insert.return_value = None
-    mock_theses = overrides.get("theses", AsyncMock())
-    mock_theses.find_by_hashes.return_value = []
 
+    # Bare MagicMock stores: chunk path uses .content/.pg_pool; the graph-guard
+    # tests just assert .triples.insert was never called, which a MagicMock
+    # child satisfies trivially.
     stores = MagicMock()
-    stores.triples = mock_ts
     stores.content = mock_content
-    stores.entities = mock_entities
-    stores.provenance = mock_provenance
-    stores.theses = mock_theses
     stores.pg_pool = mock_pg
-    stores.outbox = overrides.get("outbox", OutboxStore())
     app.state.stores = stores
 
     app.state.embedding_client = overrides.get("embedding_client", _make_embedding_client_mock())
-    app.state.extraction_client = overrides.get("extraction_client", _make_extraction_client_mock())
-
-    # Backward compat
-    app.state.knowledge_store = mock_ts
     app.state.pg_pool = mock_pg
-    app.state.reasoning_engine = None
-    app.state.outbox_drainer = OutboxDrainer(mock_pg, mock_ts)
     return app
 
 
@@ -360,23 +344,6 @@ class TestPostContentValidation:
         payload = {"url": "https://example.com", "title": "Test"}
         response = await client.post("/api/content", json=payload)
         assert response.status_code == 202
-
-    async def test_invalid_confidence_returns_422(self, client):
-        payload = {
-            "url": "https://example.com",
-            "title": "Test",
-            "source_type": "article",
-            "knowledge": [
-                {
-                    "subject": "https://example.com/s",
-                    "predicate": "https://example.com/p",
-                    "object": "value",
-                    "confidence": 1.5,  # out of range
-                }
-            ],
-        }
-        response = await client.post("/api/content", json=payload)
-        assert response.status_code == 422
 
     async def test_fact_with_low_confidence_accepted(self, client):
         """In new model there's no separate Fact type with min confidence."""

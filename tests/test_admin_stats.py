@@ -58,52 +58,6 @@ async def test_counts_endpoint(stats_client, mock_pg_pool):
     assert "content" in data
 
 
-async def test_confidence_endpoint(stats_client):
-    resp = await stats_client.get("/api/admin/stats/confidence")
-    assert resp.status_code == 200
-    data = resp.json()
-    assert "low" in data
-    assert "medium" in data
-    assert "high" in data
-
-
-async def test_types_endpoint(stats_client):
-    resp = await stats_client.get("/api/admin/stats/types")
-    assert resp.status_code == 200
-    data = resp.json()
-    assert isinstance(data, dict)
-
-
-async def test_triples_browse_endpoint(stats_client):
-    resp = await stats_client.get("/api/admin/knowledge/triples")
-    assert resp.status_code == 200
-    data = resp.json()
-    assert "items" in data
-    assert "total" in data
-
-
-async def test_triples_browse_with_filters(stats_client):
-    resp = await stats_client.get(
-        "/api/admin/knowledge/triples",
-        params={"q": "test", "knowledge_type": "Claim", "min_confidence": 0.5, "limit": 10},
-    )
-    assert resp.status_code == 200
-
-
-async def test_triples_browse_no_duplicates(stats_client):
-    """browse_triples must not return duplicate rows for the same triple."""
-    resp = await stats_client.get("/api/admin/knowledge/triples")
-    assert resp.status_code == 200
-    data = resp.json()
-    items = data["items"]
-    # Check uniqueness by (subject, predicate, object) tuple
-    seen = set()
-    for item in items:
-        key = (item["subject"], item["predicate"], item["object"])
-        assert key not in seen, f"Duplicate triple in browse results: {key}"
-        seen.add(key)
-
-
 async def test_content_items_default(stats_client, mock_pg_pool):
     _pool, conn = mock_pg_pool
     resp = await stats_client.get("/api/admin/stats/content-items")

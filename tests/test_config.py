@@ -13,10 +13,8 @@ def test_ingestion_pipeline_config_defaults(monkeypatch):
 
     settings = Settings()
 
-    assert settings.spacy_data_dir == "/app/data/spacy"
     assert settings.max_upload_size == 50 * 1024 * 1024
     assert settings.url_fetch_timeout == 30
-    assert settings.nlp_entity_confidence == 0.5
 
 
 def test_secret_key_is_required_no_default(monkeypatch):

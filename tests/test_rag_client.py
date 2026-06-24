@@ -33,25 +33,6 @@ def _sample_context() -> RetrievalContext:
                 "similarity": 0.94,
             }
         ],
-        knowledge_triples=[
-            {
-                "subject": "http://ks/cold_shock",
-                "predicate": "http://ks/increases",
-                "object": "http://ks/dopamine",
-                "confidence": 0.88,
-                "knowledge_type": "Claim",
-                "valid_from": None,
-                "valid_until": None,
-            }
-        ],
-        contradictions=[
-            {
-                "subject": "http://ks/cold_shock",
-                "predicate": "http://ks/decreases",
-                "object": "http://ks/dopamine",
-                "confidence": 0.3,
-            }
-        ],
     )
 
 
@@ -100,16 +81,6 @@ class TestBuildPrompt:
     def test_includes_content_title(self):
         prompt = build_rag_prompt("q", _sample_context())
         assert "Cold Exposure and Dopamine" in prompt
-
-    def test_includes_knowledge_triple(self):
-        prompt = build_rag_prompt("q", _sample_context())
-        assert "increases" in prompt
-        assert "0.88" in prompt
-
-    def test_includes_contradictions(self):
-        prompt = build_rag_prompt("q", _sample_context())
-        assert "Contradictions" in prompt
-        assert "decreases" in prompt
 
     def test_empty_context_still_valid(self):
         prompt = build_rag_prompt("q", RetrievalContext())

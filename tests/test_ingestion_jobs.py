@@ -90,15 +90,8 @@ class TestIngestionWorker:
             job_id="job-1",
             content_id="content-1",
             chunk_records=chunks,
-            raw_text="Short text.",
-            knowledge=None,
-            title="Test",
-            source_url="http://test.com",
-            source_type="article",
             stores=stores,
             embedding_client=embedding_client,
-            extraction_client=None,
-            entity_store=stores.entities,
         )
 
         calls = [str(c) for c in conn.execute.call_args_list]
@@ -130,15 +123,8 @@ class TestIngestionWorker:
             job_id="job-1",
             content_id="content-1",
             chunk_records=chunks,
-            raw_text="Some text.",
-            knowledge=None,
-            title="Test",
-            source_url="http://test.com",
-            source_type="article",
             stores=stores,
             embedding_client=embedding_client,
-            extraction_client=extraction_client,
-            entity_store=stores.entities,
         )
 
         calls = [str(c) for c in conn.execute.call_args_list]
@@ -174,15 +160,8 @@ class TestIngestionWorker:
             job_id="job-1",
             content_id="content-1",
             chunk_records=chunks,
-            raw_text="text",
-            knowledge=None,
-            title="Test",
-            source_url="http://test.com",
-            source_type="article",
             stores=stores,
             embedding_client=embedding_client,
-            extraction_client=extraction_client,
-            entity_store=stores.entities,
         )
 
         executed = [str(c) for c in conn.execute.call_args_list]

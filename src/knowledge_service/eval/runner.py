@@ -74,7 +74,6 @@ def score_query(
         "ndcg_at_k": ndcg_at_k(retrieved, relevant, k),
         "faithfulness": judge_score.faithfulness,
         "correctness": judge_score.correctness,
-        "triples_surfaced": float(len(context.knowledge_triples)),
     }
     return QueryResult(
         query_id=item.id,
@@ -89,49 +88,33 @@ def score_query(
 async def _build_components():
     """Construct stores + clients + retriever against the configured snapshot.
 
-    Mirrors main.py lifespan wiring but without the FastAPI app / worker loop.
+    Mirrors main.py lifespan wiring (chunk-only, graph removed).
     """
     import asyncpg
 
-    import knowledge_service
-    from knowledge_service.clients.base import BaseLLMClient
-    from knowledge_service.clients.llm import EmbeddingClient, ExtractionClient
+    from knowledge_service.clients.llm import EmbeddingClient
     from knowledge_service.clients.rag import RAGClient
-    from knowledge_service.ontology.bootstrap import bootstrap_ontology
     from knowledge_service.stores.content import ContentStore
-    from knowledge_service.stores.entities import EntityStore
     from knowledge_service.stores.rag import RAGRetriever
-    from knowledge_service.stores.triples import TripleStore
 
     pool = await asyncpg.create_pool(settings.database_url, min_size=2, max_size=10)
-    knowledge_store = TripleStore(data_dir=settings.oxigraph_data_dir)
-    ontology_dir = Path(knowledge_service.__file__).resolve().parent / "ontology"
-    bootstrap_ontology(knowledge_store, ontology_dir)
 
     embedding_client = EmbeddingClient(
         settings.llm_base_url, settings.llm_embed_model, settings.llm_api_key
     )
     content_store = ContentStore(pool, exclude_inflight=settings.reader_exclude_inflight)
-    entity_store = EntityStore(pool, embedding_client)
 
-    extraction_client = ExtractionClient(
-        settings.llm_base_url, settings.llm_chat_model, settings.llm_api_key
-    )
     rag_model = settings.llm_rag_model or settings.llm_chat_model
     rag_client = RAGClient(settings.llm_base_url, rag_model, settings.llm_api_key)
-    classify_client = BaseLLMClient(
-        settings.llm_base_url, settings.llm_chat_model, settings.llm_api_key
-    )
 
+    # ponytail: chunk-only retriever (graph layer removed)
     retriever = RAGRetriever(
         embedding_client=embedding_client,
         embedding_store=content_store,
-        knowledge_store=knowledge_store,
-        entity_store=entity_store,
-        classify_client=classify_client,
     )
-    clients = (embedding_client, extraction_client, rag_client, classify_client)
-    return pool, knowledge_store, retriever, rag_client, clients
+    clients = (embedding_client, rag_client)
+    # Return None for knowledge_store (graph removed); adjust shutdown handling
+    return pool, None, retriever, rag_client, clients
 
 
 async def run_eval(modes: list[str], k: int, golden_path: Path) -> list[QueryResult]:
@@ -146,13 +129,11 @@ async def run_eval(modes: list[str], k: int, golden_path: Path) -> list[QueryRes
 
     async def _one(item: GoldenItem, mode: str) -> QueryResult:
         async with sem:
-            intent = None if mode == "chunks_only" else await retriever.classify(item.question)
+            # ponytail: chunk-only retrieval; intent classification (graph) removed.
             context = await retriever.retrieve(
                 item.question,
                 max_sources=k,
                 min_confidence=0.0,
-                intent=intent,
-                retrieval_mode=mode,
             )
             answer_obj = await rag_client.answer(item.question, context)
             judge_score = await judge.score_one(
@@ -171,7 +152,7 @@ async def run_eval(modes: list[str], k: int, golden_path: Path) -> list[QueryRes
         for c in clients:
             await c.close()
         await pool.close()
-        knowledge_store.flush()
+        # ponytail: knowledge_store (graph layer) is now None
     return list(results)
 
 

@@ -58,36 +58,6 @@ def build_rag_prompt(question: str, context: RetrievalContext) -> str:
             running_len += len(line)
         sections.append("")
 
-    # Knowledge triples section
-    if context.knowledge_triples:
-        sections.append("## Knowledge Graph Facts")
-        running_len += len(sections[-1])
-        for t in context.knowledge_triples:
-            s = t.get("subject", "?")
-            p = t.get("predicate", "?")
-            o = t.get("object", "?")
-            ktype = t.get("knowledge_type", "?")
-            conf = t.get("confidence", "?")
-            trust = t.get("trust_tier", "unknown")
-            line = f"- [{trust}] {s} -> {p} -> {o} ({ktype}, confidence: {conf})"
-            if running_len + len(line) > _MAX_PROMPT_CHARS:
-                sections.append("(... additional triples truncated for length ...)")
-                break
-            sections.append(line)
-            running_len += len(line)
-        sections.append("")
-
-    # Contradictions section
-    if context.contradictions:
-        sections.append("## Contradictions Found")
-        for c in context.contradictions:
-            s = c.get("subject", "?")
-            p = c.get("predicate", "?")
-            o = c.get("object", "?")
-            conf = c.get("confidence", "?")
-            sections.append(f"- {s} -> {p} -> {o} (confidence: {conf})")
-        sections.append("")
-
     sections.append("## Question")
     sections.append(question)
 
