@@ -49,9 +49,9 @@ build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/knowledge_service"]
-
-[tool.hatch.build.targets.wheel.force-include]
-"src/knowledge_service/admin/templates" = "knowledge_service/admin/templates"
+# ponytail: no force-include — `packages` already bundles everything under the
+# package dir (templates included). force-include re-added the same paths and
+# newer hatchling errors on the duplicate wheel entry.
 
 [project.urls]
 Homepage = "https://hikmahtechnologies.com"
